@@ -39,20 +39,40 @@ interface Shape {
 class ShapeSink {
   readonly shapes: Shape[] = [];
   private pending: number[] | null = null;
+  // 和 Pixi 的 GraphicsContext 一样，变换是有状态的：设一次，之后每个形状的点都过它。
+  private m = [1, 0, 0, 1, 0, 0];
 
   clear(): this {
     this.shapes.length = 0;
     this.pending = null;
+    this.m = [1, 0, 0, 1, 0, 0];
     return this;
   }
 
+  setTransform(a: number, b: number, c: number, d: number, dx: number, dy: number): this {
+    this.m = [a, b, c, d, dx, dy];
+    return this;
+  }
+
+  /** 把一串点过一遍当前变换。ShapeBatch 的旋转矩形就是靠它落到正确位置的。 */
+  private apply(pts: number[]): number[] {
+    const [a, b, c, d, dx, dy] = this.m;
+    if (a === 1 && b === 0 && c === 0 && d === 1 && dx === 0 && dy === 0) return pts;
+    const out = new Array<number>(pts.length);
+    for (let i = 0; i < pts.length; i += 2) {
+      out[i] = a * pts[i] + c * pts[i + 1] + dx;
+      out[i + 1] = b * pts[i] + d * pts[i + 1] + dy;
+    }
+    return out;
+  }
+
   rect(x: number, y: number, w: number, h: number): this {
-    this.pending = [x, y, x + w, y, x + w, y + h, x, y + h];
+    this.pending = this.apply([x, y, x + w, y, x + w, y + h, x, y + h]);
     return this;
   }
 
   poly(points: number[]): this {
-    this.pending = points.slice();
+    this.pending = this.apply(points.slice());
     return this;
   }
 
@@ -63,7 +83,7 @@ class ShapeSink {
       const t = (i / segments) * Math.PI * 2;
       pts.push(x + Math.cos(t) * rx, y + Math.sin(t) * ry);
     }
-    this.pending = pts;
+    this.pending = this.apply(pts);
     return this;
   }
 

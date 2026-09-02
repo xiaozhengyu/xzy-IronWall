@@ -2,6 +2,22 @@ import type { Graphics } from 'pixi.js';
 import { type Vec2, norm2, v2 } from '../core/math';
 import { type Rgba, toHex } from './color';
 
+/**
+ * 三角形的去处。PrimitiveMesh 是正式实现，离线对照工具也实现它来验几何。
+ *
+ * ShapeBatch 因此不依赖任何 Pixi 类型 —— 它只知道"把这个四边形/椭圆交出去"。
+ */
+export interface PrimitiveSink {
+  quad(
+    x0: number, y0: number,
+    x1: number, y1: number,
+    x2: number, y2: number,
+    x3: number, y3: number,
+    color: Rgba,
+  ): void;
+  ellipse(cx: number, cy: number, rx: number, ry: number, rotation: number, color: Rgba): void;
+}
+
 /** 旋转椭圆退化成多边形时的采样段数。 */
 const ELLIPSE_SEGMENTS = 20;
 
@@ -169,6 +185,90 @@ export class ShapeBatch {
     this.bar(v2(a.x + o2x, a.y + o2y), v2(b.x + o2x, b.y + o2y), thickness * 0.28, light, depth);
   }
 
+  /**
+   * 按深度排好序的下标。打包排序，见 keys 上那段。
+   *
+   * 深度量化到 1/8，比一个图元的尺度细得多，不会改变可见顺序。
+   */
+  private sortedOrder(n: number): Float64Array {
+    if (this.keys.length < n) this.keys = new Float64Array(Math.max(n, 4096));
+    const depth = this.depth;
+    let lo = depth[0];
+    for (let i = 1; i < n; i++) if (depth[i] < lo) lo = depth[i];
+    const bias = Math.ceil(-lo * DEPTH_QUANT) + 1; // 键必须非负，取下标时才能用取模
+    const keys = this.keys;
+    for (let i = 0; i < n; i++) {
+      keys[i] = (Math.round(depth[i] * DEPTH_QUANT) + bias) * INDEX_SPAN + i;
+    }
+    const order = keys.subarray(0, n);
+    order.sort();
+    return order;
+  }
+
+  /**
+   * 按深度排序后写进顶点缓冲。和 flush 是同一件事的两条出口，区别只在写给谁。
+   *
+   * 这条路每个图元只是往几个定型数组里写数，没有对象分配、没有三角化 —— 见 PrimitiveMesh
+   * 顶上那段。矩形直接算四个角（旋转与否都一样），椭圆按半径展开扇形。
+   */
+  flushToMesh(mesh: PrimitiveSink, clipW = 0, clipH = 0): void {
+    const n = this.count;
+    this.count = 0;
+    if (n === 0) return;
+    const clip = clipW > 0 && clipH > 0;
+    let culled = 0;
+    const order = this.sortedOrder(n);
+
+    for (let k = 0; k < n; k++) {
+      const i = order[k] % INDEX_SPAN;
+      const x = this.cx[i];
+      const y = this.cy[i];
+      const ex = this.ex[i];
+      const ey = this.ey[i];
+      const rot = this.rot[i];
+
+      if (clip) {
+        let hx = ex;
+        let hy = ey;
+        if (rot !== 0) {
+          const ca = Math.abs(Math.cos(rot));
+          const sa = Math.abs(Math.sin(rot));
+          hx = ex * ca + ey * sa;
+          hy = ex * sa + ey * ca;
+        }
+        if (x + hx < 0 || x - hx > clipW || y + hy < 0 || y - hy > clipH) {
+          culled++;
+          continue;
+        }
+      }
+
+      const color = this.col[i];
+      if (this.kind[i] === 0) {
+        if (rot === 0) {
+          mesh.quad(x - ex, y - ey, x + ex, y - ey, x + ex, y + ey, x - ex, y + ey, color);
+        } else {
+          const c = Math.cos(rot);
+          const s = Math.sin(rot);
+          const ux = c * ex;
+          const uy = s * ex;
+          const vx = -s * ey;
+          const vy = c * ey;
+          mesh.quad(
+            x - ux - vx, y - uy - vy,
+            x + ux - vx, y + uy - vy,
+            x + ux + vx, y + uy + vy,
+            x - ux + vx, y - uy + vy,
+            color,
+          );
+        }
+      } else {
+        mesh.ellipse(x, y, ex, ey, rot, color);
+      }
+    }
+
+    this.lastCulled = culled;
+  }
+
   private push(
     kind: number,
     x: number,
@@ -193,6 +293,10 @@ export class ShapeBatch {
   /**
    * 按深度排序后一次性画进 Graphics。调用方负责先 g.clear()。
    *
+   * **游戏本身不走这条路了** —— Scene 用的是 flushToMesh，见 PrimitiveMesh 顶上那段。这里
+   * 留着是给离线出图工具（tools/preview.ts）用的：它跑在 node 里，没有 GPU，只能沿着
+   * Graphics 那套调用自己光栅化。两条路的几何逐像素比对过，只在圆的边缘差 0.1%。
+   *
    * @param clipW/clipH 缓冲尺寸。给了就把完全落在画面外的图元丢掉。
    *
    * 这是一道总的兜底裁剪，不是各层自己裁剪的替代品。区别在于代价付在哪一步：一个交到
@@ -205,19 +309,10 @@ export class ShapeBatch {
     if (n === 0) return;
     const clip = clipW > 0 && clipH > 0;
     let culled = 0;
+    // 变换是有状态的：上一次设过就得在下一个不需要变换的图元之前复位。
+    let rotated = false;
 
-    // 打包排序，见 keys 上那段。深度量化到 1/8，比一个图元的尺度细得多，不会改变可见顺序。
-    if (this.keys.length < n) this.keys = new Float64Array(Math.max(n, 4096));
-    const depth = this.depth;
-    let lo = depth[0];
-    for (let i = 1; i < n; i++) if (depth[i] < lo) lo = depth[i];
-    const bias = Math.ceil(-lo * DEPTH_QUANT) + 1; // 键必须非负，取下标时才能用取模
-    const keys = this.keys;
-    for (let i = 0; i < n; i++) {
-      keys[i] = (Math.round(depth[i] * DEPTH_QUANT) + bias) * INDEX_SPAN + i;
-    }
-    const order = keys.subarray(0, n);
-    order.sort();
+    const order = this.sortedOrder(n);
 
     for (let k = 0; k < n; k++) {
       const i = order[k] % INDEX_SPAN;
@@ -247,27 +342,41 @@ export class ShapeBatch {
 
       if (this.kind[i] === 0) {
         if (rot === 0) {
+          if (rotated) {
+            g.setTransform(1, 0, 0, 1, 0, 0);
+            rotated = false;
+          }
           g.rect(x - ex, y - ey, ex * 2, ey * 2);
         } else {
-          // 自己算四个角，比走 Graphics 的变换栈省一次矩阵重置。
+          // 旋转矩形走**变换 + 矩形**，不要自己拼四个角丢给 poly。
+          //
+          // 这两条路在 Pixi 内部差得极远：poly 走 buildPolygon → earcut 通用耳切三角剖分，
+          // 每次都要分配；rect 走 buildRectangle，写死的四顶点六索引，零分配。而
+          // buildContextBatches 的顺序是「build 出点 → 把变换作用到点上 → 三角化」，所以
+          // 变换过的矩形**照样走矩形那条快路**，只是四个角挪了位置。
+          //
+          // 当年这里是热路径时，旋转矩形占全部图元的 53%，这一改让 Pixi 的渲染耗时降了两成
+          // （真机 A/B：100.8ms → 77.6ms）。现在热路径已经搬去 Mesh 了，留着是因为它同时也
+          // 更简单 —— 少算四个角。
           const c = Math.cos(rot);
           const s = Math.sin(rot);
-          const ux = c * ex;
-          const uy = s * ex;
-          const vx = -s * ey;
-          const vy = c * ey;
-          g.poly([
-            x - ux - vx, y - uy - vy,
-            x + ux - vx, y + uy - vy,
-            x + ux + vx, y + uy + vy,
-            x - ux + vx, y - uy + vy,
-          ]);
+          g.setTransform(c, s, -s, c, x, y);
+          rotated = true;
+          g.rect(-ex, -ey, ex * 2, ey * 2);
         }
       } else if (rot === 0) {
+        if (rotated) {
+          g.setTransform(1, 0, 0, 1, 0, 0);
+          rotated = false;
+        }
         g.ellipse(x, y, ex, ey);
       } else {
-        // Graphics 没有暴露旋转椭圆，也没有暴露变换栈，所以自己采样一圈。用得很少
-        // （只有圆盾），而多边形在像素网格上和真椭圆一样是硬边。
+        // 旋转椭圆自己采样一圈。用得很少（只有圆盾），而多边形在像素网格上和真椭圆一样是
+        // 硬边。这一支走 poly，但数量可以忽略。
+        if (rotated) {
+          g.setTransform(1, 0, 0, 1, 0, 0);
+          rotated = false;
+        }
         const c = Math.cos(rot);
         const s = Math.sin(rot);
         const pts: number[] = [];
@@ -283,6 +392,7 @@ export class ShapeBatch {
       g.fill(fill);
     }
 
+    if (rotated) g.setTransform(1, 0, 0, 1, 0, 0);
     this.lastCulled = culled;
     this.count = 0;
   }

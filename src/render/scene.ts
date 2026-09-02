@@ -5,6 +5,7 @@ import type { Battle } from '../game/battle';
 import type { Field } from '../game/field';
 import type { Camera } from './camera';
 import { PixelSurface } from './pixelSurface';
+import { PrimitiveMesh } from './primitiveMesh';
 import { Projection } from './projection';
 import { Projector } from './projector';
 import { ShapeBatch } from './shapeBatch';
@@ -51,9 +52,16 @@ export class Scene {
   private readonly surface: PixelSurface;
   private readonly camera: Camera;
 
-  /** 一帧里所有的图元先攒在这里，最后按深度排序一次性灌进 Graphics。 */
+  /** 一帧里所有的图元先攒在这里，最后按深度排序一次性写进顶点缓冲。 */
   private readonly shapes = new ShapeBatch();
-  private readonly figure = new Graphics();
+  /**
+   * 场上所有东西都画进这一个 Mesh。
+   *
+   * 不走 Graphics：满屏一千人时一帧四万八千个图元，Graphics 光是下指令加三角化就要一百多
+   * 毫秒（见 PrimitiveMesh 顶上那段实测）。这里是自己把三角形写进顶点缓冲。
+   */
+  private readonly prim = new PrimitiveMesh();
+  /** 准星单独一个 Graphics：四个小矩形，不值得进批次，而且它要压在最上面。 */
   private readonly reticle = new Graphics();
 
   /** 上一帧的统计。游戏里不显示，暂停面板要读。 */
@@ -70,7 +78,7 @@ export class Scene {
   constructor(renderer: Renderer, camera: Camera) {
     this.camera = camera;
     this.surface = new PixelSurface(renderer, camera.magnify);
-    this.surface.units.addChild(this.figure, this.reticle);
+    this.surface.units.addChild(this.prim.mesh, this.reticle);
   }
 
   /** 挂到 stage 上的那个精灵：放大后的整帧。 */
@@ -115,7 +123,7 @@ export class Scene {
     field.ground.update(camX, camY, cam.halfW, cam.halfH);
     field.ground.layout(camX, camY, rootX, rootY, grain, this.surface.width, this.surface.height);
 
-    this.figure.clear();
+    this.prim.begin();
 
     // 视野半宽/半高，留一格余量。地面细节和树只画看得见的那部分。
     const spanX = cam.halfW + 40;
@@ -163,7 +171,8 @@ export class Scene {
     field.weather.draw(shapes, camX, camY, rootX, rootY, grain);
 
     this.primitives = shapes.primitiveCount; // flush 之后计数会清零
-    shapes.flush(this.figure, this.surface.width, this.surface.height);
+    shapes.flushToMesh(this.prim, this.surface.width, this.surface.height);
+    this.prim.end();
 
     this.drawReticle(overlay);
 
