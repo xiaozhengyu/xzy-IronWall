@@ -1,6 +1,5 @@
-import type { Graphics } from 'pixi.js';
 import { type Vec2, norm2, v2 } from '../core/math';
-import { type Rgba, toHex } from './color';
+import { type Rgba } from './color';
 
 /**
  * 三角形的去处。PrimitiveMesh 是正式实现，离线对照工具也实现它来验几何。
@@ -18,9 +17,6 @@ export interface PrimitiveSink {
   ellipse(cx: number, cy: number, rx: number, ry: number, rotation: number, color: Rgba): void;
 }
 
-/** 旋转椭圆退化成多边形时的采样段数。 */
-const ELLIPSE_SEGMENTS = 20;
-
 /**
  * 排序键的打包参数：深度量化到 1/8，低 17 位放原始下标。
  *
@@ -34,10 +30,16 @@ const INDEX_SPAN = 1 << 17;
 /**
  * 画家顺序的图形批次。移植自 overlord 的 ShapeBatch。
  *
- * 原版把每个图元当成一个带 depth 的 quad 交给 GPU 深度缓冲排序；WebGL 这边没有等价的
- * 廉价通道，所以改成 CPU 排序后按顺序灌进一个 Pixi Graphics。行为上等价，因为原版的
- * 深度测试是 LessEqual —— 同深度时后提交的赢 —— 而 JS 的 sort 是稳定排序，同深度同样
- * 保持提交顺序。ToneStep = 0 的那些同深度色阶就是靠这一点叠上去的。
+ * 原版把每个图元当成一个带 depth 的 quad 交给 GPU 深度缓冲排序。WebGL 这边没有等价的廉价
+ * 通道，所以改成 CPU 排序之后按顺序交出去 —— 交给谁由 PrimitiveSink 决定：线上是
+ * PrimitiveMesh（写顶点缓冲），离线出图工具则自己光栅化。
+ *
+ * 行为上和原版等价，因为原版的深度测试是 LessEqual（同深度时后提交的赢），而这里的排序键
+ * 低位放的是原始下标，同深度同样保持提交顺序。ToneStep = 0 的那些同深度色阶就是靠这一点
+ * 叠上去的。
+ *
+ * 这个文件**不依赖 Pixi**。所以整条几何路径都能在 node 里跑，出图工具和线上用的是同一份
+ * 代码 —— 一份代码只有一种行为，不会哪天悄悄分叉。
  */
 export class ShapeBatch {
   /**
@@ -290,112 +292,6 @@ export class ShapeBatch {
     this.depth[i] = depth;
   }
 
-  /**
-   * 按深度排序后一次性画进 Graphics。调用方负责先 g.clear()。
-   *
-   * **游戏本身不走这条路了** —— Scene 用的是 flushToMesh，见 PrimitiveMesh 顶上那段。这里
-   * 留着是给离线出图工具（tools/preview.ts）用的：它跑在 node 里，没有 GPU，只能沿着
-   * Graphics 那套调用自己光栅化。两条路的几何逐像素比对过，只在圆的边缘差 0.1%。
-   *
-   * @param clipW/clipH 缓冲尺寸。给了就把完全落在画面外的图元丢掉。
-   *
-   * 这是一道总的兜底裁剪，不是各层自己裁剪的替代品。区别在于代价付在哪一步：一个交到
-   * 这里的图元，排序、三角化和顶点上传的开销**已经付了**，GPU 把它丢掉并不退钱。各层
-   * 自己按世界范围裁剪能省掉连算都不用算；这里这一道负责接住漏网的 —— 比如雪地脚印能
-   * 留四十八秒，玩家跑一圈就在场上撒下几百个，而它们没有任何按范围裁剪的机制。
-   */
-  flush(g: Graphics, clipW = 0, clipH = 0): void {
-    const n = this.count;
-    if (n === 0) return;
-    const clip = clipW > 0 && clipH > 0;
-    let culled = 0;
-    // 变换是有状态的：上一次设过就得在下一个不需要变换的图元之前复位。
-    let rotated = false;
-
-    const order = this.sortedOrder(n);
-
-    for (let k = 0; k < n; k++) {
-      const i = order[k] % INDEX_SPAN;
-      const color = this.col[i];
-      const fill = { color: toHex(color), alpha: color.a / 255 };
-      const x = this.cx[i];
-      const y = this.cy[i];
-      const ex = this.ex[i];
-      const ey = this.ey[i];
-      const rot = this.rot[i];
-
-      if (clip) {
-        // 旋转后的轴对齐包围盒。对矩形是精确的，对椭圆是个安全的上界。
-        let hx = ex;
-        let hy = ey;
-        if (rot !== 0) {
-          const ca = Math.abs(Math.cos(rot));
-          const sa = Math.abs(Math.sin(rot));
-          hx = ex * ca + ey * sa;
-          hy = ex * sa + ey * ca;
-        }
-        if (x + hx < 0 || x - hx > clipW || y + hy < 0 || y - hy > clipH) {
-          culled++;
-          continue;
-        }
-      }
-
-      if (this.kind[i] === 0) {
-        if (rot === 0) {
-          if (rotated) {
-            g.setTransform(1, 0, 0, 1, 0, 0);
-            rotated = false;
-          }
-          g.rect(x - ex, y - ey, ex * 2, ey * 2);
-        } else {
-          // 旋转矩形走**变换 + 矩形**，不要自己拼四个角丢给 poly。
-          //
-          // 这两条路在 Pixi 内部差得极远：poly 走 buildPolygon → earcut 通用耳切三角剖分，
-          // 每次都要分配；rect 走 buildRectangle，写死的四顶点六索引，零分配。而
-          // buildContextBatches 的顺序是「build 出点 → 把变换作用到点上 → 三角化」，所以
-          // 变换过的矩形**照样走矩形那条快路**，只是四个角挪了位置。
-          //
-          // 当年这里是热路径时，旋转矩形占全部图元的 53%，这一改让 Pixi 的渲染耗时降了两成
-          // （真机 A/B：100.8ms → 77.6ms）。现在热路径已经搬去 Mesh 了，留着是因为它同时也
-          // 更简单 —— 少算四个角。
-          const c = Math.cos(rot);
-          const s = Math.sin(rot);
-          g.setTransform(c, s, -s, c, x, y);
-          rotated = true;
-          g.rect(-ex, -ey, ex * 2, ey * 2);
-        }
-      } else if (rot === 0) {
-        if (rotated) {
-          g.setTransform(1, 0, 0, 1, 0, 0);
-          rotated = false;
-        }
-        g.ellipse(x, y, ex, ey);
-      } else {
-        // 旋转椭圆自己采样一圈。用得很少（只有圆盾），而多边形在像素网格上和真椭圆一样是
-        // 硬边。这一支走 poly，但数量可以忽略。
-        if (rotated) {
-          g.setTransform(1, 0, 0, 1, 0, 0);
-          rotated = false;
-        }
-        const c = Math.cos(rot);
-        const s = Math.sin(rot);
-        const pts: number[] = [];
-        for (let a = 0; a < ELLIPSE_SEGMENTS; a++) {
-          const th = (a / ELLIPSE_SEGMENTS) * Math.PI * 2;
-          const px = Math.cos(th) * ex;
-          const py = Math.sin(th) * ey;
-          pts.push(x + px * c - py * s, y + px * s + py * c);
-        }
-        g.poly(pts);
-      }
-
-      g.fill(fill);
-    }
-
-    if (rotated) g.setTransform(1, 0, 0, 1, 0, 0);
-    this.lastCulled = culled;
-    this.count = 0;
-  }
 
   /** 上一次 flush 里被兜底裁剪丢掉的图元数。用来判断哪一层该自己做范围裁剪。 */
   lastCulled = 0;

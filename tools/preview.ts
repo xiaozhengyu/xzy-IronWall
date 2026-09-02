@@ -20,7 +20,9 @@ import { ImpactEffects, weaponImpactPoint } from '../src/effects/impact';
 import { v2 } from '../src/core/math';
 import { Projection } from '../src/render/projection';
 import { Projector } from '../src/render/projector';
-import { ShapeBatch } from '../src/render/shapeBatch';
+import { ShapeBatch, type PrimitiveSink } from '../src/render/shapeBatch';
+import { ellipseSegments, unitCircle } from '../src/render/ellipseFan';
+import type { Rgba } from '../src/render/color';
 import { Terrain } from '../src/world/terrain';
 import { Weather } from '../src/world/weather';
 import { Props } from '../src/world/props';
@@ -36,68 +38,42 @@ interface Shape {
 }
 
 /** 冒充 Pixi 的 Graphics：把所有东西摊平成多边形。 */
-class ShapeSink {
+class ShapeSink implements PrimitiveSink {
   readonly shapes: Shape[] = [];
-  private pending: number[] | null = null;
-  // 和 Pixi 的 GraphicsContext 一样，变换是有状态的：设一次，之后每个形状的点都过它。
-  private m = [1, 0, 0, 1, 0, 0];
 
   clear(): this {
     this.shapes.length = 0;
-    this.pending = null;
-    this.m = [1, 0, 0, 1, 0, 0];
     return this;
   }
 
-  setTransform(a: number, b: number, c: number, d: number, dx: number, dy: number): this {
-    this.m = [a, b, c, d, dx, dy];
-    return this;
+  /** 矩形（含旋转）四个角直接就是多边形。 */
+  quad(
+    x0: number, y0: number,
+    x1: number, y1: number,
+    x2: number, y2: number,
+    x3: number, y3: number,
+    color: Rgba,
+  ): void {
+    this.push([x0, y0, x1, y1, x2, y2, x3, y3], color);
   }
 
-  /** 把一串点过一遍当前变换。ShapeBatch 的旋转矩形就是靠它落到正确位置的。 */
-  private apply(pts: number[]): number[] {
-    const [a, b, c, d, dx, dy] = this.m;
-    if (a === 1 && b === 0 && c === 0 && d === 1 && dx === 0 && dy === 0) return pts;
-    const out = new Array<number>(pts.length);
-    for (let i = 0; i < pts.length; i += 2) {
-      out[i] = a * pts[i] + c * pts[i + 1] + dx;
-      out[i + 1] = b * pts[i] + d * pts[i + 1] + dy;
-    }
-    return out;
-  }
-
-  rect(x: number, y: number, w: number, h: number): this {
-    this.pending = this.apply([x, y, x + w, y, x + w, y + h, x, y + h]);
-    return this;
-  }
-
-  poly(points: number[]): this {
-    this.pending = this.apply(points.slice());
-    return this;
-  }
-
-  ellipse(x: number, y: number, rx: number, ry: number): this {
+  /** 段数走 ellipseFan，和线上那条路用同一份 —— 出的图才是游戏里真正画出来的样子。 */
+  ellipse(cx: number, cy: number, rx: number, ry: number, rotation: number, color: Rgba): void {
+    const n = ellipseSegments(rx, ry);
+    const ring = unitCircle(n);
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
     const pts: number[] = [];
-    const segments = 28;
-    for (let i = 0; i < segments; i++) {
-      const t = (i / segments) * Math.PI * 2;
-      pts.push(x + Math.cos(t) * rx, y + Math.sin(t) * ry);
+    for (let i = 0; i < n; i++) {
+      const ex = ring[i * 2] * rx;
+      const ey = ring[i * 2 + 1] * ry;
+      pts.push(cx + ex * cos - ey * sin, cy + ex * sin + ey * cos);
     }
-    this.pending = this.apply(pts);
-    return this;
+    this.push(pts, color);
   }
 
-  fill(style: { color: number; alpha: number }): this {
-    if (!this.pending) return this;
-    this.shapes.push({
-      pts: this.pending,
-      r: (style.color >> 16) & 0xff,
-      g: (style.color >> 8) & 0xff,
-      b: style.color & 0xff,
-      a: style.alpha,
-    });
-    this.pending = null;
-    return this;
+  private push(pts: number[], c: Rgba): void {
+    this.shapes.push({ pts, r: c.r, g: c.g, b: c.b, a: c.a / 255 });
   }
 }
 
@@ -284,7 +260,7 @@ function renderCell(cell: Cell, cellW: number, cellH: number, canvas: Canvas, ox
   const grain = cell.grain ?? 1;
   const p = new Projector(v2(ox + cellW / 2, oy + cellH - 6 * grain), cell.facing, Projection.groundSquash, grain);
   drawCharacter(shapes, pose, p, cell.palette, cell.def);
-  shapes.flush(sink as never);
+  shapes.flushToMesh(sink);
 
   for (const s of sink.shapes) canvas.fillPolygon(s);
   return sink.shapes.length;
@@ -410,7 +386,7 @@ writePng('.preview-attack.png', attackStrip.upscale(2));
       const rootY = row * TALL + Math.round(TALL * 0.3);
       effects.draw(shapes, 0, 0, rootX, rootY, GRAIN);
       drawCharacter(shapes, pose, new Projector(v2(rootX, rootY), facing, Projection.groundSquash, GRAIN), PALETTE_BLUE, def);
-      shapes.flush(sink as never);
+      shapes.flushToMesh(sink);
       for (const sh of sink.shapes) strip.fillPolygon(sh);
       frame++;
     }
@@ -556,7 +532,7 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
     drawCharacter(shapes, pose, new Projector(v2(sx, sy), Math.PI * 0.5, Projection.groundSquash, GRAIN), palette, make());
   }
 
-  shapes.flush(sink as never);
+  shapes.flushToMesh(sink);
   for (const sh of sink.shapes) view.fillPolygon(sh);
   writePng('.preview-terrain.png', view.upscale(2));
 
@@ -593,7 +569,7 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
       drawCharacter(shapes2, pose, new Projector(v2(sx, sy), Math.PI * 0.5, Projection.groundSquash, GRAIN), palette, make());
     }
 
-    shapes2.flush(sink2 as never);
+    shapes2.flushToMesh(sink2);
     for (const sh of sink2.shapes) camp.fillPolygon(sh);
     writePng('.preview-camp.png', camp.upscale(3));
     console.log('篝火特写：两堆火 + 两个人');

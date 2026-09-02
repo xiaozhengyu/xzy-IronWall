@@ -1,5 +1,6 @@
 import { Buffer, BufferUsage, Geometry, GlProgram, Mesh, Rectangle, Shader } from 'pixi.js';
 import { type Rgba } from './color';
+import { ellipseSegments, unitCircle } from './ellipseFan';
 import type { PrimitiveSink } from './shapeBatch';
 
 /**
@@ -22,42 +23,6 @@ import type { PrimitiveSink } from './shapeBatch';
  * 这也正是 ShapeBatch 顶上那段注释里说的、移植时因为"WebGL 这边没有等价的廉价通道"而放弃
  * 的做法 —— 那个判断当时是对的，但 Pixi 8 的自定义 Mesh 已经把这条通道给回来了。
  */
-
-/**
- * 圆盘/椭圆展开成多少段。
- *
- * 沿用 Pixi 的公式再封一个顶：段数少了轮廓会和原来对不上。离线逐像素比过 —— 段数压到
- * 6/8/12 那一档时，有 0.8% 的像素和 Graphics 那条路不同（都在圆的边缘）；照 Pixi 的公式
- * 走，差异降到 0.0%（8928 个像素里差 3 个）。
- *
- * 敢用大段数是因为三角形本身不要钱：满屏一千人也就三十几万个三角形，GPU 根本不在乎。
- * 真正会疼的是每段一次 cos/sin，那笔开销由下面的单位圆查表消掉了。
- */
-function segmentsFor(rx: number, ry: number): number {
-  const n = Math.ceil(2.3 * Math.sqrt(rx + ry)) * 4;
-  return n < 6 ? 6 : n > 32 ? 32 : n;
-}
-
-/**
- * 单位圆的采样表，按段数缓存。
- *
- * 不查表的话，八千多个椭圆乘二十来段就是每帧二十万次 cos/sin —— 那笔钱比它省下的三角形贵
- * 得多。段数只有十来种取值，表一次建好就一直用。
- */
-const unitCircles = new Map<number, Float32Array>();
-function unitCircle(n: number): Float32Array {
-  let t = unitCircles.get(n);
-  if (!t) {
-    t = new Float32Array(n * 2);
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2;
-      t[i * 2] = Math.cos(a);
-      t[i * 2 + 1] = Math.sin(a);
-    }
-    unitCircles.set(n, t);
-  }
-  return t;
-}
 
 /** 顶点着色器。uniform 的名字必须和 Pixi 内部约定一致，绑定由 Mesh 的适配器负责。 */
 const VERTEX = `#version 300 es
@@ -196,7 +161,7 @@ export class PrimitiveMesh implements PrimitiveSink {
 
   /** 一个椭圆（圆盘是 rx === ry），扇形展开。 */
   ellipse(cx: number, cy: number, rx: number, ry: number, rotation: number, color: Rgba): void {
-    const n = segmentsFor(rx, ry);
+    const n = ellipseSegments(rx, ry);
     if (this.vertices + n + 1 > this.colors.length || this.indexCount + n * 3 > this.indices.length) {
       this.overflow++;
       return;
