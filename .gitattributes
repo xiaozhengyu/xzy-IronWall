@@ -1,0 +1,35 @@
+# 换行统一。
+#
+# 不靠每个人的 core.autocrlf 设置 —— 那是**机器**的配置，装一台新机器忘了设就会带进来
+# 一次全文件 diff，而且在两个平台上协作时两边的默认值恰好相反。写进 .gitattributes 之后
+# 规则跟着仓库走，谁 clone 都一样。
+#
+# text=auto：由 git 判断哪些是文本文件（二进制的一律不碰）。
+# eol=lf：文本文件在仓库里和工作区里都用 LF。Windows 上现在的编辑器和工具链都认 LF，
+#         而混着两种换行的仓库迟早会产生一次"整个文件都变了"的假 diff。
+* text=auto eol=lf
+
+# 显式标成二进制的：git 不做换行转换，diff 也不会试图按行比较。
+# 图片
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+# 音频（割草游戏迟早要用）
+*.mp3 binary
+*.ogg binary
+*.wav binary
+# 字体
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+
+# SVG 是文本，让它走正常的 diff。
+*.svg text eol=lf
+
+# Windows 的批处理必须是 CRLF，否则 cmd 解析会出问题。
+*.bat text eol=crlf
+*.cmd text eol=crlf
