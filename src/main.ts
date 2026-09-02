@@ -72,6 +72,8 @@ const menu = new Menu({
       drawn: scene.drawn,
       hp: battle.player.hp,
       maxHp: battle.player.maxHp,
+      invincible: battle.invincible,
+      spawnBatch: battle.spawnBatch,
       fps: lastFps,
       simMs: battle.simMs,
       buildMs: scene.buildMs,
@@ -193,12 +195,20 @@ function onKeyPressed(code: string): void {
   }
   if (code === 'KeyC') weather.cloudiness = weather.cloudiness > 0.05 ? 0 : 0.55;
   if (code === 'KeyG') weather.windSpeed = weather.windSpeed > 0.6 ? 0.1 : 0.9;
-  if (code === 'KeyR') battle.reset(camera.viewRadius);
+  if (code === 'KeyR') battle.reset(viewOf());
 
   // 颗粒度：人由多少像素构成。
   if (code === 'Minus') camera.zoom(false);
   if (code === 'Equal') camera.zoom(true);
   if (code === 'Digit0') camera.resetZoom();
+
+  // 生命上限。调试同屏几百人的时候用，顶格是无敌。
+  if (code === 'KeyN') battle.nudgeMaxHp(-1);
+  if (code === 'KeyM') battle.nudgeMaxHp(1);
+
+  // 出兵批量：一次涌上来几个。
+  if (code === 'Semicolon') battle.nudgeSpawnBatch(-1);
+  if (code === 'Quote') battle.nudgeSpawnBatch(1);
 
   // 同屏上限。往上顶到帧时间开始涨为止，那才是真正的天花板。
   if (code === 'Comma') battle.maxEnemies = Math.max(10, battle.maxEnemies - 30);
@@ -258,9 +268,17 @@ function readInput() {
   };
 }
 
-/** 这一帧看得见多大范围。出怪圈和"要不要搭姿势"按它算。 */
+/**
+ * 这一帧的视野。当前的那一份给性能裁剪用，出货那一份给出怪用 —— 见 BattleView。
+ */
 function viewOf() {
-  return { x: camera.x, y: camera.y, radius: camera.viewRadius };
+  const player = battle.player;
+  return {
+    x: camera.x,
+    y: camera.y,
+    radius: camera.viewRadius,
+    spawn: camera.shipViewport(player.x, player.y, field.width, field.height),
+  };
 }
 
 function draw(): void {
@@ -281,7 +299,7 @@ const start = camera.worldToScreen(battle.player.x, battle.player.y);
 controls.placeCursor(start.x, start.y + 30);
 
 await boot('布置战场');
-battle.seed(camera.viewRadius);
+battle.seed(viewOf());
 bootDone += FIELD_WEIGHT;
 
 // 先跑一个零步长的 update 再画。update(0) 不推进任何东西，但会让每个人把姿势搭出来 ——

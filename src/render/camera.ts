@@ -16,6 +16,8 @@ export class Camera {
   static readonly MIN_GRAIN = 0.22;
   static readonly MAX_GRAIN = 8;
   static readonly DEFAULT_GRAIN = 3;
+  /** 出货时的放大倍数。和 DEFAULT_GRAIN 一起定义了"上线后玩家实际看到多大一块地"。 */
+  static readonly DEFAULT_MAGNIFY = 2;
 
   /**
    * 投影缩放，决定**人由多少个像素构成**。1 是 overlord 的出货尺寸（人约 12 像素高），
@@ -61,17 +63,51 @@ export class Camera {
   }
 
   /**
-   * 跟着一个点走，但夹在场地里。
+   * 镜头在一根轴上停在哪儿。
    *
    * 人不钉死在屏幕中心：场地是有边界的，镜头贴着边走出去就会露出场外的虚空。所以镜头跟随
    * 玩家、但被夹在场内，玩家走到角落时是他在画面上偏出去，而不是画面跟着飘出场。
-   * 场地在某个轴上比视野还小时就居中 —— 夹取的上下界会交叉，不特判会抖。
+   * 场地在这根轴上比视野还小时就居中 —— 夹取的上下界会交叉，不特判会抖。
    */
+  private static center(target: number, half: number, extent: number): number {
+    return extent <= half * 2 ? extent * 0.5 : clamp(target, half, extent - half);
+  }
+
+  /** 跟着一个点走，但夹在场地里。 */
   follow(targetX: number, targetY: number, fieldW: number, fieldH: number): void {
-    const hw = this.halfW;
-    const hh = this.halfH;
-    this.x = fieldW <= hw * 2 ? fieldW * 0.5 : clamp(targetX, hw, fieldW - hw);
-    this.y = fieldH <= hh * 2 ? fieldH * 0.5 : clamp(targetY, hh, fieldH - hh);
+    this.x = Camera.center(targetX, this.halfW, fieldW);
+    this.y = Camera.center(targetY, this.halfH, fieldH);
+  }
+
+  /**
+   * **出货那一档**缩放下的视口：镜头会停在哪儿、有多大。
+   *
+   * 滚轮缩放是调试用的旋钮，上线之后视口不可调。出怪必须按这一档算，不能按当前这一档 ——
+   * 拉远看全景的时候，当前视口能有几千个世界单位宽，出怪圈跟着涨出去，人就得从地图边上走
+   * 老半天才进画面。那是调试造成的假象，不是游戏该有的节奏。
+   *
+   * 中心也要按这一档重新夹一次，不能沿用当前镜头：拉远到整张图都装得下时，当前镜头钉在
+   * 场心，而玩家可能在角上 —— 那时他会落在这个小框**外面**，射线求交解出负数，人就直接刷
+   * 在脚底下了。
+   */
+  shipViewport(
+    targetX: number,
+    targetY: number,
+    fieldW: number,
+    fieldH: number,
+  ): { x: number; y: number; halfW: number; halfH: number } {
+    // viewWidth 是按当前 magnify 折算过的缓冲宽度，先还原成物理像素，再按出货那一档折回世界单位。
+    const physicalW = this.viewWidth * this.magnify;
+    const physicalH = this.viewHeight * this.magnify;
+    const scale = Camera.DEFAULT_MAGNIFY * Camera.DEFAULT_GRAIN;
+    const halfW = (physicalW * 0.5) / scale;
+    const halfH = (physicalH * 0.5) / (scale * Projection.groundSquash);
+    return {
+      x: Camera.center(targetX, halfW, fieldW),
+      y: Camera.center(targetY, halfH, fieldH),
+      halfW,
+      halfH,
+    };
   }
 
   /** 世界上的一点落在缓冲的哪个像素上。 */

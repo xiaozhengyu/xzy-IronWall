@@ -21,6 +21,11 @@ export interface MenuState {
   drawn: number;
   hp: number;
   maxHp: number;
+  /** 生命顶到了"无敌"那一档，显示成文字而不是一串九。 */
+  invincible: boolean;
+
+  /** 一个出怪间隔放几个人。菜单里可调。 */
+  spawnBatch: number;
 
   fps: number;
   /** 逻辑和绘制各自花掉的毫秒。暂停时世界是冻住的，这里是暂停那一刻的值。 */
@@ -193,7 +198,9 @@ export class Menu {
     this.stats.kills.textContent = String(s.kills);
     this.stats.alive.textContent = `${s.alive} / 画 ${s.drawn}`;
     this.stats.deaths.textContent = String(s.deaths);
-    this.stats.hp.textContent = `${Math.max(0, Math.ceil(s.hp))} / ${s.maxHp}`;
+    this.stats.hp.textContent = s.invincible
+      ? '无敌'
+      : `${Math.max(0, Math.ceil(s.hp))} / ${s.maxHp}`;
 
     this.stats.fps.textContent = String(Math.round(s.fps));
     this.stats.sim.textContent = `${s.simMs.toFixed(1)} ms`;
@@ -207,6 +214,8 @@ export class Menu {
 
     this.spins.grain.textContent = `颗粒度 ${s.grain.toFixed(1)} · 人高 ${s.figurePixels} px`;
     this.spins.magnify.textContent = `放大 ${s.magnify}x · 屏幕 ${s.figureScreen} px`;
+    this.spins.hp.textContent = s.invincible ? '生命 无敌' : `生命 ${s.maxHp}`;
+    this.spins.spawn.textContent = `出兵 x${s.spawnBatch}`;
     this.spins.enemies.textContent = `同屏上限 ${s.maxEnemies}`;
   }
 
@@ -248,6 +257,7 @@ export class Menu {
 
     this.detail.appendChild(el('div', 'menu-rule'));
 
+    // 两行四列，一行一组：战况 / 性能。
     const stats = el('div', 'menu-stats');
     this.stats.kills = stat(stats, '击杀');
     this.stats.alive = stat(stats, '场上');
@@ -290,6 +300,9 @@ export class Menu {
     fight.appendChild(this.toggle('自动攻击', 'F', 'KeyF', (s) => s.autoAttack));
     fight.appendChild(this.toggle('骨架', 'K', 'KeyK', (s) => s.skeleton));
     fight.appendChild(this.button('清场重来', 'R', 'KeyR'));
+    // 两个独立的旋钮：出兵管**涌得多快**，同屏上限管**场上能挤多少**。
+    fight.appendChild(this.spin('hp', 'KeyN', 'KeyM'));
+    fight.appendChild(this.spin('spawn', 'Semicolon', 'Quote'));
     fight.appendChild(this.spin('enemies', 'Comma', 'Period'));
 
     // ---- 天气

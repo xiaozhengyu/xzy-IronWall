@@ -1,4 +1,5 @@
 import { attackDuration } from '../characters/animator';
+import { RigSpec } from '../characters/rig';
 import { PALETTE_BLUE, PALETTE_PEASANT, PALETTE_RED, type CharacterPalette } from '../characters/palette';
 import { type UnitDef, UnitPresets } from '../characters/unitDef';
 import { clamp } from '../core/math';
@@ -7,6 +8,7 @@ import { Character } from './character';
 import { isFreeSpot, moveWithCollision } from './collision';
 import { inAttackArc } from './combat';
 import type { Field } from './field';
+import { SpatialGrid } from './grid';
 
 /**
  * 一局割草：场上的所有人，以及他们之间发生的事。
@@ -28,6 +30,53 @@ const HUMAN_PACE = 16;
 /** 玩家的基础移动速度，以及按住 Shift 的速度。 */
 const PLAYER_SPEED = 32;
 const PLAYER_RUN_SPEED = 60;
+/**
+ * 找空位时往前看多远（按两人该有的间距的倍数），以及绕行时切向分量给到多少。
+ *
+ * 敌人围住玩家之后要**站定**，不能继续往里挤 —— 挤是塌陷的唯一来源。但光"挡住就停"不够：
+ * 那样人只会沿半径方向一层层堆叠，内圈那一环永远填不满，玩家周围反而空。所以挡住之后要
+ * 沿切线**绕行**去找空位，绕不到就停在外面（哪怕在屏幕外）。
+ *
+ * SIDESTEP 是绕行时切向占的权重。给满 1 会让人绕着玩家转圈永远不进来；太小又绕不开。
+ *
+ * SIDESTEP_SPEED 是绕行时的速度，按步速的几成算；SIDESTEP_NEAR 让它**随着离玩家变远再衰减**。
+ * 围满之后那一圈没有缺口，全速绕行就是几百个人贴着人堆原地转圈 —— 整个画面一直在闪，而没有
+ * 一个人真的挪到了更好的位置。
+ *
+ * 两段式而不是一刀切，是因为前后排要的东西不一样：贴着玩家那一圈得继续抢位置，人一死立刻
+ * 有人补上，不然清场速度会塌；而后排怎么挪都轮不到他们，那点动作纯粹是噪声。所以近处保留
+ * 绕行、远处按 SIDESTEP_NEAR/dist 衰减下去 —— 屏幕上绝大多数人属于后排，画面因此静下来。
+ *
+ * 真正在闪的是**步态**，不是位移：动画器按 speed/walkSpeed 混合走路循环，全速绕行时后排的
+ * 幅度有 0.45，几百个人一起走就是满屏在晃。0.12 这一档把它压到 0.15，前排还留着 0.26 在补位。
+ * 扫过 0.3 / 0.2 / 0.12 / 0.06：再往下清场速度开始塌（站桩测法下从 3.6 掉到 2.9），收益却
+ * 只剩零点几。想让人群更活就往上调，更静就往下。
+ *
+ * 试过两条"干脆让他停住"的路，都失败了，记在这儿免得再走一遍：
+ *
+ *   左右也堵住就停 —— 密集场里每个人旁边都有人，整片人冻成一块，连该进攻的前排都不动。
+ *   排在站定的人后面就站定 —— 会死锁。人群冻成刚体之后，玩家把正面扇区清空，空出来的地方
+ *     再没人流进去（边上的人被站定的邻居锁着，而那些邻居不在攻击弧里永远不死），二十秒里
+ *     一个都杀不掉。
+ *
+ * 教训是一样的：人群必须保持能流动，"减少移动"只能靠**压低速度**，不能靠禁止移动。
+ */
+const SLOT_LOOKAHEAD = 1.5;
+const SIDESTEP = 0.9;
+const SIDESTEP_SPEED = 0.12;
+const SIDESTEP_NEAR = 45;
+
+/** 大到打不完，当"无敌"用。不使用 Infinity：省得血量参与运算的地方冒出 NaN。 */
+export const INVINCIBLE_HP = 999999;
+
+/**
+ * 生命值的档位。菜单里那个 [− 生命 N +] 在这张表上走。
+ *
+ * 走梯子不走等差：调试同屏几百人的时候，二十点血撑不过两秒，而一格一格加十点要按半天。
+ * 顶格是 INVINCIBLE_HP，面板上显示成"无敌"。
+ */
+const HP_LADDER = [5, 10, 20, 50, 100, 200, 500, 1000, INVINCIBLE_HP];
+
 const PLAYER_HP = 20;
 
 /**
@@ -48,6 +97,64 @@ const SPAWN_INTERVAL = 0.18;
 const SEED_COUNT = 30;
 
 /**
+ * 出兵倍率的上限。
+ *
+ * 这个值现在是**手调的**，菜单里那个 [− 出兵 xN +] 就是它，随游戏进行自动涨是后面做游戏性
+ * 时的事，这里不掺和。
+ */
+const MAX_SPAWN_BATCH = 12;
+
+/**
+ * 出怪点落在视口外多远，以及随机抖动的幅度。
+ *
+ * 只要出了视口就看不见，所以这个数不用大 —— 它决定的是"敌人从看不见的地方走进来要多久"。
+ * 给得太大，玩家清完一波要等上好几秒；太小，缩放拉远的那一帧可能刚好把人露出来。
+ */
+const SPAWN_MARGIN = 12;
+const SPAWN_JITTER = 45;
+
+/**
+ * 允许在地图外多远的地方出怪。
+ *
+ * 图外**是可以出人的**，而且必须可以：玩家贴到边界时，四周有大半个方向在图外，只在图内找
+ * 位置的话那些方向一个人也生不出来 —— 于是人只从场内一侧涌来，包围感直接没了。相机被夹在
+ * 场内，图外永远不会出现在画面上，所以那里生出来的人是从视野外走进来的，和场内没有区别。
+ *
+ * 留一个上限只是为了兜住"缩放拉到全景"那种情形：那时视口比整张图还大，射线要跑很远才出得
+ * 去，不夹一下会把人扔到几千个单位以外，走一分钟都到不了。
+ */
+const SPAWN_OUTSIDE = 300;
+
+/**
+ * 人群间距的倍率，乘在 Character.spacing（躯干半宽）上。可运行时调，用来对比手感。
+ */
+/**
+ * 人群间距的倍率，乘在 Character.spacing（躯干半宽）上。
+ *
+ * 1 是"两个人的躯干圆刚好相切"。但相切**还不够看**：描边是整层一次的合成通道（见
+ * PixelSurface），不是逐人描的，所以挨在一起的两个人会融成一个带一圈边的团，读不出是两个。
+ * 胳膊还会再往外伸一点，把那点缝也填掉。
+ *
+ * 量出来的：贴身那圈人的中位间距，x1.0 是 7.4 个单位 —— 躯干边缘差 2 个像素才分开，也就是
+ * 还在重叠；x1.5 是 10.5，躯干之间空出 8 个像素（grain 3），而贴身 25 单位内的人数只从
+ * 13 掉到 12。再往上到 x1.6 空隙 11 像素，但贴身圈就掉到 9 人了，密度开始真的变稀。
+ */
+const CROWD_SPACING = 1.5;
+/** 允许调到的上限。 */
+const MAX_CROWD_SPACING = 2.2;
+
+/** 场上最胖的人。格子边长和探测半径都按他算最坏情况。 */
+const MAX_BULK = 1.34;
+/** 最胖那位的站位半径。 */
+const MAX_SPACING = RigSpec.torsoHalfWidth * MAX_BULK;
+
+/** 当前间距下，分离的最大交互距离 —— 也就是格子边长的下限。 */
+const cellSizeFor = (spacing: number): number =>
+  Math.ceil(RigSpec.torsoHalfWidth * MAX_BULK * 2 * spacing);
+
+
+
+/**
  * 追击提速的两头和倍率。见下面敌人 AI 里那段注释。
  *
  * 近的一头（45）要落在贴身那圈人之外：围着玩家的那一坨是被互相推开撑出来的，让他们跟着
@@ -60,6 +167,23 @@ const CHASE_BOOST = 1.8;
 /** 敌人两次出手之间的间隙，秒。给一段随机量，免得一圈人整齐划一地同时挥。 */
 const ENEMY_SWING_GAP = 1.15;
 const ENEMY_SWING_JITTER = 0.7;
+
+/**
+ * 停步之前多长一段距离用来减速，世界单位。
+ *
+ * 不加这一段的话，"走"和"到位站定"之间是个硬开关：停在这个距离上的人每帧都在全速走路循环和
+ * 站姿之间翻，几十个人一起翻就是那种特别刺眼的闪。实测走↔站的跳变占到 5% 的帧。
+ * 有了这段缓冲，人是滑进位置的，速度连续到零。
+ */
+const APPROACH_BAND = 6;
+
+/**
+ * "想走多快"跟随目标值的时间常数，秒。见 Character.crowdPace。
+ *
+ * 0.18 秒：足够把每两三帧一次的抖动抹平，又不至于让人在前排腾出位置时反应迟钝（那会掉清场
+ * 速度）。用 1 - exp(-dt/τ) 而不是定值系数，掉帧时行为才不变。
+ */
+const PACE_TAU = 0.18;
 
 /** 玩家倒下之后躺多久重开。 */
 const RESPAWN_DELAY = 1.2;
@@ -98,13 +222,25 @@ export interface BattleInput {
   running: boolean;
 }
 
-/** 这一帧看得见多大范围。出怪圈和"要不要搭姿势"都按它算。 */
+/**
+ * 这一帧的视野。两个框，各管各的事。
+ *
+ * 出怪用 spawn 那个框，它按**出货那一档**缩放算，和运行时的滚轮无关 —— 缩放是调试旋钮，
+ * 上线后视口固定，出怪的节奏不该跟着调试视角变。而 x/y/radius 是**当前真实**的视野，用来
+ * 判断谁远到不必搭姿势：那是纯性能优化，看得见的人就得搭，跟出货尺寸没关系。
+ *
+ * 出怪框给的是**矩形**而不是一个半径。用绕玩家的圆有个隐蔽的毛病：玩家贴到地图边缘时镜头
+ * 被夹住，人就偏出了画面中心，这时以玩家为心、半径等于视口对角线的圆**盖不住整个视口**
+ * —— 偏出去的那一侧会有敌人当着面刷出来。
+ */
 export interface BattleView {
-  /** 镜头中心的世界坐标。 */
+  /** 当前镜头中心的世界坐标。 */
   x: number;
   y: number;
-  /** 视野半径，世界单位。 */
+  /** 当前视口对角线的一半。只用来判断谁远到不必搭姿势。 */
   radius: number;
+  /** 出怪框：出货那一档缩放下的视口，中心也按那一档夹过。 */
+  spawn: { x: number; y: number; halfW: number; halfH: number };
 }
 
 const smooth = (prev: number, now: number): number => prev * 0.9 + now * 0.1;
@@ -126,8 +262,86 @@ export class Battle {
    * 重新三角化并重传顶点缓冲。那件事确实在发生，但 Pixi 的批处理器远比预期快，几千个图元不是
    * 问题 —— 这个上限是猜的，不是量出来的。所以做成可调的，顶到帧时间开始涨为止。
    */
+  /**
+   * 同屏上限，运行时可调（逗号/句号）。
+   *
+   * 一开始定在 90 是出于对渲染开销的担心：每个人六十多个图元，每帧全部重新灌进一个 Graphics
+   * 重新三角化并重传顶点缓冲。那件事确实在发生，但 Pixi 的批处理器远比预期快，几千个图元不是
+   * 问题 —— 这个上限是猜的，不是量出来的。所以做成可调的，顶到帧时间开始涨为止。
+   */
   maxEnemies = 90;
   autoAttack = true;
+
+  /** 生命上限顶到了"无敌"那一档没有。面板要显示成文字，不是一串九。 */
+  get invincible(): boolean {
+    return this.player.maxHp >= INVINCIBLE_HP;
+  }
+
+  /**
+   * 调生命上限，沿 HP_LADDER 走一格，并把血补满。
+   *
+   * 补满是有意的：调血量只在调试时用，留着半管血继续打没有意义，还会让"改完之后到底死没死"
+   * 变成两个变量的事。
+   */
+  nudgeMaxHp(delta: number): void {
+    let at = HP_LADDER.indexOf(this.player.maxHp);
+    // 当前值不在梯子上（比如以前手改过）就从第一个不小于它的档起步。
+    if (at < 0) {
+      at = HP_LADDER.findIndex((v) => v >= this.player.maxHp);
+      if (at < 0) at = HP_LADDER.length - 1;
+    }
+    const next = clamp(at + delta, 0, HP_LADDER.length - 1);
+    this.player.maxHp = HP_LADDER[next];
+    this.player.hp = this.player.maxHp;
+  }
+
+  /**
+   * 一个出怪间隔里放几个人进来。菜单里那个 [− 出兵 xN +]。
+   *
+   * x1 是一个一个挪进画面，往上调就是一小群一小群涌上来。真正能站多少人仍然由 maxEnemies
+   * 兜着 —— 这两个是独立的旋钮：一个管**涌得多快**，一个管**场上能挤多少**。
+   */
+  spawnBatch = 1;
+
+  private innerCrowdSpacing = CROWD_SPACING;
+
+  /**
+   * 人群间距倍率，乘在躯干半宽上。1 就是两个人的躯干圆刚好相切。
+   *
+   * 调大人堆更松、更读得出个数，调小更挤。夹在上限里是因为 GRID_CELL 是按上限算死的 ——
+   * 超过它，分离就会开始漏判边上的人，症状是偶尔两个人穿模，很难查。
+   */
+  get crowdSpacing(): number {
+    return this.innerCrowdSpacing;
+  }
+  set crowdSpacing(value: number) {
+    this.innerCrowdSpacing = clamp(value, 0.2, MAX_CROWD_SPACING);
+    // 格子必须跟着交互距离走：小了分离会漏判（偶尔两个人穿模，很难查），大了每次查询白扫
+    // 一堆够不着的人。
+    this.grid.setMinCellSize(cellSizeFor(this.innerCrowdSpacing));
+  }
+
+  /** 调出兵批量。菜单和键盘走同一条路。 */
+  nudgeSpawnBatch(delta: number): void {
+    this.spawnBatch = clamp(this.spawnBatch + delta, 1, MAX_SPAWN_BATCH);
+  }
+
+  /**
+   * 分离要跑几趟。
+   *
+   * 这个数曾经高达 16，因为那时敌人会无视前方一直往里挤，分离是唯一的对抗力量 —— 而位置
+   * 松弛一趟只能把每对的重叠推开一半、且"我被推开"要一趟才传给身后那个人，十几排深的人堆
+   * 就得十几趟才收敛。现在 slotAhead 让人在挤上之前就停下绕行，压力从源头没了，分离退回成
+   * 收尾用的小修补。
+   *
+   * 实测（同屏 1000）：1 趟还有 3% 的人视觉上叠着，2 趟就是 0%，再往上到 16 趟间距没有任何
+   * 变化，只有逻辑时间从 2.5 毫秒涨到 5.1。取 3 是在 2 的基础上留一点余量。
+   *
+   * 注意这个数和 slotAhead 是一对：哪天把找空位那段去掉，这里必须变回十几趟。
+   */
+  private get separationPasses(): number {
+    return 3;
+  }
 
   /** 逻辑这一段花掉的毫秒，指数平滑。暂停面板要读。 */
   simMs = 0;
@@ -135,8 +349,16 @@ export class Battle {
   private readonly field: Field;
   private spawnTimer = 0;
 
+  /**
+   * 邻居查表。每帧重建一次，分离和"把人推出玩家身体"都走它。
+   *
+   * 它自己按人群的包围盒开表，所以图外那一圈不用特意交代 —— 人走到哪儿，表就盖到哪儿。
+   */
+  private readonly grid: SpatialGrid;
+
   constructor(field: Field) {
     this.field = field;
+    this.grid = new SpatialGrid(cellSizeFor(CROWD_SPACING));
     this.player = new Character(PlayerPresets[0].make(), PALETTE_BLUE, HUMAN_PACE);
     this.player.facing = Math.PI * 0.5; // 面朝镜头
     this.player.x = field.width * 0.5;
@@ -160,13 +382,13 @@ export class Battle {
   }
 
   /** 清场重来。 */
-  reset(viewRadius: number): void {
+  reset(view: BattleView): void {
     this.enemies.length = 0;
     this.kills = 0;
     this.player.death = -1;
     this.player.hurt = 0;
     this.player.hp = this.player.maxHp;
-    this.seed(viewRadius);
+    this.seed(view);
   }
 
   /**
@@ -175,34 +397,82 @@ export class Battle {
    * 不铺的话，第一个敌人得从视野外走进来，前几秒是一片空地 —— 而这几秒恰恰是要给人看的那
    * 几秒。铺一批之后一进画面就有活干，后面靠持续出怪接上。
    */
-  seed(viewRadius: number): void {
+  seed(view: BattleView): void {
+    // 铺场要的是"从脚边到视野边缘都有"，所以这一批**不**走视口外那套，直接按距离撒。
+    // 半径同样按出货那一档：调试拉远时不该凭空多铺出几百个人来。
+    const reach = Math.hypot(view.spawn.halfW, view.spawn.halfH);
     for (let i = 0; i < SEED_COUNT; i++) {
-      this.spawn(viewRadius, 30 + Math.random() * (viewRadius - 30));
+      const angle = Math.random() * Math.PI * 2;
+      const r = 30 + Math.random() * Math.max(1, reach - 30);
+      this.place(this.player.x + Math.cos(angle) * r, this.player.y + Math.sin(angle) * r);
     }
   }
 
-  spawn(viewRadius: number, distance?: number): void {
+  /**
+   * 在视口外随机一个方向生一个。
+   *
+   * 方向是均匀的一整圈，不做任何"这边在图外就换一边"的挑拣 —— 那正是包围感的来源。距离按
+   * **沿这个方向走多远才出画面**算，所以每个方向都恰好在看不见的地方生成，不多走一步。
+   */
+  spawn(view: BattleView): void {
+    const angle = Math.random() * Math.PI * 2;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const r = this.exitDistance(cos, sin, view) + SPAWN_MARGIN + Math.random() * SPAWN_JITTER;
+    this.place(this.player.x + cos * r, this.player.y + sin * r);
+  }
+
+  /**
+   * 沿 (cos, sin) 从玩家走多远才离开视口。
+   *
+   * 玩家一定在视口里面（镜头夹取保证了这点），所以四条边里至少有一条在正方向上被穿过，
+   * 取最近的那次穿越就是出口。
+   */
+  private exitDistance(cos: number, sin: number, view: BattleView): number {
+    const box = view.spawn;
+    const px = this.player.x;
+    const py = this.player.y;
+    let t = Infinity;
+    if (cos > 1e-6) t = Math.min(t, (box.x + box.halfW - px) / cos);
+    else if (cos < -1e-6) t = Math.min(t, (box.x - box.halfW - px) / cos);
+    if (sin > 1e-6) t = Math.min(t, (box.y + box.halfH - py) / sin);
+    else if (sin < -1e-6) t = Math.min(t, (box.y - box.halfH - py) / sin);
+    // 玩家在框里的话四条边至少有一条在正方向上被穿过，t 必为正。他要是落在框外（不该发生，
+    // shipViewport 已经把中心夹过了），负的 t 会让人刷在脚底下，所以兜一个对角线。
+    if (!Number.isFinite(t) || t <= 0) return Math.hypot(box.halfW, box.halfH);
+    return t;
+  }
+
+  /**
+   * 真正把一个敌人放到 (x, y) 附近。
+   *
+   * 只夹到"图外一圈"这个大框里，**不**夹回场内 —— 图外生成是有意的，见 SPAWN_OUTSIDE。
+   * 落点和树重叠就沿着原方向往外挪一点重试；图外没有树，所以那边一次就成。
+   */
+  private place(x: number, y: number): void {
     const field = this.field;
     const kind = EnemyKinds[Math.floor(Math.random() * EnemyKinds.length)];
     const e = new Character(kind.def, kind.palette, kind.speed);
 
-    // 沿着视野圈外的一圈随机放，但必须落在场内、并且不和树重叠。试几次，实在找不到就贴到
-    // 边界上 —— 玩家走到角落时，圈上大半个方向都在场外，硬要那个方向就会一个也生不出来。
-    let x = 0;
-    let y = 0;
-    const base = distance ?? viewRadius + 15;
-    for (let attempt = 0; attempt < 12; attempt++) {
-      const angle = Math.random() * Math.PI * 2;
-      const r = base + Math.random() * 45;
-      x = this.player.x + Math.cos(angle) * r;
-      y = this.player.y + Math.sin(angle) * r;
-      if (field.inBounds(x, y) && isFreeSpot(field.terrain, field.props, x, y, e.radius)) break;
-      x = field.clampX(x);
-      y = field.clampY(y);
+    const px = this.player.x;
+    const py = this.player.y;
+    let dx = x - px;
+    let dy = y - py;
+    const len = Math.hypot(dx, dy) || 1;
+    dx /= len;
+    dy /= len;
+
+    let fx = x;
+    let fy = y;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      fx = clamp(x + dx * attempt * 6, -SPAWN_OUTSIDE, field.width + SPAWN_OUTSIDE);
+      fy = clamp(y + dy * attempt * 6, -SPAWN_OUTSIDE, field.height + SPAWN_OUTSIDE);
+      if (isFreeSpot(field.terrain, field.props, fx, fy, e.radius)) break;
     }
-    e.x = x;
-    e.y = y;
-    e.facing = Math.atan2(this.player.y - y, this.player.x - x);
+
+    e.x = fx;
+    e.y = fy;
+    e.facing = Math.atan2(py - fy, px - fx);
     // 随机的初始冷却，免得同一批出生的人到了跟前整齐划一地同时出手。
     e.attackCooldown = Math.random() * ENEMY_SWING_GAP;
     this.enemies.push(e);
@@ -214,9 +484,11 @@ export class Battle {
     const { player, enemies, field } = this;
 
     this.movePlayer(dt, input);
-    this.spawnWave(dt, view.radius);
+    this.spawnWave(dt, view);
     this.swing();
     this.advancePlayerAttack(dt);
+    // 先建一次表：敌人要先查"前面有没有人占着位子"。分离那边会按挪完的位置再建一次。
+    this.grid.build(enemies);
     this.driveEnemies(dt, view);
     this.separate();
 
@@ -229,7 +501,7 @@ export class Battle {
       this.player.hp = this.player.maxHp;
       this.player.hurt = 0;
       enemies.length = 0;
-      this.seed(view.radius);
+      this.seed(view);
     }
 
     // 清掉已经沉下去的尸体。
@@ -317,7 +589,9 @@ export class Battle {
     // —— 走回画面里时下一帧就重新算出正确姿势，看不出接缝。
     const animateRadius = view.radius + 40;
 
-    for (const e of this.enemies) {
+    const enemies = this.enemies;
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
       if (e.alive) {
         const dx = player.x - e.x;
         const dy = player.y - e.y;
@@ -326,7 +600,14 @@ export class Battle {
 
         // 停在攻击距离的八成处，而不是正好在边缘上：卡在边缘的话玩家稍一后退就出圈，一群人
         // 会在"走两步"和"挥一下"之间反复横跳。
-        const stop = e.def.attackRange * 0.8;
+        //
+        // 但不能比"两个人的身体贴在一起"还近 —— 那个距离他**到不了**，会被 clearPlayerBody
+        // 每帧推回来，于是他永远以为自己还在赶路，一直播着走路动画原地踏步。取两者的大者，
+        // 他就停在真正站得住的地方，然后老老实实出手。
+        const stop = Math.max(
+          e.def.attackRange * 0.8,
+          (player.spacing + e.spacing) * this.crowdSpacing,
+        );
         if (dist > stop) {
           // 落远了就跑起来。
           //
@@ -340,8 +621,32 @@ export class Battle {
           // 用一段斜坡而不是一个阈值：硬切会让卡在线上的人每帧在走和跑之间跳，而动画器是按
           // speed 混合步态的，跳档一眼看得出来。走斜坡的话，追上来的人自己就变成跑的姿势。
           const chase = clamp((dist - CHASE_NEAR) / (CHASE_FAR - CHASE_NEAR), 0, 1);
-          const speed = e.walkSpeed * (1 + (CHASE_BOOST - 1) * chase);
-          e.speed = speed;
+          const want = e.walkSpeed * (1 + (CHASE_BOOST - 1) * chase);
+
+          // 找空位：正前方被占了就沿切线绕过去。room 是"还能直着走多少"，0 表示完全被堵。
+          const room = this.slotAhead(i, dx / dist, dy / dist, dist);
+
+          // 越是被堵住越慢，而且越靠后越慢。直行那一份按 room 走全速；绕行那一份先打个折，
+          // 再按离玩家多远衰减 —— 见 SIDESTEP_SPEED 上那段。
+          const shuffle = SIDESTEP_SPEED * clamp(SIDESTEP_NEAR / dist, 0, 1);
+          // 快到站位时再乘一段减速，把"走"和"站定"之间那个硬开关抹平 —— 见 APPROACH_BAND。
+          const approach = clamp((dist - stop) / APPROACH_BAND, 0, 1);
+          // 目标速度不直接用，先滑过去 —— 见 PACE_TAU。
+          const wantPace = (room + (1 - room) * shuffle) * approach;
+          e.crowdPace += (wantPace - e.crowdPace) * (1 - Math.exp(-dt / PACE_TAU));
+          const pace = e.crowdPace;
+
+          const side = this.slotSide;
+          let mx = (dx / dist) * room + (-dy / dist) * side * SIDESTEP * (1 - room);
+          let my = (dy / dist) * room + (dx / dist) * side * SIDESTEP * (1 - room);
+          const mlen = Math.hypot(mx, my);
+          if (mlen > 1e-6) {
+            mx /= mlen;
+            my /= mlen;
+          } else {
+            mx = 0;
+            my = 0;
+          }
           // 没有寻路：撞上障碍就被推开，沿着它蹭过去。绕不过去的死角会卡住，但这张图上没有
           // 能围死人的东西 —— 真需要寻路的时候再说。
           const to = moveWithCollision(
@@ -350,12 +655,21 @@ export class Battle {
             e.radius,
             e.x,
             e.y,
-            e.x + (dx / dist) * speed * dt,
-            e.y + (dy / dist) * speed * dt,
+            e.x + mx * want * pace * dt,
+            e.y + my * want * pace * dt,
           );
+          // 交给动画器的是**实际走了多远**，不是想走多快。
+          //
+          // 这两者在人堆里差得很远：挤在最里圈的人每帧只能蹭出零点几个单位，而按意图报速度
+          // 的话他会以全速播走路循环 —— 一排原地大步流星的人，看着比穿模还假。蹭着树走的
+          // 那种半速也是同一回事。动画器本来就是按 speed 混合步态的，喂给它真值即可。
+          const moved = Math.hypot(to.x - e.x, to.y - e.y);
+          e.speed = dt > 0 ? moved / dt : 0;
           e.x = to.x;
           e.y = to.y;
         } else {
+          // 到位了：站定出手。crowdPace 也归零，免得下次起步带着旧值窜一下。
+          e.crowdPace = 0;
           e.speed = 0;
           e.swing(ENEMY_SWING_GAP + Math.random() * ENEMY_SWING_JITTER);
         }
@@ -368,42 +682,183 @@ export class Battle {
     }
   }
 
+  /** slotAhead 顺带算出来的绕行方向：+1 往左，-1 往右。 */
+  private slotSide = 1;
+
+  /**
+   * 第 i 个敌人朝 (dirX, dirY) 还能直着走多少，0..1；顺带把该往哪边绕写进 slotSide。
+   *
+   * 只给**比我更靠近玩家**的人让路。所有人都朝同一个点收拢，路径必然两两交叉，没有优先权
+   * 的话"别撞上别人"会退化成"谁都别动"；按到玩家的距离排先后天然无环 —— 最里圈那个永远
+   * 不让人，外面的依次绕着它找缝。
+   *
+   * 判的是一条**走廊**而不是扇形：那个人在不在我前面（沿朝向的投影为正且不远），以及他离
+   * 我的行进直线偏多少（横向小于两人该有的间距才算挡路）。扇形会把并排的邻居也算进来，
+   * 围成一圈之后前排互相刹车，谁都够不到玩家。
+   */
+  private slotAhead(i: number, dirX: number, dirY: number, distToPlayer: number): number {
+    const { grid, enemies, crowdSpacing, player } = this;
+    const self = enemies[i];
+    const items = grid.indices;
+    const maxLook = (self.spacing + MAX_SPACING) * crowdSpacing * SLOT_LOOKAHEAD;
+    const span = Math.max(1, Math.ceil(maxLook / grid.cellSize));
+    const cx = grid.colOf(self.x);
+    const cy = grid.rowOf(self.y);
+    const x0 = Math.max(0, cx - span);
+    const x1 = Math.min(grid.cols - 1, cx + span);
+    const y0 = Math.max(0, cy - span);
+    const y1 = Math.min(grid.rows - 1, cy + span);
+
+    let room = 1;
+    let side = 1;
+    for (let gy = y0; gy <= y1; gy++) {
+      for (let gx = x0; gx <= x1; gx++) {
+        const end = grid.end(gx, gy);
+        for (let k = grid.begin(gx, gy); k < end; k++) {
+          const j = items[k];
+          if (j === i) continue;
+          const other = enemies[j];
+          if (!other.alive) continue;
+          const ox = other.x - player.x;
+          const oy = other.y - player.y;
+          if (ox * ox + oy * oy >= distToPlayer * distToPlayer) continue;
+
+          const dx = other.x - self.x;
+          const dy = other.y - self.y;
+          const along = dx * dirX + dy * dirY;
+          if (along <= 0) continue;
+          const touch = (self.spacing + other.spacing) * crowdSpacing;
+          const look = touch * SLOT_LOOKAHEAD;
+          if (along >= look) continue;
+          const lateral = dx * -dirY + dy * dirX;
+          if (Math.abs(lateral) >= touch) continue;
+
+          const k2 = clamp((along - touch) / (look - touch), 0, 1);
+          if (k2 < room) {
+            room = k2;
+            // 往远离他的那一侧绕。他基本正对着我时横向偏移在零附近抖，这时候按符号选边会
+            // 每帧翻一次，人在原地左右抽搐 —— 所以改用这个人固定的习惯侧，见 sideBias。
+            side =
+              Math.abs(lateral) > touch * 0.25 ? (lateral > 0 ? -1 : 1) : self.sideBias;
+          }
+        }
+      }
+    }
+    this.slotSide = side;
+    return room;
+  }
+
   /**
    * 互相推开。不是寻路，只是不让一群人叠在同一个像素上 —— 少了这一步，一百个杂兵会精确地
    * 重合成一个人，人群完全读不出数量。O(n²)，一百多个单位每帧一万次比较，可以忽略。
    */
   private separate(): void {
     const enemies = this.enemies;
+    const grid = this.grid;
+    grid.build(enemies);
+    // 必须在 build **之后**取：人数涨过上次容量时 build 会重开这个数组，先取就拿到旧的那根了。
+    const items = grid.indices;
+
+    for (let pass = 0; pass < this.separationPasses; pass++) {
     for (let i = 0; i < enemies.length; i++) {
       const a = enemies[i];
       if (!a.alive) continue;
-      for (let j = i + 1; j < enemies.length; j++) {
-        const b = enemies[j];
-        if (!b.alive) continue;
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const min = a.radius + b.radius;
-        const d2 = dx * dx + dy * dy;
-        if (d2 >= min * min || d2 < 1e-6) continue;
-        const d = Math.sqrt(d2);
-        const push = (min - d) * 0.5;
-        const nx = (dx / d) * push;
-        const ny = (dy / d) * push;
-        a.x -= nx;
-        a.y -= ny;
-        b.x += nx;
-        b.y += ny;
+      const cx = grid.colOf(a.x);
+      const cy = grid.rowOf(a.y);
+      const x0 = cx > 0 ? cx - 1 : 0;
+      const x1 = cx < grid.cols - 1 ? cx + 1 : grid.cols - 1;
+      const y0 = cy > 0 ? cy - 1 : 0;
+      const y1 = cy < grid.rows - 1 ? cy + 1 : grid.rows - 1;
+
+      for (let gy = y0; gy <= y1; gy++) {
+        for (let gx = x0; gx <= x1; gx++) {
+          const end = grid.end(gx, gy);
+          for (let k = grid.begin(gx, gy); k < end; k++) {
+            // 只处理 j > i：每对人恰好推一次，和原来两层循环的语义一模一样。
+            //
+            // 试过按"到玩家的距离从近到远"排序再扫，指望修正一趟就从里圈推到外圈。实测在
+            // 一千人时间距只从 9.2 变成 9.3（噪声），却多花 0.4 毫秒排序 —— 因为瓶颈根本不
+            // 是修正传得快不快，是那么多人**真的没地方站**（见 separationPasses 上那段）。
+            const j = items[k];
+            if (j <= i) continue;
+            const b = enemies[j];
+            if (!b.alive) continue;
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const min = (a.spacing + b.spacing) * this.crowdSpacing;
+            const d2 = dx * dx + dy * dy;
+            if (d2 >= min * min || d2 < 1e-6) continue;
+            const d = Math.sqrt(d2);
+            const push = (min - d) * 0.5;
+            const nx = (dx / d) * push;
+            const ny = (dy / d) * push;
+            a.x -= nx;
+            a.y -= ny;
+            b.x += nx;
+            b.y += ny;
+          }
+        }
+      }
+    }
+    }
+
+    this.clearPlayerBody();
+  }
+
+  /**
+   * 把压在玩家身上的人推出去。
+   *
+   * 玩家**不动**：他有体积，但质量当成无穷大。互推的话，一圈人能把玩家从人堆里挤出去 ——
+   * 割草游戏里那是最难受的一种失控，明明没按任何键，人却在漂。所以推的是敌人那一边。
+   *
+   * 只查玩家所在的 3x3 格，所以这一步和场上有多少人无关。
+   */
+  private clearPlayerBody(): void {
+    const { player, grid } = this;
+    const items = grid.indices;
+    const enemies = this.enemies;
+    const cx = grid.colOf(player.x);
+    const cy = grid.rowOf(player.y);
+    const x0 = cx > 0 ? cx - 1 : 0;
+    const x1 = cx < grid.cols - 1 ? cx + 1 : grid.cols - 1;
+    const y0 = cy > 0 ? cy - 1 : 0;
+    const y1 = cy < grid.rows - 1 ? cy + 1 : grid.rows - 1;
+
+    for (let gy = y0; gy <= y1; gy++) {
+      for (let gx = x0; gx <= x1; gx++) {
+        const end = grid.end(gx, gy);
+        for (let k = grid.begin(gx, gy); k < end; k++) {
+          const e = enemies[items[k]];
+          if (!e.alive) continue;
+          const dx = e.x - player.x;
+          const dy = e.y - player.y;
+          const min = (player.spacing + e.spacing) * this.crowdSpacing;
+          const d2 = dx * dx + dy * dy;
+          if (d2 >= min * min) continue;
+          if (d2 < 1e-6) {
+            // 正好压在中心：没有方向可推，随便挑一个，下一帧就正常了。
+            e.x = player.x + min;
+            continue;
+          }
+          const d = Math.sqrt(d2);
+          const push = (min - d) / d;
+          e.x += dx * push;
+          e.y += dy * push;
+        }
       }
     }
   }
 
   // ---------------------------------------------------------------- 出怪
 
-  private spawnWave(dt: number, viewRadius: number): void {
+  private spawnWave(dt: number, view: BattleView): void {
     this.spawnTimer += dt;
     while (this.spawnTimer >= SPAWN_INTERVAL) {
       this.spawnTimer -= SPAWN_INTERVAL;
-      if (this.enemies.length < this.maxEnemies) this.spawn(viewRadius);
+      // 一次放一批。批量调大了就是一小群一小群涌上来，不再是一个一个挪进画面。
+      const room = this.maxEnemies - this.enemies.length;
+      const batch = Math.min(this.spawnBatch, room);
+      for (let i = 0; i < batch; i++) this.spawn(view);
     }
   }
 }

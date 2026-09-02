@@ -88,16 +88,6 @@ export class Field {
     return clamp(y, this.edgeMargin, this.height - this.edgeMargin);
   }
 
-  /** 一个点在不在能走的范围里（不含夹取）。出怪找位置用。 */
-  inBounds(x: number, y: number): boolean {
-    return (
-      x > this.edgeMargin &&
-      x < this.width - this.edgeMargin &&
-      y > this.edgeMargin &&
-      y < this.height - this.edgeMargin
-    );
-  }
-
   /**
    * 推进天气和脚印。
    *
