@@ -26,6 +26,8 @@ export interface MenuState {
 
   /** 一个出怪间隔放几个人。菜单里可调。 */
   spawnBatch: number;
+  /** 这一局回收掉多少人（走出回收框、看不见了的）。用来看跑步机转得对不对。 */
+  recycled: number;
 
   fps: number;
   /** 逻辑和绘制各自花掉的毫秒。暂停时世界是冻住的，这里是暂停那一刻的值。 */
@@ -196,7 +198,8 @@ export class Menu {
     const s = this.bridge.read();
 
     this.stats.kills.textContent = String(s.kills);
-    this.stats.alive.textContent = `${s.alive} / 画 ${s.drawn}`;
+    this.stats.alive.textContent = `${s.alive} 画 ${s.drawn}`;
+    this.stats.recycled.textContent = String(s.recycled);
     this.stats.deaths.textContent = String(s.deaths);
     this.stats.hp.textContent = s.invincible
       ? '无敌'
@@ -216,7 +219,7 @@ export class Menu {
     this.spins.magnify.textContent = `放大 ${s.magnify}x · 屏幕 ${s.figureScreen} px`;
     this.spins.hp.textContent = s.invincible ? '生命 无敌' : `生命 ${s.maxHp}`;
     this.spins.spawn.textContent = `出兵 x${s.spawnBatch}`;
-    this.spins.enemies.textContent = `同屏上限 ${s.maxEnemies}`;
+    this.spins.enemies.textContent = `人数上限 ${s.maxEnemies}`;
   }
 
   private setHint(text: string): void {
@@ -257,16 +260,17 @@ export class Menu {
 
     this.detail.appendChild(el('div', 'menu-rule'));
 
-    // 两行四列，一行一组：战况 / 性能。
+    // 三列三行，一行一组：战况 / 场面 / 性能。
     const stats = el('div', 'menu-stats');
     this.stats.kills = stat(stats, '击杀');
-    this.stats.alive = stat(stats, '场上');
     this.stats.deaths = stat(stats, '阵亡');
     this.stats.hp = stat(stats, '生命');
+    this.stats.alive = stat(stats, '场上');
+    this.stats.recycled = stat(stats, '回收');
+    this.stats.primitives = stat(stats, '图元');
     this.stats.fps = stat(stats, '帧率');
     this.stats.sim = stat(stats, '逻辑');
     this.stats.build = stat(stats, '绘制');
-    this.stats.primitives = stat(stats, '图元');
     this.detail.appendChild(stats);
 
     this.detail.appendChild(el('div', 'menu-rule'));

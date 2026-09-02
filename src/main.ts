@@ -74,6 +74,7 @@ const menu = new Menu({
       maxHp: battle.player.maxHp,
       invincible: battle.invincible,
       spawnBatch: battle.spawnBatch,
+      recycled: battle.recycled,
       fps: lastFps,
       simMs: battle.simMs,
       buildMs: scene.buildMs,
@@ -210,9 +211,9 @@ function onKeyPressed(code: string): void {
   if (code === 'Semicolon') battle.nudgeSpawnBatch(-1);
   if (code === 'Quote') battle.nudgeSpawnBatch(1);
 
-  // 同屏上限。往上顶到帧时间开始涨为止，那才是真正的天花板。
-  if (code === 'Comma') battle.maxEnemies = Math.max(10, battle.maxEnemies - 30);
-  if (code === 'Period') battle.maxEnemies = Math.min(1200, battle.maxEnemies + 30);
+  // 人数硬上限。这不是玩法旋钮，是性能兜底 —— 场上有多少人由跑步机自己定，见 DESPAWN_MARGIN。
+  if (code === 'Comma') battle.maxEnemies = Math.max(200, battle.maxEnemies - 250);
+  if (code === 'Period') battle.maxEnemies = Math.min(6000, battle.maxEnemies + 250);
 
   // 放大：一个像素多大。只走整数。
   if (code === 'BracketLeft') camera.nudgeMagnify(-1);

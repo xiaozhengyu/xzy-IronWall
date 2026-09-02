@@ -109,9 +109,43 @@ const MAX_SPAWN_BATCH = 12;
  *
  * 只要出了视口就看不见，所以这个数不用大 —— 它决定的是"敌人从看不见的地方走进来要多久"。
  * 给得太大，玩家清完一波要等上好几秒；太小，缩放拉远的那一帧可能刚好把人露出来。
+ *
+ * 它同时是 DESPAWN_MARGIN 的下限：出怪点必须落在回收框里面，否则人一生出来就被抹掉。
  */
 const SPAWN_MARGIN = 12;
-const SPAWN_JITTER = 45;
+const SPAWN_JITTER = 24;
+
+/**
+ * 视野外多远开始回收，按视口半宽/半高的倍数。
+ *
+ * 跑步机模型的另一半：出怪只管往前补，回收负责把身后跟不上的人抹掉。少了它，玩家一路跑
+ * 过去会拖着一条越来越长的尾巴 —— 那些人永远追不上，只是在白烧 CPU。
+ *
+ * 下限由出怪点定：出怪最远落在视口外 SPAWN_MARGIN + SPAWN_JITTER（36 个单位），而 0.3 个
+ * 视口有 49，生出来不会当场被回收掉。
+ *
+ * 这个数直接决定场上养多少人，而屏幕上看到的几乎不受影响 —— 多出来的全是屏幕外排队的。
+ * 实测站桩：0.5 时场上 1043、屏内 451、逻辑 3.1ms；0.3 时场上 702、屏内 381、逻辑 2.0ms。
+ * 场上少了三分之一，屏内只少 15%，逻辑省了 35% —— 那部分人纯粹是在屏幕外白烧 CPU。
+ */
+const DESPAWN_MARGIN = 0.3;
+
+/**
+ * 玩家在动时，出怪往前方偏多少。0 是四面八方，1 是正后方完全不出。
+ *
+ * 理由是物理性的：玩家跑起来（60）比每一种敌人都快，生在身后的人永远追不上，走两步就被
+ * 回收了 —— 那是纯粹的浪费。偏移量按"玩家跑得多快"缩放，站着不动时自然退回四面八方，
+ * 也就是围杀的那个形态。
+ */
+const FORWARD_BIAS = 0.85;
+
+/**
+ * "算不算在画面里"的余量，世界单位。
+ *
+ * 画面外的人只走计时：不搭姿势（那是每人每帧最贵的一块，而没人看得见），也不找空位。留一点
+ * 余量是为了让人在真正露头之前就已经在正常行事，边界上看不出切换。
+ */
+const SCREEN_SLACK = 40;
 
 /**
  * 允许在地图外多远的地方出怪。
@@ -136,7 +170,8 @@ const SPAWN_OUTSIDE = 300;
  * 胳膊还会再往外伸一点，把那点缝也填掉。
  *
  * 量出来的：贴身那圈人的中位间距，x1.0 是 7.4 个单位 —— 躯干边缘差 2 个像素才分开，也就是
- * 还在重叠；x1.5 是 10.5，躯干之间空出 8 个像素（grain 3），而贴身 25 单位内的人数只从
+ * 还在重叠；x1.5 是 10.5，躯干之间空出 3.1 个世界单位（出货那一档是 12 个像素），而贴身 25
+ * 单位内的人数只从
  * 13 掉到 12。再往上到 x1.6 空隙 11 像素，但贴身圈就掉到 9 人了，密度开始真的变稀。
  */
 const CROWD_SPACING = 1.5;
@@ -263,13 +298,17 @@ export class Battle {
    * 问题 —— 这个上限是猜的，不是量出来的。所以做成可调的，顶到帧时间开始涨为止。
    */
   /**
-   * 同屏上限，运行时可调（逗号/句号）。
+   * 人数硬上限，运行时可调（逗号/句号）。
    *
-   * 一开始定在 90 是出于对渲染开销的担心：每个人六十多个图元，每帧全部重新灌进一个 Graphics
-   * 重新三角化并重传顶点缓冲。那件事确实在发生，但 Pixi 的批处理器远比预期快，几千个图元不是
-   * 问题 —— 这个上限是猜的，不是量出来的。所以做成可调的，顶到帧时间开始涨为止。
+   * 这**不是**同屏上限，也不是玩法旋钮 —— 它是性能兜底。场上有多少人由跑步机自己定：出怪
+   * 往前补、回收往后抹，population 会稳在"回收框装得下多少"上（见 DESPAWN_MARGIN）。这个数
+   * 只负责在某种没预料到的情形下别让人数跑飞。
+   *
+   * 三千是照着回收框反推的：出货视口 240×245（grain 4），放大到 1.3 倍是 312×319，按每人 122
+   * 平方单位算能装约八百人 —— 实测站桩稳在 700 上下，所以正常永远顶不到三千。留这么大的余量是
+   * 因为它跟着 DEFAULT_GRAIN 变：颗粒度调细一档，视口变大，稳态人数也会跟着涨。
    */
-  maxEnemies = 90;
+  maxEnemies = 3000;
   autoAttack = true;
 
   /** 生命上限顶到了"无敌"那一档没有。面板要显示成文字，不是一串九。 */
@@ -298,10 +337,13 @@ export class Battle {
   /**
    * 一个出怪间隔里放几个人进来。菜单里那个 [− 出兵 xN +]。
    *
-   * x1 是一个一个挪进画面，往上调就是一小群一小群涌上来。真正能站多少人仍然由 maxEnemies
-   * 兜着 —— 这两个是独立的旋钮：一个管**涌得多快**，一个管**场上能挤多少**。
+   * x1 是一个一个挪进画面，往上调就是一小群一小群涌上来。
+   *
+   * 注意它**不决定场上有多少人** —— 稳态是回收框定的（见 DESPAWN_MARGIN），出兵再快也只是更快
+   * 顶到那条线。实测（grain 3 那一档视口下）x8 稳在 1335、x20 稳在 1465，差别很小。这个数真正
+   * 影响的是**多快填满**：默认 6 大约几十秒填满一屏，调到 1 要好几分钟。
    */
-  spawnBatch = 1;
+  spawnBatch = 6;
 
   private innerCrowdSpacing = CROWD_SPACING;
 
@@ -342,6 +384,9 @@ export class Battle {
   private get separationPasses(): number {
     return 3;
   }
+
+  /** 这一局回收掉多少人。面板上显示，用来看跑步机转得对不对。 */
+  recycled = 0;
 
   /** 逻辑这一段花掉的毫秒，指数平滑。暂停面板要读。 */
   simMs = 0;
@@ -385,6 +430,7 @@ export class Battle {
   reset(view: BattleView): void {
     this.enemies.length = 0;
     this.kills = 0;
+    this.recycled = 0;
     this.player.death = -1;
     this.player.hurt = 0;
     this.player.hp = this.player.maxHp;
@@ -415,11 +461,53 @@ export class Battle {
    * **沿这个方向走多远才出画面**算，所以每个方向都恰好在看不见的地方生成，不多走一步。
    */
   spawn(view: BattleView): void {
-    const angle = Math.random() * Math.PI * 2;
+    const angle = this.spawnAngle();
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
     const r = this.exitDistance(cos, sin, view) + SPAWN_MARGIN + Math.random() * SPAWN_JITTER;
     this.place(this.player.x + cos * r, this.player.y + sin * r);
+  }
+
+  /**
+   * 这一个从哪个方向来。
+   *
+   * 站着不动就是均匀的一整圈（围杀那个形态）；一旦跑起来就往前方偏 —— 生在身后的人追不上，
+   * 走两步就被回收，纯属浪费。见 FORWARD_BIAS。
+   *
+   * 用拒绝采样而不是解析反变换：权重是 1 + bias·cos(θ−前进方向)，反变换要解一个超越方程，
+   * 而拒绝采样在这个权重下平均一两次就中，还顺带保证了分布是精确的。
+   */
+  private spawnAngle(): number {
+    const bias = clamp(this.player.speed / PLAYER_RUN_SPEED, 0, 1) * FORWARD_BIAS;
+    if (bias < 0.02) return Math.random() * Math.PI * 2;
+    const dir = this.player.facing;
+    for (let i = 0; i < 8; i++) {
+      const a = Math.random() * Math.PI * 2;
+      if (Math.random() * (1 + bias) <= 1 + bias * Math.cos(a - dir)) return a;
+    }
+    return dir;
+  }
+
+  /**
+   * 把跟不上的人抹掉。
+   *
+   * 判的是**出货那一档**的视口再放大 1 + DESPAWN_MARGIN 倍。用出货视口而不是当前视口，是为了
+   * 和出怪保持同一把尺子 —— 否则调试时拉远镜头，出怪按出货框算、回收按当前框算，两边打架。
+   *
+   * 尸体也一起回收：它们已经在画面外，没人看得见，留着只是占着数组。
+   */
+  private recycle(view: BattleView): void {
+    const box = view.spawn;
+    const keepX = box.halfW * (1 + DESPAWN_MARGIN);
+    const keepY = box.halfH * (1 + DESPAWN_MARGIN);
+    const enemies = this.enemies;
+    for (let i = enemies.length - 1; i >= 0; i--) {
+      const e = enemies[i];
+      if (Math.abs(e.x - box.x) <= keepX && Math.abs(e.y - box.y) <= keepY) continue;
+      enemies[i] = enemies[enemies.length - 1];
+      enemies.pop();
+      this.recycled++;
+    }
   }
 
   /**
@@ -484,6 +572,7 @@ export class Battle {
     const { player, enemies, field } = this;
 
     this.movePlayer(dt, input);
+    this.recycle(view);
     this.spawnWave(dt, view);
     this.swing();
     this.advancePlayerAttack(dt);
@@ -585,13 +674,15 @@ export class Battle {
 
   private driveEnemies(dt: number, view: BattleView): void {
     const { player, field } = this;
-    // 画面外的只走计时、不搭姿势。搭姿势加 IK 是每个单位每帧最贵的一块，而屏幕外没人看得见
-    // —— 走回画面里时下一帧就重新算出正确姿势，看不出接缝。
-    const animateRadius = view.radius + 40;
 
     const enemies = this.enemies;
+    const box = view.spawn;
     for (let i = 0; i < enemies.length; i++) {
       const e = enemies[i];
+      // 在不在画面里。找空位和搭姿势都只给画面里的人做。
+      const onScreen =
+        Math.abs(e.x - box.x) <= box.halfW + SCREEN_SLACK &&
+        Math.abs(e.y - box.y) <= box.halfH + SCREEN_SLACK;
       if (e.alive) {
         const dx = player.x - e.x;
         const dy = player.y - e.y;
@@ -624,6 +715,11 @@ export class Battle {
           const want = e.walkSpeed * (1 + (CHASE_BOOST - 1) * chase);
 
           // 找空位：正前方被占了就沿切线绕过去。room 是"还能直着走多少"，0 表示完全被堵。
+          //
+          // 只给**画面里**的人算。跑步机模型下场上能有一两千人，而其中只有一半在屏幕上；
+          // 外面那一半处在人堆的稀疏外围，本来也没人挡路，算了也是白算 —— 而这一步是每帧
+          // 最贵的一块（要按探测半径查好几圈格子）。他们走进画面的那一刻自然就开始找位置，
+          // 中间的重叠由分离一直在收拾，看不出接缝。
           const room = this.slotAhead(i, dx / dist, dy / dist, dist);
 
           // 越是被堵住越慢，而且越靠后越慢。直行那一份按 room 走全速；绕行那一份先打个折，
@@ -675,7 +771,6 @@ export class Battle {
         }
       }
 
-      const onScreen = Math.hypot(e.x - view.x, e.y - view.y) <= animateRadius;
       if (e.update(dt, onScreen) && player.alive && inAttackArc(e, player)) {
         if (player.takeHit(e.x, e.y)) this.deaths++;
       }
