@@ -216,6 +216,19 @@ const TREE_HEIGHT = 30;
 /** 树干挡路的半径。人能走进树冠下面，但撞得到树干。 */
 const TRUNK_RADIUS = TREE_HEIGHT * 0.075;
 
+/**
+ * 四边树墙的厚度，占场地短边的比例。
+ *
+ * 从 7% 提到 11%。7% 的问题不在于薄，在于**它比玩家能贴到的距离还薄**：走位边界只在
+ * 场边留了十二个单位，人一贴到边上，身后那点树全在他脚下，画面外缘直接是空的 —— 一堵
+ * 硬边，而不是一片望不到头的林子。现在走位边界退到 EDGE_MARGIN（六十几个单位），树墙
+ * 得比它厚出一截，人贴到底的时候身后才还剩一层树。
+ *
+ * 上限仍然卡在"边界是个框，不是地图本身"：11% 四条边吃掉每根轴的 22%，中间还剩九百多个
+ * 单位、四十多个人宽的空场。第一版试过的 14% 就是从这条线上翻过去的。
+ */
+const BORDER_FRACTION = 0.11;
+
 /** 材质边界切得多陡。存的场是按整片地图的比例羽化的，这个值把过渡带压到几个色块宽。 */
 const EDGE_HARDNESS = 5.5;
 
@@ -291,6 +304,16 @@ export class Terrain {
 
     this.generate();
     this.placeWeatherPatches();
+  }
+
+  /**
+   * 四边树墙的厚度，世界单位。
+   *
+   * 走位边界要按它退让 —— 这两个数必须一起看，所以把它露出来，而不是让 Field 自己
+   * 再拍一个百分比。
+   */
+  get borderWidth(): number {
+    return Math.min(this.width, this.height) * BORDER_FRACTION;
   }
 
   private index(x: number, y: number): number {
@@ -406,10 +429,10 @@ export class Terrain {
      *
      * 这一圈是纯林地权重，不参与"中间留出开阔地"的削减 —— 它就是要密到底。
      *
-     * 厚度只有边长的 7%。第一版给了 14%，四条边加起来吃掉整张地图的一半 —— 边界应该是
-     * 一个**框**，不是地图本身。割草要的是中间那块能跑开的空地。
+     * 厚度见 BORDER_FRACTION。它和 Field.edgeMargin（走位边界）是一对：树墙必须比人能走到
+     * 的地方更靠外，人贴到边上时身后才还有树。
      */
-    const border = Math.min(w, h) * 0.07;
+    const border = this.borderWidth;
 
     for (let gy = 0; gy <= this.rows; gy++) {
       const wy = gy * this.cellSize;

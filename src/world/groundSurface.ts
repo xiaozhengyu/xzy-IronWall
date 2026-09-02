@@ -52,15 +52,24 @@ export class GroundSurface {
   private bakedKey = -1;
   private pendingKey = 0;
 
-  constructor(terrain: Terrain, weather: Weather) {
+  /**
+   * @param bakeNow 传 false 就把初始底图留给 bakeInitialSlice 分片烘。
+   *
+   *        整片一次烘晴天约三十毫秒 —— 单看不算什么，但它发生在第一帧之前，也就是白屏
+   *        期间，而慢一点的机器上是这个数的三五倍。摊到加载条上之后，那段时间变成一根
+   *        在走的进度条，代价只是构造函数多一个参数。
+   */
+  constructor(terrain: Terrain, weather: Weather, bakeNow = true) {
     this.terrain = terrain;
     this.weather = weather;
 
     this.texWidth = terrain.texWidth;
     this.texHeight = terrain.texHeight;
     this.data = new Uint8Array(this.texWidth * this.texHeight * 4);
-    terrain.bakeRows(this.data, weather, 0, this.texHeight);
-    this.bakedKey = this.weatherKey();
+    if (bakeNow) {
+      terrain.bakeRows(this.data, weather, 0, this.texHeight);
+      this.bakedKey = this.weatherKey();
+    }
 
     this.source = new BufferImageSource({
       resource: this.data,
@@ -91,6 +100,24 @@ export class GroundSurface {
     const snow = Math.round(this.weather.snowCover * WEATHER_STEPS);
     const wet = Math.round(this.weather.wetness * WEATHER_STEPS);
     return snow * (WEATHER_STEPS + 1) + wet;
+  }
+
+  /** 初始底图分成几片。加载条按这个数报进度。 */
+  static readonly INITIAL_SLICES = BAKE_SLICES;
+
+  /**
+   * 烘初始底图的第 i 片（0 到 INITIAL_SLICES-1）。构造时传了 bakeNow=false 才需要调。
+   *
+   * 和运行中改天气走的那条分片重烘是同一个 bakeRows，区别只在于谁来推进度：那边由 update
+   * 每帧推一片，这边由加载条推 —— 加载时还没有帧。
+   */
+  bakeInitialSlice(i: number): void {
+    const slice = Math.ceil(this.texHeight / BAKE_SLICES);
+    this.terrain.bakeRows(this.data, this.weather, i * slice, (i + 1) * slice);
+    if (i >= BAKE_SLICES - 1) {
+      this.bakedKey = this.weatherKey();
+      this.source.update();
+    }
   }
 
   /**
