@@ -1,0 +1,269 @@
+import { clamp, lerp, v2 } from '../core/math';
+import { rgba } from '../render/color';
+import { Projection } from '../render/projection';
+import { Projector } from '../render/projector';
+import type { ShapeBatch } from '../render/shapeBatch';
+import type { Character } from '../game/character';
+import type { Terrain } from '../world/terrain';
+import type { Weather } from '../world/weather';
+
+/**
+ * 由真实的步态触地驱动的水花和雪印。移植自 overlord 的 Effects.FootstepEffects。
+ *
+ * 关键在**触地是从步态相位的跨越读出来的**，不是从脚离地面多近读出来的。看高度会在脚
+ * 贴着地面的每一帧都喷一次，而走路时那是大多数帧；看相位跨越则一步正好一次。
+ *
+ * 三个池子都是有界的，满了就覆盖最老的那个 —— 一场跑很久的仗不能让特效无限堆积。
+ */
+
+const MAX_PRINTS = 420;
+const MAX_RIPPLES = 160;
+const MAX_DROPS = 480;
+/** 雪印留多久。它是"持续"的那一种：雪地上的脚印不会自己消失，只会被新雪盖住。 */
+const PRINT_LIFE = 48;
+
+interface Print {
+  x: number;
+  y: number;
+  facing: number;
+  age: number;
+  strength: number;
+  /** 印子的长宽。靴子细长、指着人朝的方向。 */
+  long: number;
+  wide: number;
+}
+
+interface Ripple {
+  x: number;
+  y: number;
+  age: number;
+  life: number;
+  strength: number;
+}
+
+interface Drop {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  height: number;
+  vz: number;
+  age: number;
+  life: number;
+  radius: number;
+}
+
+export class FootstepEffects {
+  private readonly prints: Print[] = [];
+  private readonly ripples: Ripple[] = [];
+  private readonly drops: Drop[] = [];
+
+  // 池子满了之后从哪里开始覆盖。
+  private printAt = 0;
+  private rippleAt = 0;
+  private dropAt = 0;
+
+  /** 每个单位上一帧的步态相位。跨越检测要用。 */
+  private readonly phase = new WeakMap<Character, number>();
+  private seed = 20260810;
+
+  private rand(): number {
+    this.seed = (this.seed * 1664525 + 1013904223) >>> 0;
+    return this.seed / 0x100000000;
+  }
+
+  get count(): number {
+    return this.prints.length + this.ripples.length + this.drops.length;
+  }
+
+  reset(): void {
+    this.prints.length = 0;
+    this.ripples.length = 0;
+    this.drops.length = 0;
+    this.printAt = 0;
+    this.rippleAt = 0;
+    this.dropAt = 0;
+  }
+
+  update(actors: Iterable<Character>, dt: number, terrain: Terrain, weather: Weather): void {
+    this.age(dt);
+
+    for (const man of actors) {
+      const now = man.gaitPhase;
+      const before = this.phase.get(man);
+      this.phase.set(man, now);
+      if (before === undefined) continue;
+
+      // 站着不动的人不该在原地踩水。1.25 是"确实在走"的下限。
+      if (!man.alive || man.speed < 1.25) continue;
+
+      // 相位 0 开始左脚的支撑段，0.5 开始右脚的。跨过这两个瞬间各产生一次触地。
+      if (now < before) this.contact(man, man.pose.footL, terrain, weather);
+      if (before < 0.5 && now >= 0.5) this.contact(man, man.pose.footR, terrain, weather);
+    }
+  }
+
+  private contact(man: Character, localFoot: { x: number; y: number; z: number }, terrain: Terrain, weather: Weather): void {
+    // 脚是身体局部坐标（x 右、y 前），转到世界用的基和 Projector.ground 完全相同。
+    const sin = Math.sin(man.facing);
+    const cos = Math.cos(man.facing);
+    const wx = man.x + localFoot.x * sin + localFoot.y * cos;
+    const wy = man.y - localFoot.x * cos + localFoot.y * sin;
+
+    const water = clamp(terrain.standingWater(wx, wy, weather), 0, 1);
+    if (water > 0.14) {
+      this.addRipple(wx, wy, water);
+      this.addDrops(wx, wy, man, water);
+    } else if (weather.snowCover > 0.12) {
+      this.addPrint(wx, wy, man.facing, weather.snowCover);
+    }
+  }
+
+  private addPrint(x: number, y: number, facing: number, strength: number): void {
+    push(
+      this.prints,
+      MAX_PRINTS,
+      (i) => (this.printAt = i),
+      this.printAt,
+      { x, y, facing, age: 0, strength: clamp(strength, 0.25, 1), long: 1.45, wide: 0.68 },
+    );
+  }
+
+  private addRipple(x: number, y: number, strength: number): void {
+    push(this.ripples, MAX_RIPPLES, (i) => (this.rippleAt = i), this.rippleAt, {
+      x,
+      y,
+      age: 0,
+      life: 0.42 + strength * 0.18,
+      strength,
+    });
+  }
+
+  private addDrops(x: number, y: number, man: Character, strength: number): void {
+    const count = 3 + Math.round(strength * 3);
+    const vx = Math.cos(man.facing) * man.speed;
+    const vy = Math.sin(man.facing) * man.speed;
+    for (let i = 0; i < count; i++) {
+      const angle = this.rand() * Math.PI * 2;
+      const speed = 5 + this.rand() * (8 + strength * 5);
+      push(this.drops, MAX_DROPS, (n) => (this.dropAt = n), this.dropAt, {
+        x,
+        y,
+        vx: Math.cos(angle) * speed + vx * 0.1,
+        vy: Math.sin(angle) * speed + vy * 0.1,
+        height: 0.15,
+        vz: 7 + this.rand() * 8,
+        age: 0,
+        life: 0.34 + this.rand() * 0.18,
+        radius: 0.45 + this.rand() * 0.48,
+      });
+    }
+  }
+
+  private age(dt: number): void {
+    for (let i = this.prints.length - 1; i >= 0; i--) {
+      const p = this.prints[i];
+      p.age += dt;
+      if (p.age >= PRINT_LIFE) discard(this.prints, i);
+    }
+    for (let i = this.ripples.length - 1; i >= 0; i--) {
+      const r = this.ripples[i];
+      r.age += dt;
+      if (r.age >= r.life) discard(this.ripples, i);
+    }
+    for (let i = this.drops.length - 1; i >= 0; i--) {
+      const d = this.drops[i];
+      d.age += dt;
+      d.x += d.vx * dt;
+      d.y += d.vy * dt;
+      d.height += d.vz * dt;
+      d.vz -= 42 * dt;
+      if (d.age >= d.life || d.height < 0) discard(this.drops, i);
+    }
+  }
+
+  /** 平贴在地上的印子和涟漪：压在地形之上，草、影子和脚之下。 */
+  drawGround(shapes: ShapeBatch, camX: number, camY: number, rootX: number, rootY: number, scale: number): void {
+    const sx = (wx: number) => rootX + (wx - camX) * scale;
+    const sy = (wy: number) => rootY + (wy - camY) * Projection.groundSquash * scale;
+
+    for (const p of this.prints) {
+      const fade = clamp((PRINT_LIFE - p.age) / 10, 0, 1);
+      const alpha = Math.round(fade * lerp(80, 155, p.strength));
+      if (alpha <= 2) continue;
+      const x = sx(p.x);
+      const y = sy(p.y);
+      // 印子指着人当时朝的方向，但方向本身要投影：地面被压扁了，一个朝向 45 度的脚印
+      // 在屏幕上不是 45 度。
+      const rot = Math.atan2(Math.sin(p.facing) * Projection.groundSquash, Math.cos(p.facing));
+      shapes.ellipse(
+        v2(x, y),
+        Math.max(p.long * scale, 0.65),
+        Math.max(p.wide * scale, 0.42),
+        rot,
+        rgba(66, 79, 88, alpha),
+        y * Projector.DEPTH_PER_ROW - 25,
+      );
+    }
+
+    for (const r of this.ripples) {
+      const t = r.age / r.life;
+      const x = sx(r.x);
+      const y = sy(r.y);
+      const radius = lerp(1, 6.2 + r.strength * 2.5, t) * scale;
+      const alpha = Math.round((1 - t) * lerp(105, 190, r.strength));
+      if (alpha <= 2) continue;
+      shapes.ellipseRing(
+        v2(x, y),
+        Math.max(radius, 0.8),
+        Math.max(radius * Projection.groundSquash, 0.5),
+        0,
+        Math.max(0.55, scale * 0.72),
+        rgba(177, 222, 232, alpha),
+        y * Projector.DEPTH_PER_ROW - 24,
+        16,
+      );
+    }
+  }
+
+  /** 飞在空中的水珠。按落点那一行排序，所以它们和溅起它们的人是同一层。 */
+  drawSplashes(shapes: ShapeBatch, camX: number, camY: number, rootX: number, rootY: number, scale: number): void {
+    for (const d of this.drops) {
+      const fade = 1 - d.age / d.life;
+      const gx = rootX + (d.x - camX) * scale;
+      const gy = rootY + (d.y - camY) * Projection.groundSquash * scale;
+      shapes.disc(
+        v2(gx, gy - d.height * Projection.heightSquash * scale),
+        Math.max(0.48, d.radius * scale),
+        rgba(205, 238, 244, Math.round(fade * 220)),
+        gy * Projector.DEPTH_PER_ROW + 3,
+      );
+    }
+  }
+}
+
+/**
+ * 没满就追加，满了就原地覆盖最老的一个。
+ *
+ * 原版一开始是 RemoveAt(0) 把整个列表往前挪一格，在"每人两只脚"的时候还行；一旦水花
+ * 变多，每一次添加都是一次几百项的内存搬移。这里画出来的东西没有任何顺序含义，所以
+ * 最老的那个槽直接重用就行。
+ */
+function push<T>(pool: T[], limit: number, setCursor: (i: number) => void, cursor: number, item: T): void {
+  if (pool.length < limit) {
+    pool.push(item);
+    return;
+  }
+  const at = cursor >= limit ? 0 : cursor;
+  pool[at] = item;
+  setCursor(at + 1);
+}
+
+/**
+ * 用最后一个填洞。在上面那些倒序循环里是安全的：换进来的项来自本帧已经处理过的下标，
+ * 不会被处理两次也不会被跳过。
+ */
+function discard<T>(pool: T[], index: number): void {
+  pool[index] = pool[pool.length - 1];
+  pool.pop();
+}

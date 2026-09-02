@@ -1,0 +1,604 @@
+/**
+ * 离线人物预览：不开浏览器，把 ShapeBatch 的输出自己栅格化成 PNG。
+ *
+ * 存在的理由是人物绘制这套东西几乎全是数值调参 —— 比例、色阶、深度偏移 —— 而判断一次
+ * 改动对不对唯一的办法是看图。跑一次就能拿到一张各朝向、各兵种的对照表，比开着页面来回
+ * 按方向键快得多，也能在没有浏览器的环境里验证移植是否正确。
+ *
+ *   npx esbuild tools/preview.ts --bundle --platform=node --format=esm --outfile=.preview.mjs
+ *   node .preview.mjs
+ */
+
+import { deflateSync } from 'node:zlib';
+import { writeFileSync } from 'node:fs';
+import { CharacterAnimator, attackDuration, attackImpact } from '../src/characters/animator';
+import { PALETTE_BLUE, PALETTE_RED, type CharacterPalette } from '../src/characters/palette';
+import { drawCharacter } from '../src/characters/renderer';
+import { Pose } from '../src/characters/rig';
+import { type UnitDef, UnitPresets } from '../src/characters/unitDef';
+import { ImpactEffects, weaponImpactPoint } from '../src/effects/impact';
+import { v2 } from '../src/core/math';
+import { Projection } from '../src/render/projection';
+import { Projector } from '../src/render/projector';
+import { ShapeBatch } from '../src/render/shapeBatch';
+import { Terrain } from '../src/world/terrain';
+import { Weather } from '../src/world/weather';
+import { Props } from '../src/world/props';
+
+// ---------------------------------------------------------------- 极小的栅格化器
+
+interface Shape {
+  pts: number[];
+  r: number;
+  g: number;
+  b: number;
+  a: number;
+}
+
+/** 冒充 Pixi 的 Graphics：把所有东西摊平成多边形。 */
+class ShapeSink {
+  readonly shapes: Shape[] = [];
+  private pending: number[] | null = null;
+
+  clear(): this {
+    this.shapes.length = 0;
+    this.pending = null;
+    return this;
+  }
+
+  rect(x: number, y: number, w: number, h: number): this {
+    this.pending = [x, y, x + w, y, x + w, y + h, x, y + h];
+    return this;
+  }
+
+  poly(points: number[]): this {
+    this.pending = points.slice();
+    return this;
+  }
+
+  ellipse(x: number, y: number, rx: number, ry: number): this {
+    const pts: number[] = [];
+    const segments = 28;
+    for (let i = 0; i < segments; i++) {
+      const t = (i / segments) * Math.PI * 2;
+      pts.push(x + Math.cos(t) * rx, y + Math.sin(t) * ry);
+    }
+    this.pending = pts;
+    return this;
+  }
+
+  fill(style: { color: number; alpha: number }): this {
+    if (!this.pending) return this;
+    this.shapes.push({
+      pts: this.pending,
+      r: (style.color >> 16) & 0xff,
+      g: (style.color >> 8) & 0xff,
+      b: style.color & 0xff,
+      a: style.alpha,
+    });
+    this.pending = null;
+    return this;
+  }
+}
+
+class Canvas {
+  readonly data: Uint8Array;
+
+  constructor(
+    readonly width: number,
+    readonly height: number,
+    bg: [number, number, number],
+  ) {
+    this.data = new Uint8Array(width * height * 3);
+    for (let i = 0; i < width * height; i++) {
+      this.data[i * 3] = bg[0];
+      this.data[i * 3 + 1] = bg[1];
+      this.data[i * 3 + 2] = bg[2];
+    }
+  }
+
+  /** 在像素中心采样的扫描线填充，不做抗锯齿 —— 和低分辨率缓冲 + 最近邻放大是一回事。 */
+  fillPolygon(shape: Shape): void {
+    const { pts } = shape;
+    const n = pts.length / 2;
+    if (n < 3) return;
+
+    let minY = Infinity;
+    let maxY = -Infinity;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    for (let i = 0; i < n; i++) {
+      const x = pts[i * 2];
+      const y = pts[i * 2 + 1];
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+    }
+
+    const y0 = Math.max(0, Math.floor(minY));
+    const y1 = Math.min(this.height - 1, Math.ceil(maxY));
+    const crossings: number[] = [];
+
+    for (let py = y0; py <= y1; py++) {
+      const sy = py + 0.5;
+      crossings.length = 0;
+      for (let i = 0; i < n; i++) {
+        const ax = pts[i * 2];
+        const ay = pts[i * 2 + 1];
+        const bx = pts[((i + 1) % n) * 2];
+        const by = pts[((i + 1) % n) * 2 + 1];
+        if (ay === by) continue;
+        if (sy >= Math.min(ay, by) && sy < Math.max(ay, by)) {
+          crossings.push(ax + ((sy - ay) / (by - ay)) * (bx - ax));
+        }
+      }
+      if (crossings.length < 2) continue;
+      crossings.sort((a, b) => a - b);
+      for (let c = 0; c + 1 < crossings.length; c += 2) {
+        const x0 = Math.max(0, Math.ceil(crossings[c] - 0.5));
+        const x1 = Math.min(this.width - 1, Math.floor(crossings[c + 1] - 0.5));
+        for (let px = x0; px <= x1; px++) this.blend(px, py, shape);
+      }
+    }
+  }
+
+  private blend(x: number, y: number, s: Shape): void {
+    const i = (y * this.width + x) * 3;
+    const a = s.a;
+    this.data[i] = Math.round(this.data[i] * (1 - a) + s.r * a);
+    this.data[i + 1] = Math.round(this.data[i + 1] * (1 - a) + s.g * a);
+    this.data[i + 2] = Math.round(this.data[i + 2] * (1 - a) + s.b * a);
+  }
+
+  /** 把另一张画布原样贴过来。 */
+  blit(src: Canvas, ox: number, oy: number): void {
+    for (let y = 0; y < src.height; y++) {
+      const dy = oy + y;
+      if (dy < 0 || dy >= this.height) continue;
+      for (let x = 0; x < src.width; x++) {
+        const dx = ox + x;
+        if (dx < 0 || dx >= this.width) continue;
+        const si = (y * src.width + x) * 3;
+        const di = (dy * this.width + dx) * 3;
+        this.data[di] = src.data[si];
+        this.data[di + 1] = src.data[si + 1];
+        this.data[di + 2] = src.data[si + 2];
+      }
+    }
+  }
+
+  /** 最近邻整数放大，看清像素格子。 */
+  upscale(factor: number): Canvas {
+    const out = new Canvas(this.width * factor, this.height * factor, [0, 0, 0]);
+    for (let y = 0; y < out.height; y++) {
+      for (let x = 0; x < out.width; x++) {
+        const si = (Math.floor(y / factor) * this.width + Math.floor(x / factor)) * 3;
+        const di = (y * out.width + x) * 3;
+        out.data[di] = this.data[si];
+        out.data[di + 1] = this.data[si + 1];
+        out.data[di + 2] = this.data[si + 2];
+      }
+    }
+    return out;
+  }
+}
+
+// ---------------------------------------------------------------- PNG 编码
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+const crc32 = (buf: Buffer): number => {
+  let c = 0xffffffff;
+  for (const byte of buf) c = CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+};
+
+const chunk = (type: string, body: Buffer): Buffer => {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(body.length);
+  const typed = Buffer.concat([Buffer.from(type, 'ascii'), body]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(typed));
+  return Buffer.concat([len, typed, crc]);
+};
+
+function writePng(path: string, canvas: Canvas): void {
+  const raw = Buffer.alloc(canvas.height * (canvas.width * 3 + 1));
+  for (let y = 0; y < canvas.height; y++) {
+    const rowStart = y * (canvas.width * 3 + 1);
+    raw[rowStart] = 0; // filter: none
+    Buffer.from(canvas.data.buffer, y * canvas.width * 3, canvas.width * 3).copy(raw, rowStart + 1);
+  }
+
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(canvas.width, 0);
+  ihdr.writeUInt32BE(canvas.height, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // truecolour
+  writeFileSync(
+    path,
+    Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      chunk('IHDR', ihdr),
+      chunk('IDAT', deflateSync(raw)),
+      chunk('IEND', Buffer.alloc(0)),
+    ]),
+  );
+}
+
+// ---------------------------------------------------------------- 出图
+
+interface Cell {
+  def: UnitDef;
+  palette: CharacterPalette;
+  facing: number;
+  /** 步态推进的秒数；0 表示站立。 */
+  walk: number;
+  attack: number;
+  /** 投影缩放，也就是颗粒度：人由多少个像素构成。默认 1 是 overlord 的出货尺寸。 */
+  grain?: number;
+}
+
+function renderCell(cell: Cell, cellW: number, cellH: number, canvas: Canvas, ox: number, oy: number): number {
+  const pose = new Pose();
+  const animator = new CharacterAnimator();
+
+  const walkSpeed = 16;
+  const speed = cell.walk > 0 ? walkSpeed : 0;
+  const dt = 1 / 60;
+  const steps = Math.max(1, Math.round(cell.walk / dt));
+  for (let i = 0; i < steps; i++) animator.update(dt, speed, walkSpeed, cell.def, cell.attack, pose);
+
+  const shapes = new ShapeBatch();
+  const sink = new ShapeSink();
+  // 人站在格子底部往上一点，脚下留出影子的位置。
+  const grain = cell.grain ?? 1;
+  const p = new Projector(v2(ox + cellW / 2, oy + cellH - 6 * grain), cell.facing, Projection.groundSquash, grain);
+  drawCharacter(shapes, pose, p, cell.palette, cell.def);
+  shapes.flush(sink as never);
+
+  for (const s of sink.shapes) canvas.fillPolygon(s);
+  return sink.shapes.length;
+}
+
+const presets: [string, () => UnitDef][] = [
+  ['warlord', UnitPresets.warlord],
+  ['hero', UnitPresets.hero],
+  ['thug', UnitPresets.thug],
+  ['shieldman', UnitPresets.shieldman],
+  ['spearman', UnitPresets.spearman],
+  ['archer', UnitPresets.archer],
+  ['elite', UnitPresets.elite],
+];
+
+// 八个朝向。facing 是地面平面上的角度，PI/2 是朝着镜头。
+const facings = [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75].map((f) => f * Math.PI);
+
+/** 和 src/main.ts 里定下的默认颗粒度保持一致 —— 校对的必须是真正会发布的那个尺寸。 */
+const GRAIN = 3;
+
+// 格子按 grain 一起放大，否则长杆武器会被裁掉：枪杆 15 单位，grain 3 下就是 45 像素。
+const CELL_W = Math.round(36 * GRAIN);
+const CELL_H = Math.round(33 * GRAIN);
+const grid = new Canvas(CELL_W * facings.length, CELL_H * presets.length, [71, 105, 59]);
+
+let total = 0;
+presets.forEach(([, make], row) => {
+  facings.forEach((facing, col) => {
+    total += renderCell(
+      { def: make(), palette: row % 2 === 0 ? PALETTE_BLUE : PALETTE_RED, facing, walk: 0, attack: -1, grain: GRAIN },
+      CELL_W,
+      CELL_H,
+      grid,
+      col * CELL_W,
+      row * CELL_H,
+    );
+  });
+});
+writePng('.preview-facings.png', grid);
+
+// 走路循环：同一个人沿相位取样一整圈。
+const WALK_FRAMES = 8;
+const walkStrip = new Canvas(CELL_W * WALK_FRAMES, CELL_H * 2, [71, 105, 59]);
+for (let i = 0; i < WALK_FRAMES; i++) {
+  // 一个步态循环是 2*stride 的地面距离；stride 约 4.7，所以周期约 0.58 秒。
+  const cycle = 0.585;
+  renderCell(
+    { def: UnitPresets.warlord(), palette: PALETTE_BLUE, facing: Math.PI * 0.5, walk: 0.2 + (i / WALK_FRAMES) * cycle, attack: -1, grain: GRAIN },
+    CELL_W,
+    CELL_H,
+    walkStrip,
+    i * CELL_W,
+    0,
+  );
+  renderCell(
+    { def: UnitPresets.spearman(), palette: PALETTE_RED, facing: 0, walk: 0.2 + (i / WALK_FRAMES) * cycle, attack: -1, grain: GRAIN },
+    CELL_W,
+    CELL_H,
+    walkStrip,
+    i * CELL_W,
+    CELL_H,
+  );
+}
+writePng('.preview-walk.png', walkStrip.upscale(2));
+
+// 攻击动作：剑士横扫 + 弓手开弓。
+const attackStrip = new Canvas(CELL_W * WALK_FRAMES, CELL_H * 2, [71, 105, 59]);
+for (let i = 0; i < WALK_FRAMES; i++) {
+  const t = i / (WALK_FRAMES - 1);
+  renderCell({ def: UnitPresets.warlord(), palette: PALETTE_BLUE, facing: Math.PI * 0.5, walk: 0, attack: t, grain: GRAIN }, CELL_W, CELL_H, attackStrip, i * CELL_W, 0);
+  renderCell({ def: UnitPresets.archer(), palette: PALETTE_RED, facing: Math.PI * 0.5, walk: 0, attack: t, grain: GRAIN }, CELL_W, CELL_H, attackStrip, i * CELL_W, CELL_H);
+}
+writePng('.preview-attack.png', attackStrip.upscale(2));
+
+// 砸击序列：连着模拟一整次攻击，把冲击波也跑出来。
+//
+// 这是唯一能离线看到特效的办法 —— 特效有生命周期，一张静态姿势图里它不存在。这里的
+// 生成/落点逻辑和 main.ts 走的是同一个 weaponImpactPoint 和 attackImpact，所以看到的
+// 就是游戏里会发生的。
+{
+  const FRAMES = 10;
+  const def = UnitPresets.warlord();
+  // 两个朝向。只测"朝向镜头"的话，把地面角度错当成屏幕角度也看不出来 —— 那个错误只在
+  // 侧向时才暴露：弧会歪向一边，或者被地面压扁的比例算错。
+  const FACINGS = [Math.PI * 0.5, 0];
+  // 格子要比别的图高得多，也要把人往上放：冲击弧是朝身前跑出去的，跑完全程比人还长，
+  // 用标准格子的话第二帧之后弧就掉到格子外面了 —— 那会让人误以为特效提前消失了。
+  const TALL = Math.round(CELL_H * 2.1);
+  const strip = new Canvas(CELL_W * FRAMES, TALL * FACINGS.length, [71, 105, 59]);
+  const duration = attackDuration(def);
+  const impact = attackImpact(def);
+  const dt = 1 / 60;
+
+  FACINGS.forEach((facing, row) => {
+  // 人固定站在世界原点，镜头也钉在他身上。
+  const pose = new Pose();
+  const animator = new CharacterAnimator();
+  const effects = new ImpactEffects();
+  let elapsed = 0;
+  let frame = 0;
+
+  // 整段动作按帧推进，到了该出图的时刻就画一格。
+  while (frame < FRAMES) {
+    const before = elapsed / duration;
+    elapsed += dt;
+    const t = Math.min(elapsed / duration, 1);
+
+    animator.update(dt, 0, 16, def, t, pose);
+    if (impact !== null && before < impact && t >= impact) {
+      const at = weaponImpactPoint(pose, def, 0, 0, facing);
+      effects.spawn(at.x, at.y, facing, { power: def.bulk });
+    }
+    effects.update(dt);
+
+    // 取样窗口盖住"整段动作 + 冲击波跑完"，否则最后几格全是已经结束的静止姿势。
+    const window = duration + 0.42;
+    if (elapsed >= ((frame + 0.5) / FRAMES) * window) {
+      const shapes = new ShapeBatch();
+      const sink = new ShapeSink();
+      const ox = frame * CELL_W;
+      const rootX = ox + CELL_W / 2;
+      const rootY = row * TALL + Math.round(TALL * 0.3);
+      effects.draw(shapes, 0, 0, rootX, rootY, GRAIN);
+      drawCharacter(shapes, pose, new Projector(v2(rootX, rootY), facing, Projection.groundSquash, GRAIN), PALETTE_BLUE, def);
+      shapes.flush(sink as never);
+      for (const sh of sink.shapes) strip.fillPolygon(sh);
+      frame++;
+    }
+  }
+  });
+  writePng('.preview-smash.png', strip.upscale(2));
+}
+
+// 特写：单个兵种放大看清楚。调某个部件（武器、盔、盾）时看这张。
+{
+  const rows: [string, () => UnitDef, CharacterPalette][] = [
+    ['warlord', UnitPresets.warlord, PALETTE_BLUE],
+    ['spearman', UnitPresets.spearman, PALETTE_RED],
+    ['elite', UnitPresets.elite, PALETTE_RED],
+  ];
+  const closeFacings = [0, Math.PI * 0.5, Math.PI, Math.PI * 1.5];
+  const sheet = new Canvas(CELL_W * closeFacings.length, CELL_H * rows.length, [71, 105, 59]);
+  rows.forEach(([, make, palette], row) => {
+    closeFacings.forEach((facing, col) => {
+      renderCell(
+        { def: make(), palette, facing, walk: 0, attack: -1, grain: GRAIN },
+        CELL_W,
+        CELL_H,
+        sheet,
+        col * CELL_W,
+        row * CELL_H,
+      );
+    });
+  });
+  writePng('.preview-closeup.png', sheet.upscale(3));
+}
+
+// 颗粒度对照：同一个人在不同的 grain 下画，再各自放大到同样的物理尺寸。
+// 变的只有"他由多少个像素构成"，屏幕上的大小是一样的 —— 这正是运行时那个旋钮在做的事。
+{
+  const BASE_W = 26;
+  const BASE_H = 26;
+  const PRODUCT = 12; // grain × magnify 恒定，所以每格最终都是 BASE × PRODUCT 大
+  const grains = [1, 1.5, 2, 3, 4, 6];
+  const rows: [string, () => UnitDef, CharacterPalette][] = [
+    ['warlord', UnitPresets.warlord, PALETTE_BLUE],
+    ['spearman', UnitPresets.spearman, PALETTE_RED],
+  ];
+
+  const sheet = new Canvas(BASE_W * PRODUCT * grains.length, BASE_H * PRODUCT * rows.length, [71, 105, 59]);
+  rows.forEach(([, make, palette], row) => {
+    grains.forEach((grain, col) => {
+      const cell = new Canvas(Math.round(BASE_W * grain), Math.round(BASE_H * grain), [71, 105, 59]);
+      renderCell(
+        { def: make(), palette, facing: Math.PI * 0.5, walk: 0, attack: -1, grain },
+        cell.width,
+        cell.height,
+        cell,
+        0,
+        0,
+      );
+      sheet.blit(cell.upscale(PRODUCT / grain), col * BASE_W * PRODUCT, row * BASE_H * PRODUCT);
+    });
+  });
+  writePng('.preview-grain.png', sheet);
+  console.log(`颗粒度对照：grain = ${grains.join(' / ')}`);
+}
+
+console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.length))}，共写出 6 张预览图`);
+
+
+// ---------------------------------------------------------------- 野战场
+
+/**
+ * 地面是烘成一张 RGBA 图的，所以整片场地可以直接写成 PNG —— 这是检查地形布局（路、
+ * 水塘、林地的位置和比例）最直接的办法，比在游戏里走一圈快得多。
+ */
+{
+  const FIELD_W = 1200;
+  const FIELD_H = 1200;
+  const terrain = new Terrain(FIELD_W, FIELD_H, 20260902);
+
+  const weather = new Weather();
+  const baked = terrain.bakeGround(weather);
+  const map = new Canvas(baked.texWidth, baked.texHeight, [0, 0, 0]);
+  for (let i = 0; i < baked.texWidth * baked.texHeight; i++) {
+    map.data[i * 3] = baked.data[i * 4];
+    map.data[i * 3 + 1] = baked.data[i * 4 + 1];
+    map.data[i * 3 + 2] = baked.data[i * 4 + 2];
+  }
+  writePng('.preview-field.png', map.upscale(2));
+  console.log(`野战场 ${FIELD_W}x${FIELD_H}，地面纹理 ${baked.texWidth}x${baked.texHeight}`);
+
+  // 一屏的实景：地面 + 细节 + 树 + 几个人，检查它们放在一起读不读得通。
+  const VIEW_W = 460;
+  const VIEW_H = 260;
+  const GRAIN = 3;
+  const view = new Canvas(VIEW_W, VIEW_H, [0, 0, 0]);
+
+  // 镜头对着一处林地边缘 —— 那里同时有草、林、树，最能看出材质边界和尺度关系。
+  // 对准林缘：灌木、倒木都只长在这条过渡带上，巨石只长在带外的开阔地。镜头扎进密林
+  // 深处的话，这三样一个也看不到 —— 它们本来就不长在那儿。
+  const camX = FIELD_W * 0.115;
+  const camY = FIELD_H * 0.5;
+  const rootX = VIEW_W / 2;
+  const rootY = VIEW_H / 2;
+
+  // 先把烘好的地面按最近邻铺进来，和游戏里那个精灵是同一件事。
+  const patchW = (FIELD_W / baked.texWidth) * GRAIN;
+  const patchH = (FIELD_H * Projection.groundSquash / baked.texHeight) * GRAIN;
+  const originX = rootX - camX * GRAIN;
+  const originY = rootY - camY * Projection.groundSquash * GRAIN;
+  for (let py = 0; py < VIEW_H; py++) {
+    for (let px = 0; px < VIEW_W; px++) {
+      const tx = Math.floor((px - originX) / patchW);
+      const ty = Math.floor((py - originY) / patchH);
+      const o = (py * VIEW_W + px) * 3;
+      if (tx < 0 || ty < 0 || tx >= baked.texWidth || ty >= baked.texHeight) continue;
+      const b = (ty * baked.texWidth + tx) * 4;
+      view.data[o] = baked.data[b];
+      view.data[o + 1] = baked.data[b + 1];
+      view.data[o + 2] = baked.data[b + 2];
+    }
+  }
+
+  const shapes = new ShapeBatch();
+  const sink = new ShapeSink();
+  const spanX = VIEW_W / 2 / GRAIN + 40;
+  const spanY = VIEW_H / 2 / (GRAIN * Projection.groundSquash) + 60;
+  weather.prepareClouds(camX - spanX, camY - spanY, camX + spanX, camY + spanY);
+  terrain.drawDetail(shapes, weather, camX, camY, rootX, rootY, GRAIN, spanX, spanY);
+  terrain.drawScatter(shapes, weather, camX, camY, rootX, rootY, GRAIN, spanX, spanY);
+  terrain.drawTrees(shapes, weather, camX, camY, rootX, rootY, GRAIN, spanX, spanY);
+
+  // 放几个人进去比尺度：树该比人高一大截，草丛该只到脚踝。
+  const crowd: [number, number, () => UnitDef, CharacterPalette][] = [
+    [camX - 40, camY - 20, UnitPresets.warlord, PALETTE_BLUE],
+    [camX + 30, camY + 10, UnitPresets.thug, PALETTE_RED],
+    [camX + 5, camY + 40, UnitPresets.spearman, PALETTE_RED],
+    [camX - 70, camY + 30, UnitPresets.archer, PALETTE_RED],
+  ];
+  for (const [wx, wy, make, palette] of crowd) {
+    const pose = new Pose();
+    const animator = new CharacterAnimator();
+    for (let i = 0; i < 30; i++) animator.update(1 / 60, 16, 16, make(), -1, pose);
+    const sx = rootX + (wx - camX) * GRAIN;
+    const sy = rootY + (wy - camY) * Projection.groundSquash * GRAIN;
+    drawCharacter(shapes, pose, new Projector(v2(sx, sy), Math.PI * 0.5, Projection.groundSquash, GRAIN), palette, make());
+  }
+
+  shapes.flush(sink as never);
+  for (const sh of sink.shapes) view.fillPolygon(sh);
+  writePng('.preview-terrain.png', view.upscale(2));
+
+  // 篝火特写，加两个人比尺度：火该到膝盖上一点。
+  {
+    const W = 300;
+    const H = 190;
+    const camp = new Canvas(W, H, [86, 116, 70]);
+    const props = new Props();
+    // 直接摆，不走 place()：预览要的是固定构图，不是随机选址。
+    props.list.push(
+      { kind: 'campfire', x: 58, y: 46, flip: false, radius: 2.1 },
+      { kind: 'campfire', x: 100, y: 66, flip: true, radius: 2.1 },
+    );
+    const shapes2 = new ShapeBatch();
+    const sink2 = new ShapeSink();
+    const cx2 = 78;
+    const cy2 = 58;
+    const rx2 = W / 2;
+    const ry2 = H / 2;
+    const w2 = new Weather();
+    w2.prepareClouds(cx2 - 200, cy2 - 200, cx2 + 200, cy2 + 200);
+    props.draw(shapes2, w2, cx2, cy2, rx2, ry2, GRAIN, 400, 400);
+
+    for (const [wx, wy, make, palette] of [
+      [46, 74, UnitPresets.warlord, PALETTE_BLUE],
+      [104, 80, UnitPresets.thug, PALETTE_RED],
+    ] as [number, number, () => UnitDef, CharacterPalette][]) {
+      const pose = new Pose();
+      const animator = new CharacterAnimator();
+      for (let i = 0; i < 30; i++) animator.update(1 / 60, 0, 16, make(), -1, pose);
+      const sx = rx2 + (wx - cx2) * GRAIN;
+      const sy = ry2 + (wy - cy2) * Projection.groundSquash * GRAIN;
+      drawCharacter(shapes2, pose, new Projector(v2(sx, sy), Math.PI * 0.5, Projection.groundSquash, GRAIN), palette, make());
+    }
+
+    shapes2.flush(sink2 as never);
+    for (const sh of sink2.shapes) camp.fillPolygon(sh);
+    writePng('.preview-camp.png', camp.upscale(3));
+    console.log('篝火特写：两堆火 + 两个人');
+  }
+
+  // 天气对照：同一块地在晴、雨、雪下的样子。看的是积雪堆和水洼的边缘 —— 它们必须和
+  // 材质边界用同一种互相穿插的像素带，才读作长在地里而不是盖在上面。
+  const strip = new Canvas(baked.texWidth, baked.texHeight * 3, [0, 0, 0]);
+  const states: [string, number, number][] = [
+    ['晴', 0, 0],
+    ['雨', 0, 0.8],
+    ['雪', 0.85, 0],
+  ];
+  states.forEach(([, snow, wet], row) => {
+    const w = new Weather();
+    w.snowCover = snow;
+    w.wetness = wet;
+    const b = terrain.bakeGround(w);
+    for (let i = 0; i < b.texWidth * b.texHeight; i++) {
+      const dst = (row * baked.texHeight * baked.texWidth + i) * 3;
+      strip.data[dst] = b.data[i * 4];
+      strip.data[dst + 1] = b.data[i * 4 + 1];
+      strip.data[dst + 2] = b.data[i * 4 + 2];
+    }
+  });
+  writePng('.preview-weather.png', strip);
+  console.log('天气对照：晴 / 雨 / 雪');
+}
