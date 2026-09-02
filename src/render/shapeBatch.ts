@@ -6,6 +6,16 @@ import { type Rgba, toHex } from './color';
 const ELLIPSE_SEGMENTS = 20;
 
 /**
+ * 排序键的打包参数：深度量化到 1/8，低 17 位放原始下标。
+ *
+ * 深度最大约"屏幕行 × 32"，一千行也就三万出头，乘 8 再乘 2^17 是 3.4e10 —— 离 float64 能
+ * 精确表示的 2^53 还差得远，所以打包不会丢位。下标上限 131072 意味着一帧最多十三万个图元，
+ * 目前满屏一千人是六万，留了一倍。
+ */
+const DEPTH_QUANT = 8;
+const INDEX_SPAN = 1 << 17;
+
+/**
  * 画家顺序的图形批次。移植自 overlord 的 ShapeBatch。
  *
  * 原版把每个图元当成一个带 depth 的 quad 交给 GPU 深度缓冲排序；WebGL 这边没有等价的
@@ -35,6 +45,16 @@ export class ShapeBatch {
   private col: Rgba[] = [];
   private depth: number[] = [];
   private count = 0;
+
+  /**
+   * 排序用的键，(量化深度, 下标) 打包成一个数。
+   *
+   * 用 Float64Array 的原生 sort 而不是 Array.sort(比较函数)：后者每比较一次都要过一次 JS
+   * 回调，六万个图元就是几十万次调用；定型数组不带比较函数时走的是原生数值排序，实测快
+   * 一倍多。打包是为了在一次排序里同时带上稳定性 —— 低位放原始下标，同深度就按提交顺序，
+   * 和原来 `|| a - b` 的效果一样（ToneStep = 0 的同深度色阶就靠这一点叠上去）。
+   */
+  private keys = new Float64Array(0);
 
   get primitiveCount(): number {
     return this.count;
@@ -186,14 +206,21 @@ export class ShapeBatch {
     const clip = clipW > 0 && clipH > 0;
     let culled = 0;
 
-    // 排索引而不是排图元本身：省掉 n 个临时对象，也让稳定性明确落在索引上。
-    const order = new Array<number>(n);
-    for (let i = 0; i < n; i++) order[i] = i;
+    // 打包排序，见 keys 上那段。深度量化到 1/8，比一个图元的尺度细得多，不会改变可见顺序。
+    if (this.keys.length < n) this.keys = new Float64Array(Math.max(n, 4096));
     const depth = this.depth;
-    order.sort((a, b) => depth[a] - depth[b] || a - b);
+    let lo = depth[0];
+    for (let i = 1; i < n; i++) if (depth[i] < lo) lo = depth[i];
+    const bias = Math.ceil(-lo * DEPTH_QUANT) + 1; // 键必须非负，取下标时才能用取模
+    const keys = this.keys;
+    for (let i = 0; i < n; i++) {
+      keys[i] = (Math.round(depth[i] * DEPTH_QUANT) + bias) * INDEX_SPAN + i;
+    }
+    const order = keys.subarray(0, n);
+    order.sort();
 
     for (let k = 0; k < n; k++) {
-      const i = order[k];
+      const i = order[k] % INDEX_SPAN;
       const color = this.col[i];
       const fill = { color: toHex(color), alpha: color.a / 255 };
       const x = this.cx[i];
