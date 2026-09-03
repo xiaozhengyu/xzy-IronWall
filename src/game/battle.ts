@@ -3,12 +3,14 @@ import { RigSpec } from '../characters/rig';
 import { PALETTE_BLUE, PALETTE_PEASANT, PALETTE_RED, type CharacterPalette } from '../characters/palette';
 import { type UnitDef, UnitPresets } from '../characters/unitDef';
 import { clamp } from '../core/math';
-import { ImpactEffects, weaponImpactPoint } from '../effects/impact';
+import { Debris } from '../effects/debris';
+import { ImpactEffects, frontRadius, weaponImpactPoint } from '../effects/impact';
 import { Character } from './character';
 import { isFreeSpot, moveWithCollision } from './collision';
-import { inAttackArc } from './combat';
+import { inAttackArc, inSector, sweptBy } from './combat';
 import type { Field } from './field';
 import { SpatialGrid } from './grid';
+import { Skills, cappedReach, skillAt, type SkillDef } from './skills';
 
 /**
  * 一局割草：场上的所有人，以及他们之间发生的事。
@@ -26,6 +28,18 @@ import { SpatialGrid } from './grid';
  * 之后，人相对这个基准就是在跑，斗篷和步幅会自己跟上去。
  */
 const HUMAN_PACE = 16;
+
+/**
+ * 突进的两个常量。
+ *
+ * LUNGE_TIME_SCALE 把"冲多远"换算成速度：技能表里给的是距离（reach × attackRange），
+ * 除以它得到速度，于是改冲的距离不会顺带改冲的时长——一招的节奏该是固定的。
+ *
+ * LUNGE_BODY_MARGIN 是撞人判定在身体半径之外再放宽多少。judging 得比看上去宽一点，
+ * 理由和 combat.ts 里那段一样：宁可宽一点，"擦过去却没死"比"隔着空气死了"难受得多。
+ */
+const LUNGE_TIME_SCALE = 0.22;
+const LUNGE_BODY_MARGIN = 2.5;
 
 /** 玩家的基础移动速度，以及按住 Shift 的速度。 */
 const PLAYER_SPEED = 32;
@@ -288,6 +302,26 @@ const EnemyKinds: { def: UnitDef; palette: CharacterPalette; speed: number }[] =
   { def: UnitPresets.archer(), palette: PALETTE_PEASANT, speed: 33 },
 ];
 
+/**
+ * 一道正在往外跑的技能波。
+ *
+ * 这是**游戏状态**，不是特效：它每帧都要结算杀伤。同名的东西在 effects/impact.ts 里也有
+ * 一份，那份是画出来的样子，这份是判定，两者用同一条推进曲线（frontRadius）所以永远对得上。
+ * 分成两份是因为它们的生命周期不一样：特效可以在玩家死了、重开了之后继续跑完，判定不行。
+ */
+interface SkillWave {
+  x: number;
+  y: number;
+  heading: number;
+  age: number;
+  life: number;
+  from: number;
+  to: number;
+  arc: number;
+  /** 打中时溅多少碎片，见 SkillDef.power。 */
+  power: number;
+}
+
 /** 这一帧玩家想干什么。由输入层翻译好再交进来，Battle 不认识鼠标和键盘。 */
 export interface BattleInput {
   /** 该朝哪儿，弧度；null 表示保持不变（准星正压在人身上时方向没有意义）。 */
@@ -346,6 +380,8 @@ export class Battle {
   readonly enemies: Character[] = [];
   /** 冲击弧。由挥击的落点放出，所以归战斗管；画它的是 Scene。 */
   readonly effects = new ImpactEffects();
+  /** 打碎溅出来的血珠和甲片。同上：谁放出来的归战斗管，画它的是 Scene。 */
+  readonly debris = new Debris();
 
   kills = 0;
   deaths = 0;
@@ -371,6 +407,20 @@ export class Battle {
    */
   maxEnemies = 3000;
   autoAttack = true;
+
+  /**
+   * 当前选中的攻击技能，见 game/skills.ts。菜单里直接选，也可以按 J 循环。
+   *
+   * 只作用于玩家。敌人一直走基础攻击那条路 —— 让杂兵也放技能，画面上会同时有几十道波，
+   * 分不清哪道是自己放的。
+   */
+  skillIndex = 0;
+
+  /** 正在往外跑的技能波。只有"破空"会往这里放东西。 */
+  private readonly skillWaves: SkillWave[] = [];
+
+  /** 突进：还剩多久、朝哪个方向冲。null = 没在冲。 */
+  private lunge: { left: number; heading: number; speed: number; power: number } | null = null;
 
   /** 生命上限顶到了"无敌"那一档没有。面板要显示成文字，不是一串九。 */
   get invincible(): boolean {
@@ -508,6 +558,10 @@ export class Battle {
     this.kills = 0;
     this.recycled = 0;
     this.restored = 0;
+    // 跨帧的招式也得清掉：重开之后还有一道上一局的波在飞，会凭空杀掉刚铺下去的人。
+    this.skillWaves.length = 0;
+    this.lunge = null;
+    this.debris.clear();
     this.player.death = -1;
     this.player.hurt = 0;
     this.player.hp = this.player.maxHp;
@@ -753,7 +807,8 @@ export class Battle {
     this.recycle(view);
     this.spawnWave(dt, view);
     this.swing();
-    this.advancePlayerAttack(dt);
+    this.advancePlayerAttack(dt, view);
+    this.advanceSkills(dt);
     // 先建一次表：敌人要先查"前面有没有人占着位子"。分离那边会按挪完的位置再建一次。
     this.grid.build(enemies);
     // 恢复排在建表之后：判"那个位置有没有人"要用这张表。见 restoreReserved。
@@ -762,6 +817,7 @@ export class Battle {
     this.separate();
 
     this.effects.update(dt);
+    this.debris.update(dt);
     field.update(dt, this.actors());
 
     // 玩家倒下了就重开：清场、回血、重新铺一批。
@@ -772,14 +828,25 @@ export class Battle {
       enemies.length = 0;
       // 和 reset 一样：清场就该是真的清场，不能让预留把上一条命的人海放回来。
       this.reserved.length = 0;
+      this.skillWaves.length = 0;
+      this.lunge = null;
       this.seed(view);
     }
 
-    // 清掉已经沉下去的尸体。
+    // 清掉已经沉下去的尸体；还在飞的尸体夹回场地内。
     for (let i = enemies.length - 1; i >= 0; i--) {
-      if (enemies[i].gone) {
+      const e = enemies[i];
+      if (e.gone) {
         enemies[i] = enemies[enemies.length - 1];
         enemies.pop();
+        continue;
+      }
+      // 击飞不查地形（Character 不认识 field，也不该认识），但不能飞出地图 —— 场地边缘
+      // 之外没有地面，尸体会躺在虚空里。撞树穿模无所谓：那是一堆两秒后就沉下去的尸体，
+      // 而地图边界是**看得见**的。
+      if (!e.alive) {
+        e.x = field.clampX(e.x);
+        e.y = field.clampY(e.y);
       }
     }
 
@@ -790,6 +857,31 @@ export class Battle {
 
   private movePlayer(dt: number, input: BattleInput): void {
     const { player, field } = this;
+
+    // 突进期间不听输入：方向在起手那一刻就定死了。
+    //
+    // 允许中途转向的话，玩家会拿它当一个"更快的走"来用 —— 那就不是一招了，而且判定跟着
+    // 身体走，能转向就等于能画出一条任意折线的死亡走廊。冲多远由 dashSpeed × duration
+    // 定，一旦发动就是固定的一段。
+    if (this.lunge) {
+      // 方向和速度都在起手那一刻就存进去了：冲到一半换个技能不该改变这一次冲刺。
+      const speed = this.lunge.speed;
+      player.facing = this.lunge.heading;
+      player.speed = speed;
+      const to = moveWithCollision(
+        field.terrain,
+        field.props,
+        player.radius,
+        player.x,
+        player.y,
+        field.clampX(player.x + Math.cos(player.facing) * speed * dt),
+        field.clampY(player.y + Math.sin(player.facing) * speed * dt),
+      );
+      player.x = to.x;
+      player.y = to.y;
+      return;
+    }
+
     if (input.facing !== null) player.facing = input.facing;
 
     if (!input.moving) {
@@ -824,6 +916,17 @@ export class Battle {
     this.player.swing(attackDuration(this.player.def) + PLAYER_SWING_GAP);
   }
 
+  /** 选一个技能。越界忽略，菜单和键盘走同一条路。 */
+  setSkill(index: number): void {
+    if (index < 0 || index >= Skills.length) return;
+    this.skillIndex = index;
+  }
+
+  /** 循环切下一个技能（键盘用）。 */
+  cycleSkill(): void {
+    this.skillIndex = (this.skillIndex + 1) % Skills.length;
+  }
+
   /** 手动挥一下（空格）。已经在挥或者还在冷却就忽略。 */
   swingNow(): void {
     this.player.swing();
@@ -837,18 +940,157 @@ export class Battle {
    * player.update 的返回值就是"这一帧跨过落点了没有"，是一次**跨越**检测而不是阈值比较，
    * 所以它必须每帧正好调一次 —— 漏一帧那一下就白挥了，多调一帧就会连着结算两次。
    */
-  private advancePlayerAttack(dt: number): void {
+  private advancePlayerAttack(dt: number, view: BattleView): void {
     const { player } = this;
     if (!player.update(dt)) return;
-    const at = weaponImpactPoint(player.pose, player.def, player.x, player.y, player.facing);
-    this.effects.spawn(at.x, at.y, player.facing, { power: player.def.bulk });
+    this.castSkill(skillAt(this.skillIndex), view);
+  }
 
-    for (const e of this.enemies) {
-      if (!e.alive) continue;
-      if (inAttackArc(player, e)) {
-        e.kill(player.x, player.y);
-        this.kills++;
+  /**
+   * 杀掉一个敌人：击飞、溅碎片、记账。
+   *
+   * 所有杀伤都从这里走，免得四个技能各写一遍"kill 完别忘了加 kills"。
+   *
+   * @param fromX/fromY 打击来自哪儿，决定往哪边飞。
+   * @param power       1 = 平砍（只溅血），2 = 技能（血 + 甲片）。这是平砍和技能在画面上
+   *                    唯一的区别 —— 两者都是碰到就死，但技能得看着更狠。
+   */
+  private slay(e: Character, fromX: number, fromY: number, power: number): void {
+    e.kill(fromX, fromY);
+    this.kills++;
+
+    let dx = e.x - fromX;
+    let dy = e.y - fromY;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-4) {
+      dx = Math.cos(e.facing);
+      dy = Math.sin(e.facing);
+    } else {
+      dx /= len;
+      dy /= len;
+    }
+    this.debris.burst(e.x, e.y, dx, dy, power, e.palette);
+  }
+
+  /**
+   * 放一招。
+   *
+   * 三种结算方式对应 skills.ts 里那三条路：instant 当场算清，wave 和 lunge 只是把一个
+   * 会跨帧推进的东西放出去，真正的杀伤在 advanceSkills 里逐帧结算。
+   *
+   * 谁被打中都是**碰到就死**，和基础攻击完全一样 —— 技能之间的区别只有形状，没有强度。
+   */
+  private castSkill(skill: SkillDef, view: BattleView): void {
+    const { player } = this;
+    const at = weaponImpactPoint(player.pose, player.def, player.x, player.y, player.facing);
+    const reach = player.def.attackRange * skill.reach;
+
+    switch (skill.kind) {
+      case 'instant': {
+        const arc = skill.arc ?? player.def.attackArc;
+        // 整圈那一招的圆心是**人**，不是武器落点：转一圈扫开身周，落点在身前一侧没有意义。
+        const full = arc >= Math.PI * 1.99;
+        if (full) {
+          this.effects.spawn(player.x, player.y, player.facing, {
+            power: player.def.bulk,
+            span: Math.PI * 2,
+            from: 1.5,
+            to: reach,
+            life: 0.34,
+          });
+        } else {
+          this.effects.spawn(at.x, at.y, player.facing, { power: player.def.bulk });
+        }
+        for (const e of this.enemies) {
+          if (!e.alive) continue;
+          if (inSector(player, e, reach, arc)) this.slay(e, player.x, player.y, skill.power);
+        }
+        return;
       }
+
+      case 'wave': {
+        const arc = skill.arc ?? player.def.attackArc;
+        const wave: SkillWave = {
+          x: at.x,
+          y: at.y,
+          heading: player.facing,
+          age: 0,
+          life: skill.duration,
+          from: 2,
+          // 打不出画面。见 cappedReach —— 屏幕外一片人无声消失不是爽快，是茫然。
+          to: cappedReach(at.x, at.y, player.facing, arc, reach, player.def.attackRange, view.spawn),
+          arc,
+          power: skill.power,
+        };
+        this.skillWaves.push(wave);
+        // 特效和判定共用同一条推进曲线和同一组端点，所以画面上波扫到谁，谁就正好死。
+        this.effects.spawn(wave.x, wave.y, wave.heading, {
+          power: 1,
+          span: wave.arc,
+          from: wave.from,
+          to: wave.to,
+          life: wave.life,
+        });
+        return;
+      }
+
+      case 'lunge':
+        this.lunge = {
+          left: skill.duration,
+          heading: player.facing,
+          speed: reach / LUNGE_TIME_SCALE,
+          power: skill.power,
+        };
+        this.effects.spawn(at.x, at.y, player.facing, {
+          power: player.def.bulk,
+          span: 1.1,
+          from: 2,
+          to: reach * 0.5,
+          life: 0.3,
+        });
+        return;
+    }
+  }
+
+  /**
+   * 推进跨帧的那两招，并结算它们这一帧碰到的人。
+   *
+   * 这两招是**故意**偏离"发招那一刻一次算清"那条规矩的（combat.ts 顶上那段）。理由很直接：
+   * 一道要飞两百个单位的波，如果在起手那一帧就把远处的人杀了，玩家会看到人先倒、波后到 ——
+   * 画面在撒谎。而"碰到就死"本来就是这个游戏唯一的伤害规则，让它按时间发生正是这条规则的
+   * 字面意思。基础攻击和 instant 类技能仍然走老路：它们的范围只有十几个单位，一帧之内到达，
+   * 分不分帧看不出来。
+   */
+  private advanceSkills(dt: number): void {
+    const { player } = this;
+
+    for (let i = this.skillWaves.length - 1; i >= 0; i--) {
+      const w = this.skillWaves[i];
+      w.age += dt;
+      const radius = frontRadius(Math.min(w.age / w.life, 1), w.from, w.to);
+      for (const e of this.enemies) {
+        if (!e.alive) continue;
+        if (sweptBy(e, w.x, w.y, w.heading, radius, w.arc)) this.slay(e, w.x, w.y, w.power);
+      }
+      if (w.age >= w.life) {
+        this.skillWaves[i] = this.skillWaves[this.skillWaves.length - 1];
+        this.skillWaves.pop();
+      }
+    }
+
+    if (this.lunge) {
+      this.lunge.left -= dt;
+      // 撞到谁谁死，判定就是人自己的身体加一点余量 —— 冲过去的是这个人，不是一个扇形。
+      const hit = player.radius + LUNGE_BODY_MARGIN;
+      for (const e of this.enemies) {
+        if (!e.alive) continue;
+        const dx = e.x - player.x;
+        const dy = e.y - player.y;
+        if (dx * dx + dy * dy <= (hit + e.radius) * (hit + e.radius)) {
+          this.slay(e, player.x, player.y, this.lunge.power);
+        }
+      }
+      if (this.lunge.left <= 0) this.lunge = null;
     }
   }
 

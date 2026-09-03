@@ -5,6 +5,8 @@ import type { Battle } from '../game/battle';
 import type { Field } from '../game/field';
 import type { ItemDef } from '../items/itemDef';
 import type { ItemSheet } from '../items/renderer';
+import { v2 } from '../core/math';
+import { rgba } from './color';
 import type { Camera } from './camera';
 import { PixelSurface } from './pixelSurface';
 import { PrimitiveMesh } from './primitiveMesh';
@@ -46,6 +48,9 @@ const RETICLE_COLOR = 0xf0e6d2;
  * 一个人从脚到头约 18.3 个世界单位，被相机压扁之后换算回世界纵向是 18.3 × heightSquash /
  * groundSquash ≈ 23，取 30 留富余给长枪和斗篷。
  */
+/** 击飞轨迹压在人物层里，但排在人之前一点点 —— 它是身后的痕迹，不该盖住脸。 */
+const DEPTH_TRAIL = -2;
+
 const CULL_SIDE = 16;
 const CULL_UP = 4;
 const CULL_DOWN = 30;
@@ -173,11 +178,24 @@ export class Scene {
       this.drawn++;
     }
     this.drawCharacterAt(battle.player);
+
+    // 击飞的轨迹线画在人之后：它是从身体拖出来的，压在别人身上比断在别人身后好读。
+    for (const e of battle.enemies) {
+      if (e.alive || e.trailCount < 2) continue;
+      const oy = e.y - camY;
+      if (Math.abs(e.x - camX) > cullX || oy < -cullUp || oy > cullDown) continue;
+      this.drawTrail(e);
+    }
     if (overlay.showSkeleton) {
       const player = battle.player;
       const at = cam.worldToScreen(player.x, player.y);
       drawSkeleton(shapes, player.pose, new Projector(at, player.facing, Projection.groundSquash, grain));
     }
+
+    // 血珠和甲片：和人一起按屏幕行排序，否则一片甲会整个压在前排人身上。
+    battle.debris.draw(shapes, camX, camY, rootX, rootY, grain, (worldY) =>
+      Math.round(cam.worldToScreen(camX, worldY).y) * Projector.DEPTH_PER_ROW,
+    );
 
     // 溅起来的水珠画在人之后：它们是被脚踢起来的，该压在鞋面上。
     field.footsteps.drawSplashes(shapes, camX, camY, rootX, rootY, grain);
@@ -270,11 +288,55 @@ export class Scene {
     return sprite;
   }
 
+  /**
+   * 击飞时身后拖的那条线。
+   *
+   * 存在的理由是**读出高度**。俯视角下"飞得高"和"飞得远"在屏幕上是同一个方向的位移，
+   * 光看身体分不出来；一条从起点拖过来的弧线把这段路画了出来，眼睛立刻能补出那个抛物线。
+   * 影子留在地上不动，加上这条线，高度就有两个读数了。
+   *
+   * 用世界坐标点连出来，不走 Projector —— Projector 是身体局部空间的，而轨迹上的点是
+   * 这具身体**过去待过的地方**，和它现在的朝向没有关系。
+   */
+  private drawTrail(c: Character): void {
+    const cam = this.camera;
+    const grain = cam.grain;
+    const rootX = cam.rootX;
+    const rootY = cam.rootY;
+    const n = c.trailCount;
+    const total = c.trail.length / 3;
+
+    // 环形缓冲，从最新的一点往回读。
+    const at = (k: number) => {
+      const idx = ((c.trailHead - 1 - k + total * 2) % total) * 3;
+      const wx = c.trail[idx];
+      const wy = c.trail[idx + 1];
+      const wz = c.trail[idx + 2];
+      return v2(
+        rootX + (wx - cam.x) * grain,
+        rootY + ((wy - cam.y) * Projection.groundSquash - wz * Projection.heightSquash) * grain,
+      );
+    };
+
+    const depth = this.camera.worldToScreen(c.x, c.y).y * Projector.DEPTH_PER_ROW + DEPTH_TRAIL;
+    let prev = at(0);
+    for (let k = 1; k < n; k++) {
+      const next = at(k);
+      // 越往回越淡越细：这一头是刚离开的位置，那一头是快消散的旧痕。
+      const fade = 1 - k / n;
+      const alpha = Math.round(200 * fade);
+      if (alpha > 3) {
+        this.shapes.capsule(prev, next, Math.max(1, grain * 0.9 * fade), rgba(236, 226, 206, alpha), depth);
+      }
+      prev = next;
+    }
+  }
+
   /** 把一个单位画到它在缓冲里该在的位置上。 */
   private drawCharacterAt(c: Character): void {
     const at = this.camera.worldToScreen(c.x, c.y);
     const p = new Projector(at, c.facing, Projection.groundSquash, this.camera.grain);
-    drawCharacter(this.shapes, c.pose, p, c.palette, c.def, { hurt: c.hurt });
+    drawCharacter(this.shapes, c.pose, p, c.palette, c.def, { hurt: c.hurt, lift: c.lift });
   }
 
   /**

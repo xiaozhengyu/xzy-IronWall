@@ -71,6 +71,8 @@ export const tokenScale = { value: 0.45 };
 export interface DrawOptions {
   /** 刚挨打的两帧里盖在躯干上的白光，0..1。 */
   hurt?: number;
+  /** 离地高度，世界单位。击飞时影子按它缩小变淡。 */
+  lift?: number;
 }
 
 export function drawCharacter(
@@ -82,13 +84,14 @@ export function drawCharacter(
   options: DrawOptions = {},
 ): void {
   const hurt = options.hurt ?? 0;
+  const lift = options.lift ?? 0;
 
   if (p.scale < tokenScale.value) {
     drawToken(shapes, pose, p, palette, def, hurt);
     return;
   }
 
-  drawShadow(shapes, p);
+  drawShadow(shapes, p, lift);
 
   if (def.cape) drawCape(shapes, p, pose, palette, def);
   drawLeg(shapes, p, pose, palette, def, 0);
@@ -162,13 +165,24 @@ function drawHurtFlash(shapes: ShapeBatch, p: Projector, pose: Pose, def: UnitDe
   shapes.capsule(hip, chest, width, wash, p.depth(pose.chest) + DEPTH_HAND + 0.5);
 }
 
-function drawShadow(shapes: ShapeBatch, p: Projector): void {
+/**
+ * @param lift 离地多高，世界单位。0 = 站在地上。
+ *
+ * 人飞起来时影子要缩小变淡。俯视角下"飞得高"和"飞得远"在屏幕上是同一个方向的位移，光看
+ * 身体分不出来 —— 影子是唯一钉在地面上的东西，它和身体拉开多远、缩得多小，就是高度的读数。
+ * 不缩的话，一个飞到半空的人拖着一块和站着时一样大的影子，读起来像是贴着地面滑出去的。
+ */
+function drawShadow(shapes: ShapeBatch, p: Projector, lift = 0): void {
+  // 12 个单位（人高的六成）处缩到一半。倒数衰减而不是线性：线性缩到零就没有影子了，而
+  // 影子是这个人和地面之间唯一的联系 —— 断掉的话，飞在高处的人读作贴在镜头上的一张贴纸。
+  // 下限 0.5 也是为这个：再高也得留一小块。
+  const k = Math.max(0.5, 1 / (1 + lift / 12));
   shapes.ellipse(
     p.screen(V3_ZERO),
-    p.s(RigSpec.shadowRadius),
-    p.s(RigSpec.shadowRadius * Projection.groundSquash),
+    p.s(RigSpec.shadowRadius * k),
+    p.s(RigSpec.shadowRadius * k * Projection.groundSquash),
     0,
-    rgba(0, 0, 0, 70),
+    rgba(0, 0, 0, Math.round(70 * k)),
     p.baseDepth + DEPTH_SHADOW,
   );
 }

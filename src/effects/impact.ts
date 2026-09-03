@@ -25,6 +25,20 @@ import type { ShapeBatch } from '../render/shapeBatch';
  * 和是谁放出来的已经没关系了。
  */
 
+/**
+ * 弧顶在生命周期 t（0..1）时距圆心多远。
+ *
+ * 导出是给"破空"那个技能用的：它的判定要跟着波前跑，而判定和画面必须用**同一条**曲线 ——
+ * 各写一份的话，两边任何一次微调都会让"看着扫到了却没死"回来（impact.ts 顶上那段说的
+ * 正是这件事）。这个函数是纯几何，导出它不会把判定逻辑漏进特效模块。
+ *
+ * easeOut：起手极快随后迅速慢下来。匀速推进读起来像一块被推着走的板子。
+ */
+export function frontRadius(t: number, from: number, to: number, power = 1): number {
+  const ease = 1 - (1 - t) * (1 - t) * (1 - t);
+  return lerp(from, to, ease) * power;
+}
+
 interface Shockwave {
   /** 落点，也是弧的圆心。 */
   x: number;
@@ -99,9 +113,7 @@ export class ImpactEffects {
 
   /** 弧顶当前距落点多远。 */
   private radiusAt(w: Shockwave): number {
-    const t = clamp(w.age / w.life, 0, 1);
-    const ease = 1 - (1 - t) * (1 - t) * (1 - t);
-    return lerp(w.from, w.to, ease) * w.power;
+    return frontRadius(clamp(w.age / w.life, 0, 1), w.from, w.to, w.power);
   }
 
   /**

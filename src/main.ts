@@ -1,6 +1,7 @@
 import { Application } from 'pixi.js';
 import { RigSpec } from './characters/rig';
 import { Battle, PlayerPresets } from './game/battle';
+import { Skills } from './game/skills';
 import { Field } from './game/field';
 import { ItemCatalog } from './items/catalog';
 import { ItemSheet } from './items/renderer';
@@ -58,10 +59,12 @@ const camera = new Camera();
  */
 const menu = new Menu({
   presets: PlayerPresets.map((p) => p.name),
+  skills: Skills.map((s) => ({ id: s.id, name: s.name, note: s.note })),
   press: (code) => onKeyPressed(code),
   setWeather: (kind) => {
     field.weather.kind = kind;
   },
+  setSkill: (index) => battle.setSkill(index),
   requestLock: () => controls.requestLock(),
   read: () => {
     // 人从脚底到头顶大约 18.3 个世界单位，被相机俯角压掉一截才是屏幕上的高度。
@@ -83,6 +86,7 @@ const menu = new Menu({
       buildMs: scene.buildMs,
       primitives: scene.primitives,
       preset: battle.presetIndex,
+      skill: Skills[battle.skillIndex].id,
       autoAttack: battle.autoAttack,
       showItems,
       skeleton: showSkeleton,
@@ -225,6 +229,7 @@ function onKeyPressed(code: string): void {
     draw();
   }
   if (code === 'KeyF') battle.autoAttack = !battle.autoAttack;
+  if (code === 'KeyJ') battle.cycleSkill();
 
   // 天气。切换的是"在下什么"，地上积多少雪、湿到什么程度会自己慢慢跟上来。
   const weather = field.weather;

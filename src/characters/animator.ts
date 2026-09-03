@@ -150,6 +150,18 @@ export class CharacterAnimator {
     const sideX = -fallY;
     const sideY = fallX;
 
+    // 左肢往身体的左边摊，右肢往右边 —— 关键是**哪一边才是左边**。
+    //
+    // side 是"垂直于倒地方向"的那条轴，它和身体自己的左右轴没有固定关系：人往哪个方向倒，
+    // side 就跟着转。之前左脚一律往 +side 摆、右脚往 −side，于是倒的方向一转过去，左脚就
+    // 摆到了身体的右侧 —— 而胯是固定的（左胯在局部 x 的负半边），IK 于是把左腿从身体底下
+    // 穿过去接到右边的脚上，两条腿交叉，看着像被打成了麻花。
+    //
+    // 身体左轴是局部 (-1, 0)，它在 side 上的投影是 −sideX = fallY。所以 fallY 的正负就是
+    // "左边在 side 的哪一头"。fallY 接近 0 时（正好朝身体侧向倒）左右本来就没有答案，但那时
+    // side 平行于脊柱，两条腿都落在脊柱线上，怎么分都不会交叉。
+    const lsign = fallY >= 0 ? 1 : -1;
+
     const hip = v3(fallX * 0.4, fallY * 0.4, 1.7);
     const chest = v3(
       hip.x + fallX * (SPINE_LENGTH * 0.94),
@@ -165,11 +177,14 @@ export class CharacterAnimator {
     pose.spineYaw = lerp(pose.spineYaw, 0.25, e);
 
     // 腿伸在身后，不是蜷起来：一个缩到站立高度三分之一的身体读作一堆衣服，不是一个人。
-    pose.footL = lerp3(pose.footL, v3(hip.x - fallX * 6.6 + sideX * 2.4, hip.y - fallY * 6.6 + sideY * 2.4, 0.4), e);
-    pose.footR = lerp3(pose.footR, v3(hip.x - fallX * 5.4 - sideX * 2.2, hip.y - fallY * 5.4 - sideY * 2.2, 0.5), e);
+    const lx = sideX * lsign;
+    const ly = sideY * lsign;
 
-    pose.handL = lerp3(pose.handL, v3(chest.x + sideX * 3.6, chest.y + sideY * 3.6, chest.z - 0.9), e);
-    pose.handR = lerp3(pose.handR, v3(chest.x - sideX * 3.4, chest.y - sideY * 3.4, chest.z - 1.0), e);
+    pose.footL = lerp3(pose.footL, v3(hip.x - fallX * 6.6 + lx * 2.4, hip.y - fallY * 6.6 + ly * 2.4, 0.4), e);
+    pose.footR = lerp3(pose.footR, v3(hip.x - fallX * 5.4 - lx * 2.2, hip.y - fallY * 5.4 - ly * 2.2, 0.5), e);
+
+    pose.handL = lerp3(pose.handL, v3(chest.x + lx * 3.6, chest.y + ly * 3.6, chest.z - 0.9), e);
+    pose.handR = lerp3(pose.handR, v3(chest.x - lx * 3.4, chest.y - ly * 3.4, chest.z - 1.0), e);
 
     pose.bowDraw = 0;
     pose.showArrow = false;
@@ -178,7 +193,7 @@ export class CharacterAnimator {
     // 那个方向已经被挑成是横着铺开的了。
     pose.weaponGrip = lerp3(pose.weaponGrip, pose.handR, e);
     pose.weaponDir = norm3(
-      lerp3(pose.weaponDir, norm3(v3(fallX * 0.94 - sideX * 0.28, fallY * 0.94 - sideY * 0.28, 0.06)), e),
+      lerp3(pose.weaponDir, norm3(v3(fallX * 0.94 - lx * 0.28, fallY * 0.94 - ly * 0.28, 0.06)), e),
     );
     pose.offhandGrip = pose.handL;
     pose.offhandDir = pose.weaponDir;

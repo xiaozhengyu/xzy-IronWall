@@ -11,12 +11,54 @@ import type { Character } from './character';
  * 敌我用的是同一个函数。玩家凭什么打中，敌人就凭什么打中，谁也不吃暗亏。
  */
 export function inAttackArc(attacker: Character, target: Character): boolean {
+  return inSector(attacker, target, attacker.def.attackRange, attacker.def.attackArc);
+}
+
+/**
+ * 同一个扇形判定，但范围和张角由外面给 —— 技能用这条路（见 game/skills.ts）。
+ *
+ * 拆出来而不是给 inAttackArc 加两个可选参数：敌人和玩家的基础攻击走的是"按兵种属性判"，
+ * 技能走的是"按这一招判"，两者读起来是两件事。而且整圈技能传的 arc 是 2π，落到
+ * `|da| <= arc/2` 上恒真 —— 那条角度分支对它根本没有意义，写成一个通用函数反而更清楚
+ * 它只是"半径 + 张角"这么简单。
+ */
+export function sweptBy(
+  target: Character,
+  x: number,
+  y: number,
+  heading: number,
+  radius: number,
+  arc: number,
+): boolean {
+  const dx = target.x - x;
+  const dy = target.y - y;
+  const dist = Math.hypot(dx, dy);
+
+  // 判的是"波前已经越过他了没有"，不是"他正好在波前那一圈上"。
+  //
+  // 带状判定（|dist - radius| < 厚度）在低帧率下会直接漏人：波一帧推进十几个单位，带子
+  // 才两三个单位宽，中间的人就被跳过去了。改成"半径以内"之后不会漏 —— 上一帧就在里面
+  // 的人早就死了，所以实际效果仍然是一圈一圈往外扫。
+  if (dist > radius + target.radius) return false;
+  if (dist <= target.radius) return true;
+
+  let da = Math.atan2(dy, dx) - heading;
+  da = Math.atan2(Math.sin(da), Math.cos(da));
+  return Math.abs(da) <= arc * 0.5 + Math.atan2(target.radius, dist);
+}
+
+export function inSector(
+  attacker: Character,
+  target: Character,
+  range: number,
+  arc: number,
+): boolean {
   const dx = target.x - attacker.x;
   const dy = target.y - attacker.y;
   const dist = Math.hypot(dx, dy);
 
   // 范围按目标的身体半径放宽：判的是能不能够到那个人，不是能不能够到他的中心点。
-  if (dist > attacker.def.attackRange + target.radius) return false;
+  if (dist > range + target.radius) return false;
 
   // 贴在身上的时候方向没有意义 —— 一个把你抱住的人在所有方向上都在。
   if (dist <= target.radius) return true;
@@ -25,5 +67,5 @@ export function inAttackArc(attacker: Character, target: Character): boolean {
   // 放宽，判的是圆和扇形相不相交，不是一个数学点在不在扇形里。
   let da = Math.atan2(dy, dx) - attacker.facing;
   da = Math.atan2(Math.sin(da), Math.cos(da));
-  return Math.abs(da) <= attacker.def.attackArc * 0.5 + Math.atan2(target.radius, dist);
+  return Math.abs(da) <= arc * 0.5 + Math.atan2(target.radius, dist);
 }

@@ -17,12 +17,14 @@ import { drawCharacter } from '../src/characters/renderer';
 import { Pose } from '../src/characters/rig';
 import { type UnitDef, UnitPresets } from '../src/characters/unitDef';
 import { ImpactEffects, weaponImpactPoint } from '../src/effects/impact';
+import { Character } from '../src/game/character';
+import { Debris } from '../src/effects/debris';
 import { v2 } from '../src/core/math';
 import { Projection } from '../src/render/projection';
 import { Projector } from '../src/render/projector';
 import { ShapeBatch, type PrimitiveSink } from '../src/render/shapeBatch';
 import { ellipseSegments, unitCircle } from '../src/render/ellipseFan';
-import type { Rgba } from '../src/render/color';
+import { type Rgba, rgba } from '../src/render/color';
 import { Terrain } from '../src/world/terrain';
 import { Weather } from '../src/world/weather';
 import { Props } from '../src/world/props';
@@ -597,4 +599,115 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   });
   writePng('.preview-weather.png', strip);
   console.log('天气对照：晴 / 雨 / 雪');
+}
+
+// ---------------------------------------------------------------- 死亡：击飞
+//
+// 两行看两件事，因为一张图同时说不清：
+//
+//   上排 分帧   每一格一个时刻，人画在格子中间、按真实高度抬起来，连同这一刻还在空中的
+//               血珠和甲片。看姿势和碎片：翻到哪儿了、离地多高、落地是不是平的、腿有没有交叉。
+//   下排 频闪   同一个人按**真实世界坐标**连着画，带上击飞的轨迹线。看轨迹：飞多高飞多远。
+//
+// 单帧分不出击飞和原地倒地 —— 那个区别全在位移上，所以频闪那一排才是判断"得劲"的依据。
+{
+  const STEP = 1 / 120;
+  const FRAMES = 8;
+  /** 分帧取到落地稍后一点。滞空随机，0.6～0.93 秒。 */
+  const FRAME_SPAN = 1.0;
+
+  const make = UnitPresets.thug;
+  const palette = PALETTE_RED;
+
+  /**
+   * 死了 t 秒之后的那个人，外加同步推进的碎片。
+   *
+   * 每次从头模拟。击飞的高度、距离和翻滚圈数都是死的那一刻掷出来的，所以同一格里连着
+   * 推进才是一条连贯的轨迹；不同格之间各掷各的，那正是"每个人飞得不一样"要展示的东西。
+   */
+  const at = (t: number, facing: number) => {
+    const c = new Character(make(), palette, 20);
+    c.facing = facing;
+    c.kill(-1, 0); // 从左边打过来，往右飞
+    const debris = new Debris();
+    // 技能那一档：血 + 甲片。平砍只有血。
+    debris.burst(c.x, c.y, 1, 0, 2, palette);
+    for (let i = 0; i < Math.round(t / STEP); i++) {
+      c.update(STEP, true);
+      debris.update(STEP);
+    }
+    return { c, debris };
+  };
+
+  const drawAt = (c: Character, debris: Debris | null, canvas: Canvas, px: number, py: number, trail: boolean) => {
+    const shapes = new ShapeBatch();
+    const sink = new ShapeSink();
+
+    if (trail && c.trailCount >= 2) {
+      const total = c.trail.length / 3;
+      const point = (k: number) => {
+        const idx = ((c.trailHead - 1 - k + total * 2) % total) * 3;
+        return v2(
+          px + (c.trail[idx] - c.x) * GRAIN,
+          py + ((c.trail[idx + 1] - c.y) * Projection.groundSquash - c.trail[idx + 2] * Projection.heightSquash) * GRAIN,
+        );
+      };
+      let prev = point(0);
+      for (let k = 1; k < c.trailCount; k++) {
+        const next = point(k);
+        const fade = 1 - k / c.trailCount;
+        shapes.capsule(prev, next, Math.max(1, GRAIN * 0.9 * fade), rgba(236, 226, 206, Math.round(200 * fade)), 0);
+        prev = next;
+      }
+    }
+
+    drawCharacter(
+      shapes,
+      c.pose,
+      new Projector(v2(px, py), c.facing, Projection.groundSquash, GRAIN),
+      palette,
+      c.def,
+      { lift: c.lift },
+    );
+    // 碎片的世界原点就是这个人现在站的地方，所以镜头传他自己的坐标。
+    if (debris) debris.draw(shapes, c.x, c.y, px, py, GRAIN, () => 1e6);
+
+    shapes.flushToMesh(sink);
+    for (const s of sink.shapes) canvas.fillPolygon(s);
+  };
+
+  const CW = Math.round(30 * GRAIN);
+  const CH = Math.round(32 * GRAIN);
+  const sheet = new Canvas(CW * FRAMES, CH * 3, [71, 105, 59]);
+
+  // 上排：分帧，带碎片
+  for (let i = 0; i < FRAMES; i++) {
+    const { c, debris } = at((i / (FRAMES - 1)) * FRAME_SPAN, 0);
+    drawAt(c, debris, sheet, i * CW + CW / 2, CH - Math.round(8 * GRAIN), false);
+  }
+
+  // 下排：频闪，带轨迹线。取样只覆盖滞空那一段。
+  const STROBE = 6;
+  const STROBE_SPAN = 0.8;
+  for (let i = 0; i < STROBE; i++) {
+    const { c } = at((i / (STROBE - 1)) * STROBE_SPAN, 0);
+    drawAt(c, null, sheet, Math.round(8 * GRAIN) + c.x * GRAIN, CH * 2 - Math.round(8 * GRAIN), true);
+  }
+
+  // 第三行：八个受击方向各躺一具，看**腿有没有交叉**。
+  //
+  // 交叉与否取决于人往哪个方向倒：倒地姿势里"左肢往哪边摊"是按垂直于倒地方向的那条轴算的，
+  // 而那条轴和身体自己的左右轴没有固定关系（animator.collapse 里 lsign 那段）。所以这个
+  // 毛病只在**部分**方向上出现，单看一个方向验不出来，必须八个一起摆。
+  for (let i = 0; i < FRAMES; i++) {
+    const a = (i / FRAMES) * Math.PI * 2;
+    const c = new Character(make(), palette, 20);
+    c.facing = Math.PI * 0.5; // 一律面朝镜头，只变打击来的方向
+    c.kill(c.x - Math.cos(a), c.y - Math.sin(a));
+    for (let k = 0; k < Math.round(1.2 / STEP); k++) c.update(STEP, true);
+    drawAt(c, null, sheet, i * CW + CW / 2, CH * 3 - Math.round(9 * GRAIN), false);
+  }
+
+  writePng('.preview-death.png', sheet.upscale(2));
+  console.log(`击飞：分帧 ${FRAMES} 格（${FRAME_SPAN} 秒，含碎片）+ 频闪 ${STROBE} 个取样（${STROBE_SPAN} 秒，含轨迹线）`);
 }

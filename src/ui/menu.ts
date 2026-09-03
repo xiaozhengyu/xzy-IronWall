@@ -1,4 +1,5 @@
 import './menu.css';
+import type { SkillId } from '../game/skills';
 import type { WeatherKind } from '../world/weather';
 
 /**
@@ -38,6 +39,8 @@ export interface MenuState {
   primitives: number;
 
   preset: number;
+  /** 当前选中的攻击技能。 */
+  skill: SkillId;
   autoAttack: boolean;
   /** 物品图鉴开着的时候面板要让开，见 showGallery。 */
   showItems: boolean;
@@ -58,6 +61,8 @@ export interface MenuState {
 export interface MenuBridge {
   /** 七个角色预设的名字。面板搭起来的时候就要，所以不走 read()。 */
   readonly presets: string[];
+  /** 攻击技能的名字和小字说明。和 presets 一样，搭面板时就要，不走 read()。 */
+  readonly skills: { id: SkillId; name: string; note: string }[];
   /**
    * 点菜单里的一项 = 按对应的那个键。
    *
@@ -68,6 +73,8 @@ export interface MenuBridge {
   press(code: string): void;
   /** 天气是唯一直接选而不是循环切的：三档并排摆着，让人点三次绕回去很蠢。 */
   setWeather(kind: WeatherKind): void;
+  /** 技能同理：四个形状并排摆着，直接点哪个是哪个。 */
+  setSkill(index: number): void;
   read(): MenuState;
   /**
    * 试着夺回指针锁定。resolve 表示锁上了，reject 表示浏览器还在冷却期。
@@ -142,6 +149,8 @@ export class Menu {
   private readonly toggles: { node: HTMLElement; on: (s: MenuState) => boolean }[] = [];
   private readonly presetButtons: HTMLButtonElement[] = [];
   private readonly spins: Record<string, HTMLElement> = {};
+  /** 技能那一行下面的说明，跟着当前选中的技能变。 */
+  private skillNote = el('div');
 
   private locking = false;
 
@@ -256,6 +265,9 @@ export class Menu {
     this.spins.hp.textContent = s.invincible ? '生命 无敌' : `生命 ${s.maxHp}`;
     this.spins.spawn.textContent = `出兵 x${s.spawnBatch}`;
     this.spins.enemies.textContent = `人数上限 ${s.maxEnemies}`;
+
+    const skill = this.bridge.skills.find((k) => k.id === s.skill);
+    this.skillNote.textContent = skill ? `${skill.name} —— ${skill.note}` : '';
   }
 
   private setHint(text: string): void {
@@ -326,7 +338,7 @@ export class Menu {
     const keys = el('div', 'menu-keys');
     keys.innerHTML =
       '<b>按住左键</b> 移动 · <b>Shift</b> 跑 · <b>空格</b> 挥击 · ' +
-      '<b>滚轮</b> 缩放 · <b>I</b> 物品图鉴 · <b>ESC</b> 暂停 · 点空白处也能继续';
+      '<b>滚轮</b> 缩放 · <b>J</b> 换技能 · <b>I</b> 物品图鉴 · <b>ESC</b> 暂停 · 点空白处也能继续';
     card.appendChild(keys);
   }
 
@@ -352,6 +364,26 @@ export class Menu {
     fight.appendChild(this.spin('hp', 'KeyN', 'KeyM'));
     fight.appendChild(this.spin('spawn', 'Semicolon', 'Quote'));
     fight.appendChild(this.spin('enemies', 'Comma', 'Period'));
+
+    // ---- 技能
+    //
+    // 摆在"战斗"和"天气"之间：它是战斗的一部分，但不是一个开关而是一组单选，和天气那行
+    // 的形状一样，所以挨着放。下面那行小字写的是形状不是强度 —— 现在四招都是碰到就死，
+    // 唯一的区别就是形状。
+    const skills = row(parent, '技能');
+    this.bridge.skills.forEach((s, i) => {
+      const b = this.button(s.name, '');
+      b.title = s.note;
+      b.addEventListener('click', () => {
+        this.bridge.setSkill(i);
+        this.refresh();
+      });
+      this.toggles.push({ node: b, on: (state) => state.skill === s.id });
+      skills.appendChild(b);
+    });
+    skills.appendChild(this.button('切换', 'J', 'KeyJ'));
+    this.skillNote = el('div', 'menu-note');
+    parent.appendChild(this.skillNote);
 
     // ---- 天气
 

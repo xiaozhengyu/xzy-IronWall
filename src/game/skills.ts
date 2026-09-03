@@ -1,0 +1,165 @@
+/**
+ * 攻击技能：同一套判定和特效，换几种形状。
+ *
+ * 割草类游戏的群体技能翻来覆去就是四种形状（查了 Dynasty Warriors 系列的招式表，
+ * charge attack 那一栏几十个招式都落在这四类里）：
+ *
+ *   前方扇形   横着扫一刀，眼前一片倒。最基础的那一下。
+ *   原地整圈   转一圈把贴身的人全掀开。人被围住时唯一有用的形状。
+ *   飞出去的波 一道波沿着朝向跑出去，路过谁谁死。够得最远，但只有一条线。
+ *   突进走廊   人自己冲出去，身体扫过的一路全死。位移和杀伤是同一件事。
+ *
+ * 这个文件只描述形状，不描述强度。**数值全是占位的** —— 冷却、耗蓝、伤害、硬直一个都没有，
+ * 碰到就死，和基础攻击的规则完全一致。先把四种形状摆出来看手感，数值等形状定了再谈。
+ */
+
+export type SkillId = 'sweep' | 'spin' | 'wave' | 'lunge';
+
+/**
+ * 判定怎么结算。这是三条不同的代码路径，不是三个参数。
+ *
+ *   instant  发招那一帧一次算清（和基础攻击同一条路，见 combat.ts 顶上那段）。
+ *   wave     波跨帧向前推进，每帧结算它**这一帧扫过**的那圈人。
+ *   lunge    人跨帧向前冲，每帧结算身体**这一帧碰到**的人。
+ */
+export type SkillKind = 'instant' | 'wave' | 'lunge';
+
+export interface SkillDef {
+  id: SkillId;
+  /** 菜单上显示的名字。 */
+  name: string;
+  /** 菜单上那行小字，说明它是什么形状。 */
+  note: string;
+  kind: SkillKind;
+  /**
+   * 判定够多远，按施放者自己的 attackRange 的倍数。
+   *
+   * 用倍数而不是绝对值：范围本来就是兵种的属性（武将 34、杂兵 11），技能只说"比平时远
+   * 多少"。这样换个兵种放同一个技能，远近关系仍然成立。
+   */
+  reach: number;
+  /** 判定张角，弧度。null = 用兵种自己的 attackArc。 */
+  arc: number | null;
+  /** wave / lunge 持续多久，秒。instant 用不上。 */
+  duration: number;
+  /**
+   * 打中时溅多少碎片。1 = 只飙血，2 = 血加甲片。
+   *
+   * 这是"平砍"和"技能"在画面上唯一的区别 —— 四招都是碰到就死，但一发破空该看着比一次
+   * 横扫更碎。等以后真要分强弱，这个数是第一个该跟着技能走的。
+   */
+  power: number;
+}
+
+export const Skills: SkillDef[] = [
+  {
+    id: 'sweep',
+    name: '横扫',
+    note: '前方扇形，一次算清',
+    kind: 'instant',
+    reach: 1,
+    arc: null,
+    duration: 0,
+    // 横扫就是基础那一下，不该有"打碎了"的表现。
+    power: 1,
+  },
+  {
+    id: 'spin',
+    name: '回旋',
+    note: '原地整圈，被围住时用',
+    kind: 'instant',
+    // 整圈换来的代价是够不远：同样一刀的力气摊到四面八方，只能覆盖贴身那一圈。
+    reach: 0.8,
+    arc: Math.PI * 2,
+    duration: 0,
+    power: 2,
+  },
+  {
+    id: 'wave',
+    name: '破空',
+    note: '波向前飞，路过就死',
+    kind: 'wave',
+    // 够得最远，但只有一条窄带。远近和宽窄是这一套技能里唯一真正的取舍。
+    reach: 4.5,
+    arc: 0.9,
+    duration: 0.55,
+    power: 2,
+  },
+  {
+    id: 'lunge',
+    name: '突进',
+    note: '向前冲，撞到的全死',
+    kind: 'lunge',
+    // lunge 的 reach 不是判定距离而是**冲多远**：判定跟着身体走，宽度就是人的宽度。
+    reach: 3.2,
+    arc: null,
+    duration: 0.22,
+    power: 2,
+  },
+];
+
+export const skillAt = (index: number): SkillDef => Skills[Math.max(0, Math.min(Skills.length - 1, index))];
+
+/** 一个轴对齐的框，世界坐标。就是 BattleView.spawn 那个出货视口。 */
+export interface ViewBox {
+  x: number;
+  y: number;
+  halfW: number;
+  halfH: number;
+}
+
+/**
+ * 从 (x, y) 朝 heading 走多远才会走出这个框。
+ *
+ * 标准的射线—轴对齐框求交，只算正方向那一侧。起点在框外时返回 0（贴着地图边缘时会发生：
+ * 出货视口被夹在场地内，人可以站在框的边上）。
+ */
+function exitDistance(x: number, y: number, heading: number, box: ViewBox): number {
+  const dx = Math.cos(heading);
+  const dy = Math.sin(heading);
+
+  let t = Infinity;
+  if (Math.abs(dx) > 1e-6) {
+    const edge = dx > 0 ? box.x + box.halfW : box.x - box.halfW;
+    t = Math.min(t, (edge - x) / dx);
+  }
+  if (Math.abs(dy) > 1e-6) {
+    const edge = dy > 0 ? box.y + box.halfH : box.y - box.halfH;
+    t = Math.min(t, (edge - y) / dy);
+  }
+  return Number.isFinite(t) ? Math.max(0, t) : 0;
+}
+
+/**
+ * 发射类技能能打多远：名义射程，但**不许打出画面**。
+ *
+ * 为什么要这条规则：波的射程是按施放者的 attackRange 折算的，武将那一档能到一百六十多个
+ * 世界单位，比半个视口还长。打出画面之后玩家看不到自己杀了谁，屏幕外一片人无声消失 ——
+ * 那不是爽快，是茫然。而且波会一路飞过整张地图，把还没进过画面的人也清掉，跑步机那套
+ * "背后回收、前方多刷"就白做了。
+ *
+ * 用**出货视口**而不是当前视野：滚轮缩放是调试旋钮，上线后视口固定，技能能打多远不该跟着
+ * 调试视角变（和出怪用同一个框、同一个理由，见 BattleView 那段）。
+ *
+ * 按整个扇面取最小值，不只看正前方：一道斜着放的波，正前方还在画面里，扇面的边角早就出去了。
+ *
+ * 兜底是施放者自己的 attackRange —— 贴着地图边缘朝外放时，框只剩一点点，再往下夹会让这一招
+ * 还不如平砍。打不出画面的前提下，至少得够得着眼前的人。
+ */
+export function cappedReach(
+  x: number,
+  y: number,
+  heading: number,
+  arc: number,
+  reach: number,
+  floor: number,
+  box: ViewBox,
+): number {
+  const SAMPLES = 5;
+  let limit = Infinity;
+  for (let i = 0; i <= SAMPLES; i++) {
+    const a = heading - arc * 0.5 + (arc * i) / SAMPLES;
+    limit = Math.min(limit, exitDistance(x, y, a, box));
+  }
+  return Math.max(Math.min(reach, limit), Math.min(reach, floor));
+}
