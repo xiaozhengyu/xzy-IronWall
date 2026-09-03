@@ -18,6 +18,7 @@ import {
   cappedReach,
   skillAt,
   type SkillDef,
+  type SkillId,
 } from './skills';
 
 /**
@@ -145,7 +146,11 @@ export const INVINCIBLE_HP = 999999;
  */
 const HP_LADDER = [5, 10, 20, 50, 100, 200, 500, 1000, INVINCIBLE_HP];
 
-const PLAYER_HP = 20;
+/**
+ * 开局血量。必须是 HP_LADDER 上的一档 —— 菜单里的 [− 生命 +] 是在那张表上走的，起点不在
+ * 表上的话第一次按加号会先跳到最近的一档，看着像少了一次。
+ */
+const PLAYER_HP = 100;
 
 /**
  * 攻击频率：一次挥击**结束**之后再等多久才起下一次，秒。0 就是一刀接一刀。
@@ -154,6 +159,14 @@ const PLAYER_HP = 20;
  * 每种武器自己的属性，这个常量只是在它之上再加一段停顿。
  */
 const PLAYER_SWING_GAP = 0;
+
+/**
+ * 开局默认用哪一招。
+ *
+ * 按 id 找而不是写死下标：技能表往里插一条、或者调一下顺序，下标就悄悄指向另一招了，而这种
+ * 错不会报任何错，只会让开局手感莫名其妙变了。
+ */
+const DEFAULT_SKILL: SkillId = 'wave';
 
 /**
  * 出怪间隔。玩家清场的速度约每秒三个，所以这个值定得比它快不少，场面才会一直是满的 ——
@@ -484,7 +497,7 @@ export class Battle {
    * 只作用于玩家。敌人一直走基础攻击那条路 —— 让杂兵也放技能，画面上会同时有几十道波，
    * 分不清哪道是自己放的。
    */
-  skillIndex = 0;
+  skillIndex = Skills.findIndex((s) => s.id === DEFAULT_SKILL);
 
   /** 正在往外跑的技能波。只有"破空"会往这里放东西。 */
   private readonly skillWaves: SkillWave[] = [];
