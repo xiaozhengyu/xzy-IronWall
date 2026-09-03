@@ -73,6 +73,16 @@ export interface DrawOptions {
   hurt?: number;
   /** 离地高度，世界单位。击飞时影子按它缩小变淡。 */
   lift?: number;
+  /**
+   * 剪影模式：这一遍画的不是这个人，是他的轮廓。
+   *
+   * 轮廓光的做法是把整个人再画几遍、各偏一个像素、整套调色板刷成同一个亮色（见 Scene.drawRim）。
+   * 但人物身上有几处**写死的黑**不走调色板 —— 脚下的影子、下巴底下那条遮挡带 —— 它们照常
+   * 画出来，四份叠在一起就是脚下一团黑斑和下巴上一道黑线，看着像渲染坏了。
+   *
+   * 这个开关把那几处关掉。它们表达的都是"这块被挡住了"，而一份剪影里没有"被挡住"这回事。
+   */
+  silhouette?: boolean;
 }
 
 export function drawCharacter(
@@ -85,13 +95,14 @@ export function drawCharacter(
 ): void {
   const hurt = options.hurt ?? 0;
   const lift = options.lift ?? 0;
+  const silhouette = options.silhouette ?? false;
 
   if (p.scale < tokenScale.value) {
     drawToken(shapes, pose, p, palette, def, hurt);
     return;
   }
 
-  drawShadow(shapes, p, lift);
+  if (!silhouette) drawShadow(shapes, p, lift);
 
   if (def.cape) drawCape(shapes, p, pose, palette, def);
   drawLeg(shapes, p, pose, palette, def, 0);
@@ -100,7 +111,7 @@ export function drawCharacter(
   drawTorso(shapes, p, pose, palette, def);
   drawArm(shapes, p, pose, palette, def, 0);
   drawArm(shapes, p, pose, palette, def, 1);
-  drawHead(shapes, p, pose, palette, def);
+  drawHead(shapes, p, pose, palette, def, silhouette);
 
   if (def.shield !== 'none') drawShield(shapes, p, pose, palette, def);
   drawWeapon(shapes, p, pose, palette, def);
@@ -517,7 +528,14 @@ function drawHands(shapes: ShapeBatch, p: Projector, pose: Pose, palette: Charac
   fist(shapes, p.screen(pose.handR), p.s(r), mid, dark, p.depth(pose.handR) + DEPTH_HAND);
 }
 
-function drawHead(shapes: ShapeBatch, p: Projector, pose: Pose, palette: CharacterPalette, def: UnitDef): void {
+function drawHead(
+  shapes: ShapeBatch,
+  p: Projector,
+  pose: Pose,
+  palette: CharacterPalette,
+  def: UnitDef,
+  silhouette = false,
+): void {
   const depth = p.depth(pose.head) + DEPTH_HEAD;
   const r = RigSpec.headRadius;
 
@@ -633,14 +651,16 @@ function drawHead(shapes: ShapeBatch, p: Projector, pose: Pose, palette: Charact
 
   // 头和身体交界处的遮挡：下巴底下一条近黑的带子。那几个暗像素对轮廓的贡献超过任何额外
   // 几何 —— 但它走在脸板的下方，绝不横过脸板，否则会吞掉唯一那块说明这人朝哪儿看的皮肤。
-  shapes.rect(
-    v2(headAt.x, headAt.y + bandH * (0.72 + 0.62 * face)),
-    cw * 0.8,
-    bandH * 0.28,
-    0,
-    rgba(0, 0, 0, 85),
-    depth + 0.05,
-  );
+  if (!silhouette) {
+    shapes.rect(
+      v2(headAt.x, headAt.y + bandH * (0.72 + 0.62 * face)),
+      cw * 0.8,
+      bandH * 0.28,
+      0,
+      rgba(0, 0, 0, 85),
+      depth + 0.05,
+    );
+  }
 
   if (def.plume) drawPlume(shapes, p, pose, palette, crownR);
 }

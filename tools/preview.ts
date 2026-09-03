@@ -12,7 +12,7 @@
 import { deflateSync } from 'node:zlib';
 import { writeFileSync } from 'node:fs';
 import { CharacterAnimator, attackDuration, attackImpact } from '../src/characters/animator';
-import { PALETTE_BLUE, PALETTE_RED, type CharacterPalette } from '../src/characters/palette';
+import { PALETTE_BLUE, PALETTE_HERO, PALETTE_RED, flatPalette, type CharacterPalette } from '../src/characters/palette';
 import { drawCharacter } from '../src/characters/renderer';
 import { Pose } from '../src/characters/rig';
 import { type UnitDef, UnitPresets } from '../src/characters/unitDef';
@@ -881,4 +881,80 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
 
   writePng('.preview-cursor.png', sheet.upscale(3));
   console.log('准心：左旧十字 / 右像素剑，各摆在空地、人堆边、人堆中');
+}
+
+// ---------------------------------------------------------------- 人堆里找得到玩家吗
+//
+// 一片红杂兵中间站一个玩家，左右各画一遍：左边旧的（蓝方色、没有轮廓光），右边新的
+// （亮一档的专用色 + 一圈轮廓光）。
+//
+// 这张图回答的是"余光扫过去能不能捕捉到自己"。单独看一个玩家当然认得出，但玩家面对的是
+// 几百个同色小人挤在一起 —— 那时候先被眼睛读到的是密度不是色相。
+{
+  const STEP = 1 / 120;
+  const COUNT = 54;
+  const SPAN_X = 96;
+  const SPAN_Y = 60;
+
+  const W = Math.round((SPAN_X + 20) * GRAIN);
+  const H = Math.round((SPAN_Y + 30) * GRAIN * Projection.groundSquash + 14 * GRAIN);
+
+  const rng = (() => {
+    let s = 20260906;
+    return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+  })();
+
+  const mob: Character[] = [];
+  for (let i = 0; i < COUNT; i++) {
+    const c = new Character(UnitPresets.thug(), PALETTE_RED, 20);
+    c.x = (rng() - 0.5) * SPAN_X;
+    c.y = (rng() - 0.5) * SPAN_Y;
+    c.facing = rng() * Math.PI * 2;
+    for (let k = 0; k < Math.round((0.2 + rng() * 0.6) / STEP); k++) c.update(STEP, true);
+    mob.push(c);
+  }
+
+  const hero = new Character(UnitPresets.warlord(), PALETTE_HERO, 32);
+  hero.x = 4;
+  hero.y = 2;
+  hero.facing = Math.PI * 0.4;
+  for (let k = 0; k < Math.round(0.35 / STEP); k++) hero.update(STEP, true);
+
+  const RIM = flatPalette(rgba(255, 236, 176, 190));
+  const sheet = new Canvas(W * 2, H, [71, 105, 59]);
+
+  [false, true].forEach((fancy, side) => {
+    const shapes = new ShapeBatch();
+    const sink = new ShapeSink();
+    const rootX = side * W + W / 2;
+    const rootY = H / 2;
+    const at = (c: Character) => v2(rootX + c.x * GRAIN, rootY + c.y * Projection.groundSquash * GRAIN);
+
+    for (const c of mob) {
+      drawCharacter(shapes, c.pose, new Projector(at(c), c.facing, Projection.groundSquash, GRAIN), PALETTE_RED, c.def);
+    }
+
+    const hp = at(hero);
+    if (fancy) {
+      // 轮廓光：整个人再画四遍，各偏一个像素、压在自己身后。和 Scene.drawRim 同一套。
+      const off = Math.max(1, Math.round(GRAIN * 0.34));
+      for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+        const p = new Projector(v2(hp.x + dx * off, hp.y + dy * off), hero.facing, Projection.groundSquash, GRAIN, hp.y - 0.5);
+        drawCharacter(shapes, hero.pose, p, RIM, hero.def, { silhouette: true });
+      }
+    }
+    drawCharacter(
+      shapes,
+      hero.pose,
+      new Projector(hp, hero.facing, Projection.groundSquash, GRAIN),
+      fancy ? PALETTE_HERO : PALETTE_BLUE,
+      hero.def,
+    );
+
+    shapes.flushToMesh(sink);
+    for (const s of sink.shapes) sheet.fillPolygon(s);
+  });
+
+  writePng('.preview-hero.png', sheet.upscale(2));
+  console.log('玩家辨识：左旧（蓝方色、无轮廓光）/ 右新（专用亮色 + 轮廓光）');
 }

@@ -1,11 +1,12 @@
 import { Container, Graphics, Sprite, type Renderer } from 'pixi.js';
 import { drawCharacter, drawSkeleton } from '../characters/renderer';
+import { flatPalette } from '../characters/palette';
 import type { Character } from '../game/character';
 import type { Battle } from '../game/battle';
 import type { Field } from '../game/field';
 import type { ItemDef } from '../items/itemDef';
 import type { ItemSheet } from '../items/renderer';
-import { v2 } from '../core/math';
+import { v2, type Vec2 } from '../core/math';
 import { rgba, toHex } from './color';
 import type { Camera } from './camera';
 import { PixelSurface } from './pixelSurface';
@@ -57,6 +58,23 @@ const cursorPixel = (grain: number): number => Math.max(1, Math.min(4, Math.roun
  * 一个人从脚到头约 18.3 个世界单位，被相机压扁之后换算回世界纵向是 18.3 × heightSquash /
  * groundSquash ≈ 23，取 30 留富余给长枪和斗篷。
  */
+/**
+ * 轮廓光的颜色和偏移方向。
+ *
+ * 只走上下左右四个方向，不走八个：八个方向厚一倍、也贵一倍，而在二十像素的人身上，四个
+ * 方向已经能围出一圈连续的边（斜角处由相邻两个方向的偏移接上）。
+ *
+ * 颜色是暖白偏金，和玩家那身金包边同一个语气；alpha 给到 190 而不是满 —— "轻微"是它该有的
+ * 分寸，满不透明的一圈白边会让人物读作贴纸。
+ */
+const RIM_OFFSETS: readonly (readonly [number, number])[] = [
+  [-1, 0],
+  [1, 0],
+  [0, -1],
+  [0, 1],
+];
+const HERO_RIM_PALETTE = flatPalette(rgba(255, 236, 176, 190));
+
 /** 击飞轨迹压在人物层里，但排在人之前一点点 —— 它是身后的痕迹，不该盖住脸。 */
 const DEPTH_TRAIL = -2;
 
@@ -186,7 +204,7 @@ export class Scene {
       this.drawCharacterAt(e);
       this.drawn++;
     }
-    this.drawCharacterAt(battle.player);
+    this.drawCharacterAt(battle.player, true);
 
     // 击飞的轨迹线画在人之后：它是从身体拖出来的，压在别人身上比断在别人身后好读。
     for (const e of battle.enemies) {
@@ -342,10 +360,41 @@ export class Scene {
   }
 
   /** 把一个单位画到它在缓冲里该在的位置上。 */
-  private drawCharacterAt(c: Character): void {
+  private drawCharacterAt(c: Character, rim = false): void {
     const at = this.camera.worldToScreen(c.x, c.y);
-    const p = new Projector(at, c.facing, Projection.groundSquash, this.camera.grain);
+    const grain = this.camera.grain;
+    if (rim) this.drawRim(c, at, grain);
+    const p = new Projector(at, c.facing, Projection.groundSquash, grain);
     drawCharacter(this.shapes, c.pose, p, c.palette, c.def, { hurt: c.hurt, lift: c.lift });
+  }
+
+  /**
+   * 玩家身上那圈轮廓光。
+   *
+   * 几百个人挤在一起时，颜色解决不了"我在哪儿"——眼睛先看到的是密度不是色相。轮廓光解决的
+   * 是这个：一圈比场上任何东西都亮的边，余光扫过就能捕捉到，不需要看清。
+   *
+   * 做法是把整个人再画四遍，各偏一个缓冲像素、整套调色板刷成同一个亮色（见 flatPalette），
+   * 深度压在他自己身后 —— 于是只有偏出去的那一圈露在外面。这和 PixelSurface 给全体单位描
+   * 暗边用的是同一个手法，区别只是这一份是逐角色的、亮的。
+   *
+   * 只给玩家画。代价是四份完整的人物图元（约二百八十个），对一个人可以接受，对场上一千人
+   * 不行 —— 也没必要，人海里需要被一眼找到的只有一个。
+   */
+  private drawRim(c: Character, at: Vec2, grain: number): void {
+    const off = Math.max(1, Math.round(grain * 0.34));
+    // 压在自己身后半个屏幕行。再深就会被身后那一排人盖住，再浅就会盖住自己的腿。
+    const depthRow = at.y - 0.5;
+    for (const [dx, dy] of RIM_OFFSETS) {
+      const p = new Projector(
+        v2(at.x + dx * off, at.y + dy * off),
+        c.facing,
+        Projection.groundSquash,
+        grain,
+        depthRow,
+      );
+      drawCharacter(this.shapes, c.pose, p, HERO_RIM_PALETTE, c.def, { lift: c.lift, silhouette: true });
+    }
   }
 
   /**

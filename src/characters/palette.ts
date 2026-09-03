@@ -123,5 +123,49 @@ export const PALETTE_PEASANT: CharacterPalette = {
   shieldRim: rgb(96, 78, 54),
 };
 
+/**
+ * 玩家专用。
+ *
+ * 玩家原来和"蓝方"共用一套色，而场上根本没有第二个蓝方 —— 也就是说蓝本来就是独占的，
+ * 问题不在于撞色，在于**不够响**：那身蓝和暗红杂兵的明度差不多，几百个人挤在一起时，
+ * 眼睛先看到的是密度不是颜色。
+ *
+ * 所以这套不是"另一个阵营色"，是刻意调亮一档的一套：甲用近白的钢（比杂兵的钢亮一大截），
+ * 罩袍是饱和的天青（不是杂兵那种发灰的红蓝），包边和盔缨用金。三样都往亮里走，玩家在人堆里
+ * 就是最亮的那一块。
+ *
+ * 配合 Scene 里那圈轮廓光一起用（见 HERO_RIM）：颜色解决"哪个是我"，轮廓光解决"我在哪儿"——
+ * 前者要看清才分得出，后者余光扫过就能捕捉到。
+ */
+export const PALETTE_HERO: CharacterPalette = {
+  ...base(),
+  // 甲：近白的钢。杂兵是 172,178,190，这里整条色阶往上抬。
+  steel: rgb(226, 232, 244),
+  steelShade: rgb(158, 168, 188),
+  steelDark: rgb(74, 82, 102),
+  steelLight: rgb(250, 252, 255),
+  trim: rgb(246, 206, 96),
+  cloth: rgb(58, 138, 226),
+  clothShade: rgb(24, 62, 124),
+  clothLight: rgb(58, 138, 226),
+  plume: rgb(250, 210, 92),
+  plumeShade: rgb(150, 108, 30),
+  shieldFace: rgb(58, 138, 226),
+  shieldRim: rgb(246, 206, 96),
+};
+
+/**
+ * 把一整套调色板刷成同一个颜色。
+ *
+ * 给轮廓光用：Scene 拿它把玩家整个人再画几遍、各偏一个像素、压在他身后，露出来的一圈就是
+ * 轮廓光。走"换一套调色板"这条路而不是给渲染器加一个"扁平色"开关，是因为渲染器里几十处
+ * 取色全是从 palette 上拿的 —— 换调色板等于一处都不用改。
+ */
+export const flatPalette = (color: Rgba): CharacterPalette => {
+  const all = {} as Record<keyof CharacterPalette, Rgba>;
+  for (const key of Object.keys(PALETTE_HERO) as (keyof CharacterPalette)[]) all[key] = color;
+  return all as CharacterPalette;
+};
+
 export const paletteForFaction = (faction: number): CharacterPalette =>
   faction === 0 ? PALETTE_BLUE : PALETTE_RED;

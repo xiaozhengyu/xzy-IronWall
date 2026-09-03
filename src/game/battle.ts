@@ -1,6 +1,6 @@
 import { attackDuration } from '../characters/animator';
 import { RigSpec } from '../characters/rig';
-import { PALETTE_BLUE, PALETTE_PEASANT, PALETTE_RED, type CharacterPalette } from '../characters/palette';
+import { PALETTE_HERO, PALETTE_PEASANT, PALETTE_RED, type CharacterPalette } from '../characters/palette';
 import { type UnitDef, UnitPresets } from '../characters/unitDef';
 import { clamp } from '../core/math';
 import { Debris } from '../effects/debris';
@@ -545,7 +545,7 @@ export class Battle {
   constructor(field: Field) {
     this.field = field;
     this.grid = new SpatialGrid(cellSizeFor(CROWD_SPACING));
-    this.player = new Character(PlayerPresets[0].make(), PALETTE_BLUE, HUMAN_PACE);
+    this.player = new Character(PlayerPresets[0].make(), PALETTE_HERO, HUMAN_PACE);
     this.player.facing = Math.PI * 0.5; // 面朝镜头
     this.player.x = field.width * 0.5;
     this.player.y = field.height * 0.5;
