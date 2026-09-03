@@ -9,6 +9,7 @@ import { Character } from './character';
 import { isFreeSpot, moveWithCollision } from './collision';
 import { inAttackArc, inSector, sweptBy } from './combat';
 import type { Field } from './field';
+import { rgb } from '../render/color';
 import { SpatialGrid } from './grid';
 import { Skills, cappedReach, skillAt, type SkillDef } from './skills';
 
@@ -107,8 +108,24 @@ const PLAYER_SWING_GAP = 0;
  */
 const SPAWN_INTERVAL = 0.18;
 
-/** 开局先铺这么多，从很近到视野边缘都有。 */
+/**
+ * 开局先在**视口外**铺这么多。
+ *
+ * 以前是从脚边到视野边缘直接撒，开场第一帧玩家周围就凭空围了一圈人 —— 那不是"战场上有敌人"，
+ * 是"敌人是刚才生出来的"，穿帮得很明显。现在这一批和之后每一个都走同一条路（spawn），
+ * 全部生在看不见的地方再走进来。
+ *
+ * 代价是开局有几秒钟画面偏空。这是对的：割草的压迫感来自人越涌越多，而不是一上来就满屏。
+ */
 const SEED_COUNT = 30;
+
+/**
+ * 开局那一批往视口外再多撒多远。
+ *
+ * 光走 spawn 的话三十个人全贴在视口边缘上，会读作一个同时收缩的圆环 —— 整整齐齐，一眼假。
+ * 多给一段随机纵深，他们就分批到达：近的几秒内就打上来，远的还在路上。
+ */
+const SEED_DEPTH = 150;
 
 /**
  * 出兵倍率的上限。
@@ -575,13 +592,14 @@ export class Battle {
    * 几秒。铺一批之后一进画面就有活干，后面靠持续出怪接上。
    */
   seed(view: BattleView): void {
-    // 铺场要的是"从脚边到视野边缘都有"，所以这一批**不**走视口外那套，直接按距离撒。
-    // 半径同样按出货那一档：调试拉远时不该凭空多铺出几百个人来。
-    const reach = Math.hypot(view.spawn.halfW, view.spawn.halfH);
+    // 全部生在视口外，和之后每一个走同一条路：方向均匀一整圈，距离按"沿这个方向走多远才
+    // 出画面"算，再往外多撒一段随机纵深（见 SEED_DEPTH）让他们分批到达。
     for (let i = 0; i < SEED_COUNT; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const r = 30 + Math.random() * Math.max(1, reach - 30);
-      this.place(this.player.x + Math.cos(angle) * r, this.player.y + Math.sin(angle) * r);
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      const r = this.exitDistance(cos, sin, view) + SPAWN_MARGIN + Math.random() * SEED_DEPTH;
+      this.place(this.player.x + cos * r, this.player.y + sin * r);
     }
   }
 
@@ -991,15 +1009,29 @@ export class Battle {
         // 整圈那一招的圆心是**人**，不是武器落点：转一圈扫开身周，落点在身前一侧没有意义。
         const full = arc >= Math.PI * 1.99;
         if (full) {
+          // 回旋：一圈从脚下推开的环。压在人群之上、加粗、放慢 —— 它扫过的地方正好站满了
+          // 人，贴地画等于白画（见 impact.ts 的 DEPTH_OVERHEAD）。
           this.effects.spawn(player.x, player.y, player.facing, {
             power: player.def.bulk,
             span: Math.PI * 2,
             from: 1.5,
             to: reach,
-            life: 0.34,
+            life: 0.5,
+            weight: 2.1,
+            overhead: true,
           });
         } else {
-          this.effects.spawn(at.x, at.y, player.facing, { power: player.def.bulk });
+          // 横扫也压在人群之上，但比另外三招轻一档。
+          //
+          // 它是菜单里能选的一招，完全看不见说不过去；但它同时是自动挥的那一下，每隔零点
+          // 几秒就来一次 —— 给足另外三招的份量会让屏幕上一直横着一道白弧，反而把真正按出来
+          // 的技能淹掉。轻一档、短一点，看得见又不抢戏。
+          this.effects.spawn(at.x, at.y, player.facing, {
+            power: player.def.bulk,
+            weight: 1.5,
+            life: 0.34,
+            overhead: true,
+          });
         }
         for (const e of this.enemies) {
           if (!e.alive) continue;
@@ -1030,6 +1062,11 @@ export class Battle {
           from: wave.from,
           to: wave.to,
           life: wave.life,
+          weight: 2.4,
+          overhead: true,
+          // 偏冷的白。破空是唯一一个离开施放者独立飞出去的东西，给它一个和别的招不同的
+          // 色温，玩家余光里就能分出"这是我放出去的那道波"还是"我脚下扫了一圈"。
+          tint: rgb(214, 236, 255),
         });
         return;
       }
@@ -1041,12 +1078,16 @@ export class Battle {
           speed: reach / LUNGE_TIME_SCALE,
           power: skill.power,
         };
+        // 突进：一道窄而急的前推弧，跟着人一起冲出去。
         this.effects.spawn(at.x, at.y, player.facing, {
           power: player.def.bulk,
           span: 1.1,
           from: 2,
-          to: reach * 0.5,
-          life: 0.3,
+          to: reach * 0.62,
+          life: 0.42,
+          weight: 2.2,
+          overhead: true,
+          tint: rgb(255, 232, 190),
         });
         return;
     }

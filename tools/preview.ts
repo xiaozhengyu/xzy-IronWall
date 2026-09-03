@@ -24,7 +24,7 @@ import { Projection } from '../src/render/projection';
 import { Projector } from '../src/render/projector';
 import { ShapeBatch, type PrimitiveSink } from '../src/render/shapeBatch';
 import { ellipseSegments, unitCircle } from '../src/render/ellipseFan';
-import { type Rgba, rgba } from '../src/render/color';
+import { type Rgba, rgb, rgba } from '../src/render/color';
 import { Terrain } from '../src/world/terrain';
 import { Weather } from '../src/world/weather';
 import { Props } from '../src/world/props';
@@ -710,4 +710,87 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
 
   writePng('.preview-death.png', sheet.upscale(2));
   console.log(`击飞：分帧 ${FRAMES} 格（${FRAME_SPAN} 秒，含碎片）+ 频闪 ${STROBE} 个取样（${STROBE_SPAN} 秒，含轨迹线）`);
+}
+
+// ---------------------------------------------------------------- 技能特效看不看得见
+//
+// 三个技能 × 新旧两种画法，底下都铺同一群人。
+//
+// 这张图回答的是"在游戏里能不能看见"。空场上画一道弧当然好看，但玩家永远不会在空场上放
+// 技能 —— 弧扫过的地方恰恰站满了人。旧画法（下排）把弧压在腿以下，人一密就整条被吃掉；
+// 新画法（上排）压在人群之上、加粗、放慢。同一群人、同一个时刻，只有画法不同。
+{
+  const STEP = 1 / 120;
+  const COUNT = 42;
+  const SPAN_X = 96;
+  const SPAN_Y = 60;
+
+  const W = Math.round((SPAN_X + 20) * GRAIN);
+  const H = Math.round((SPAN_Y + 30) * GRAIN * Projection.groundSquash + 14 * GRAIN);
+
+  const rng = (() => {
+    let s = 20260904;
+    return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+  })();
+
+  // 一群人，两排共用。
+  const folks: Character[] = [];
+  for (let i = 0; i < COUNT; i++) {
+    const c = new Character(UnitPresets.thug(), PALETTE_RED, 20);
+    c.x = (rng() - 0.5) * SPAN_X;
+    c.y = (rng() - 0.5) * SPAN_Y;
+    c.facing = rng() * Math.PI * 2;
+    for (let k = 0; k < Math.round((0.2 + rng() * 0.6) / STEP); k++) c.update(STEP, true);
+    folks.push(c);
+  }
+
+  /** 一格：铺人 + 放一次特效，推到 t 秒再画。 */
+  const panel = (
+    canvas: Canvas,
+    ox: number,
+    oy: number,
+    opts: Parameters<ImpactEffects['spawn']>[3],
+    t: number,
+    origin: { x: number; y: number },
+    heading: number,
+  ) => {
+    const shapes = new ShapeBatch();
+    const sink = new ShapeSink();
+    const rootX = ox + W / 2;
+    const rootY = oy + H / 2;
+
+    for (const c of folks) {
+      const at = v2(rootX + c.x * GRAIN, rootY + c.y * Projection.groundSquash * GRAIN);
+      drawCharacter(shapes, c.pose, new Projector(at, c.facing, Projection.groundSquash, GRAIN), PALETTE_RED, c.def);
+    }
+
+    const fx = new ImpactEffects();
+    fx.spawn(origin.x, origin.y, heading, opts);
+    for (let k = 0; k < Math.round(t / STEP); k++) fx.update(STEP);
+    fx.draw(shapes, 0, 0, rootX, rootY, GRAIN);
+
+    shapes.flushToMesh(sink);
+    for (const s of sink.shapes) canvas.fillPolygon(s);
+  };
+
+  // 三招各一列。上排新画法，下排旧画法（贴地、细、掉得快）。
+  const cases: { spawn: Parameters<ImpactEffects['spawn']>[3]; t: number; at: { x: number; y: number }; head: number }[] = [
+    // 横扫：贴地那一档本来就是它，两排一样——它是对照组，说明"看不见"不是错觉。
+    { spawn: { power: 1.34, life: 0.34, weight: 1.5, overhead: true }, t: 0.14, at: { x: -34, y: 0 }, head: 0 },
+    // 回旋
+    { spawn: { power: 1.34, span: Math.PI * 2, from: 1.5, to: 27, life: 0.5, weight: 2.1, overhead: true }, t: 0.3, at: { x: 0, y: 0 }, head: 0 },
+    // 破空
+    { spawn: { power: 1, span: 0.9, from: 2, to: 96, life: 0.55, weight: 2.4, overhead: true, tint: rgb(214, 236, 255) }, t: 0.19, at: { x: -46, y: 0 }, head: 0 },
+  ];
+
+  const sheet = new Canvas(W * cases.length, H * 2, [71, 105, 59]);
+  cases.forEach((c, col) => {
+    panel(sheet, col * W, 0, c.spawn, c.t, c.at, c.head);
+    // 旧画法：同样的形状和尺寸，但贴地、不加粗、掉得快。
+    const old = { ...c.spawn, weight: 1, overhead: false, tint: undefined, life: 0.4 };
+    panel(sheet, col * W, H, old, c.t, c.at, c.head);
+  });
+
+  writePng('.preview-skillfx.png', sheet.upscale(2));
+  console.log('技能特效：上排新画法（压人群之上/加粗/放慢），下排旧画法（贴地）；列 = 横扫 / 回旋 / 破空');
 }
