@@ -27,8 +27,8 @@ const CAPACITY = 1200;
 const KIND_BLOOD = 0;
 const KIND_SHARD = 1;
 
-/** 重力。比人的击飞重（GRAVITY 150）—— 小块东西该落得更急，不然像在水里飘。 */
-const GRAVITY = 260;
+/** 重力。比人的击飞重（那边是 250）—— 小块东西该落得更急，不然像在水里飘。 */
+const GRAVITY = 380;
 
 /** 血珠活多久、甲片活多久。血是一瞬的事，甲片要留下来才算“碎了”。 */
 const BLOOD_LIFE = 0.42;
