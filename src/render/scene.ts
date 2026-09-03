@@ -1,4 +1,6 @@
 import { Container, Graphics, Sprite, type Renderer } from 'pixi.js';
+import { RigSpec } from '../characters/rig';
+import { drawAegisDome } from '../effects/aegisDome';
 import { drawCharacter, drawSkeleton } from '../characters/renderer';
 import { flatPalette } from '../characters/palette';
 import type { Character } from '../game/character';
@@ -74,6 +76,16 @@ const RIM_OFFSETS: readonly (readonly [number, number])[] = [
   [0, 1],
 ];
 const HERO_RIM_PALETTE = flatPalette(rgba(255, 236, 176, 190));
+/** 冲刺时那一档：几乎不透明的暖白，偏移也翻倍（见 drawRim）。 */
+const HERO_DASH_PALETTE = flatPalette(rgba(255, 248, 214, 246));
+
+/**
+ * 金钟罩压在玩家之上（他站在罩子里），但比技能弧低一档 —— 弧是一瞬间的事件，罩子一直都在，
+ * 让它压过每一道弧会把技能反馈盖掉。
+ */
+const DEPTH_AEGIS = 16;
+/** 还剩多少秒开始闪。 */
+const AEGIS_WARN = 1;
 
 /** 击飞轨迹压在人物层里，但排在人之前一点点 —— 它是身后的痕迹，不该盖住脸。 */
 const DEPTH_TRAIL = -2;
@@ -204,7 +216,10 @@ export class Scene {
       this.drawCharacterAt(e);
       this.drawn++;
     }
-    this.drawCharacterAt(battle.player, true);
+    this.drawCharacterAt(battle.player, true, battle.dashing);
+
+    // 金钟罩画在人之后：它罩在玩家身上，不是垫在他底下。
+    this.drawAegis(battle, camX, camY, rootX, rootY, grain);
 
     // 击飞的轨迹线画在人之后：它是从身体拖出来的，压在别人身上比断在别人身后好读。
     for (const e of battle.enemies) {
@@ -316,6 +331,49 @@ export class Scene {
   }
 
   /**
+   * 金钟罩：罩在玩家身上的那个光罩。
+   *
+   * 画两圈，一圈在地上一圈在身上 —— 单画一个屏幕空间的圆读作贴在镜头上的一个环，看不出它
+   * 罩着谁；单画一个地面椭圆又读作脚下一个法阵。地面那圈交代"罩子占了这么大一块地"，身上
+   * 那圈交代"罩子有高度、玩家在里面"，两圈一起才是个罩子。
+   *
+   * 快到期时闪一下（见 blink）：这是玩家唯一能知道"还剩多久"的地方，而一个没有预告就消失的
+   * 护盾会让人觉得是被偷走的。
+   */
+  private drawAegis(
+    battle: Battle,
+    camX: number,
+    camY: number,
+    rootX: number,
+    rootY: number,
+    grain: number,
+  ): void {
+    const a = battle.aegis;
+    if (!a) return;
+
+    const player = battle.player;
+    const sx = rootX + (player.x - camX) * grain;
+    const sy = rootY + (player.y - camY) * Projection.groundSquash * grain;
+    const r = a.radius * grain;
+
+    // 最后一秒开始闪，越到后面闪得越急。
+    const left = a.left;
+    const blink = left > AEGIS_WARN ? 1 : 0.45 + 0.55 * Math.abs(Math.sin((AEGIS_WARN - left) * 22));
+
+    // 罩子整个排在玩家之上（他站在里面），但仍按自己的屏幕行取深度，所以身前那一排人挡得住它。
+    drawAegisDome(
+      this.shapes,
+      sx,
+      sy,
+      r,
+      RigSpec.chestZ * Projection.heightSquash * grain,
+      grain,
+      blink,
+      sy * Projector.DEPTH_PER_ROW + DEPTH_AEGIS,
+    );
+  }
+
+  /**
    * 击飞时身后拖的那条线。
    *
    * 存在的理由是**读出高度**。俯视角下"飞得高"和"飞得远"在屏幕上是同一个方向的位移，
@@ -360,10 +418,10 @@ export class Scene {
   }
 
   /** 把一个单位画到它在缓冲里该在的位置上。 */
-  private drawCharacterAt(c: Character, rim = false): void {
+  private drawCharacterAt(c: Character, rim = false, hot = false): void {
     const at = this.camera.worldToScreen(c.x, c.y);
     const grain = this.camera.grain;
-    if (rim) this.drawRim(c, at, grain);
+    if (rim) this.drawRim(c, at, grain, hot);
     const p = new Projector(at, c.facing, Projection.groundSquash, grain);
     drawCharacter(this.shapes, c.pose, p, c.palette, c.def, { hurt: c.hurt, lift: c.lift });
   }
@@ -381,8 +439,14 @@ export class Scene {
    * 只给玩家画。代价是四份完整的人物图元（约二百八十个），对一个人可以接受，对场上一千人
    * 不行 —— 也没必要，人海里需要被一眼找到的只有一个。
    */
-  private drawRim(c: Character, at: Vec2, grain: number): void {
-    const off = Math.max(1, Math.round(grain * 0.34));
+  private drawRim(c: Character, at: Vec2, grain: number, hot = false): void {
+    // 冲刺时换一档更厚更亮的边。
+    //
+    // 冲刺是这个游戏里唯一一次"玩家自己高速位移"，而高速位移在俯视角下最容易读丢 —— 画面
+    // 里几百个人都在动，凭什么看出哪一下是我冲出去的。把常驻那圈轮廓光加厚加亮就够了：
+    // 不用另做一套特效，玩家看到的是"我本来就在发光，冲的时候更亮"，是同一件东西的两档。
+    const off = Math.max(1, Math.round(grain * (hot ? 0.7 : 0.34)));
+    const palette = hot ? HERO_DASH_PALETTE : HERO_RIM_PALETTE;
     // 压在自己身后半个屏幕行。再深就会被身后那一排人盖住，再浅就会盖住自己的腿。
     const depthRow = at.y - 0.5;
     for (const [dx, dy] of RIM_OFFSETS) {
@@ -393,7 +457,7 @@ export class Scene {
         grain,
         depthRow,
       );
-      drawCharacter(this.shapes, c.pose, p, HERO_RIM_PALETTE, c.def, { lift: c.lift, silhouette: true });
+      drawCharacter(this.shapes, c.pose, p, palette, c.def, { lift: c.lift, silhouette: true });
     }
   }
 

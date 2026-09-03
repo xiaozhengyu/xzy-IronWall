@@ -13,7 +13,7 @@
  * 碰到就死，和基础攻击的规则完全一致。先把四种形状摆出来看手感，数值等形状定了再谈。
  */
 
-export type SkillId = 'sweep' | 'spin' | 'wave' | 'lunge';
+export type SkillId = 'sweep' | 'spin' | 'wave' | 'lunge' | 'aegis';
 
 /**
  * 判定怎么结算。这是三条不同的代码路径，不是三个参数。
@@ -21,8 +21,9 @@ export type SkillId = 'sweep' | 'spin' | 'wave' | 'lunge';
  *   instant  发招那一帧一次算清（和基础攻击同一条路，见 combat.ts 顶上那段）。
  *   wave     波跨帧向前推进，每帧结算它**这一帧扫过**的那圈人。
  *   lunge    人跨帧向前冲，每帧结算身体**这一帧碰到**的人。
+ *   aura     一个罩子跟着人走，持续若干秒，每帧结算**碰到罩子**的人。
  */
-export type SkillKind = 'instant' | 'wave' | 'lunge';
+export type SkillKind = 'instant' | 'wave' | 'lunge' | 'aura';
 
 export interface SkillDef {
   id: SkillId;
@@ -49,6 +50,22 @@ export interface SkillDef {
    * 横扫更碎。等以后真要分强弱，这个数是第一个该跟着技能走的。
    */
   power: number;
+  /**
+   * 这一招打完之后，除了动作本身还要多等多久才能再来一次，秒。
+   *
+   * 基础节奏本来就是动作时长（见 PLAYER_SWING_GAP），这个值加在它之上。位移大、覆盖广的
+   * 招该等得久一点 —— 突进一下就跨过大半个屏幕，跟平砍同一个频率的话，玩家等于一直在瞬移。
+   *
+   * 现在技能是自动放的，所以这是唯一的节奏阀门；等改成按键触发之后，它就是冷却时间。
+   */
+  gap: number;
+  /**
+   * 收招时在落点补一圈，半径按施放者 attackRange 的倍数。0 = 不补。
+   *
+   * 只有突进用。冲过去之后原地炸一圈，把冲刺走廊两侧漏掉的人一起带走 —— 冲锋本来就该以
+   * "撞进人堆里停下"收尾，而不是穿过去就没事了。
+   */
+  finishRing: number;
 }
 
 export const Skills: SkillDef[] = [
@@ -62,6 +79,8 @@ export const Skills: SkillDef[] = [
     duration: 0,
     // 横扫就是基础那一下，不该有"打碎了"的表现。
     power: 1,
+    gap: 0,
+    finishRing: 0,
   },
   {
     id: 'spin',
@@ -76,6 +95,8 @@ export const Skills: SkillDef[] = [
     arc: Math.PI * 2,
     duration: 0,
     power: 2,
+    gap: 0.25,
+    finishRing: 0,
   },
   {
     id: 'wave',
@@ -87,6 +108,8 @@ export const Skills: SkillDef[] = [
     arc: 0.9,
     duration: 0.55,
     power: 2,
+    gap: 0.45,
+    finishRing: 0,
   },
   {
     id: 'lunge',
@@ -98,6 +121,26 @@ export const Skills: SkillDef[] = [
     arc: null,
     duration: 0.22,
     power: 2,
+    // 一下跨过大半个屏幕，不该和平砍同一个频率 —— 那等于玩家一直在瞬移。
+    gap: 0.85,
+    // 冲到头再炸一圈。
+    finishRing: 0.95,
+  },
+  {
+    id: 'aegis',
+    name: '金钟罩',
+    note: '罩子跟着人走，碰到就飞',
+    kind: 'aura',
+    // 贴身一圈。它换来的不是范围是**时间**：别的招是一瞬间的事，这个能顶几秒。
+    reach: 0.95,
+    arc: null,
+    // 持续时间必须**短于**出手间隔，否则自动挥会把它一直续上，变成常驻无敌圈而不是一个技能。
+    // 现在开 2 秒、歇 1.3 秒左右，玩家看得出它有开有关。等技能改成按键触发之后，这两个数
+    // 就是"持续时间"和"冷却"，那时才谈得上平衡。
+    duration: 2,
+    power: 2,
+    gap: 2.6,
+    finishRing: 0,
   },
 ];
 

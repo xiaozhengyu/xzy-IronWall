@@ -43,11 +43,46 @@ const HUMAN_PACE = 16;
  * LUNGE_TIME_SCALE 把"冲多远"换算成速度：技能表里给的是距离（reach × attackRange），
  * 除以它得到速度，于是改冲的距离不会顺带改冲的时长——一招的节奏该是固定的。
  *
- * LUNGE_BODY_MARGIN 是撞人判定在身体半径之外再放宽多少。judging 得比看上去宽一点，
- * 理由和 combat.ts 里那段一样：宁可宽一点，"擦过去却没死"比"隔着空气死了"难受得多。
+ * LUNGE_BODY_MARGIN 是撞人判定在身体半径之外再放宽多少。
+ *
+ * 13 不是"放宽一点"，是**犁出一条看得见的道**。原来给 2.5，加上体宽总半宽才 8 个单位，而
+ * 人群互相分离的间距是 11 —— 一次冲刺只扫掉正中一列人，人群立刻合拢，画面上什么都没发生。
+ * 实测玩家正前方 110 单位内有 184 人，半宽 8 只罩得住 9 个，半宽 16 罩得住 24 个。
+ *
+ * 这一条是"撞飞看不见"的真正原因，而不是力度或方向：尸体确实以 170 单位/秒横着甩出去，
+ * 但它从一团人飞进另一团人，没有空地做参照就读不出位移。先有道，才看得见飞。
  */
 const LUNGE_TIME_SCALE = 0.22;
-const LUNGE_BODY_MARGIN = 2.5;
+
+
+/**
+ * 冲刺撞人时的击飞力度和定格时长。
+ *
+ * 冲刺中的玩家（也就是镜头）跑 495 单位/秒，而普通击飞初速只有 78 —— 相对屏幕，被撞的人
+ * 是往后退的。实测：尸体飞 55 个单位的同时玩家跑了 74 个，所以"撞飞"在画面上根本读不出来。
+ *
+ * 力度给到 2.2 倍，定格压到 25 毫秒（普通是 70）：被车撞和被刀砍不是一回事，而定格那段时间
+ * 里镜头正在飞走，人钉在原地反而最像"没打中"。
+ */
+// 1.8 不是 2.2：改成横着甩之后，整份力气都用在"离开冲刺线"上了，不再有一半浪费在追着
+// 镜头跑的前向分量上。2.2 时横向中位到 138 个单位，而视口半高才 109 —— 一半的尸体直接
+// 飞出画面，看不到落地就是白飞。
+const LUNGE_FORCE = 1.8;
+const LUNGE_FREEZE = 0.025;
+
+/**
+ * 撞飞的方向里，"顺着冲刺方向"那一份占多少（横向那一份固定是 1）。
+ *
+ * 一开始把撞飞做成了朝正前方 —— 那是错的，而且错得很隐蔽：**朝前正是镜头追着跑的方向**。
+ * 尸体以 170 单位/秒往前飞，玩家以 495 追上去，相对屏幕它几乎没动，看着就是被推着走的一堆
+ * 东西，不是被撞开的人。
+ *
+ * 真正让人"飞出去"的是**垂直于路径**那一份：只有横向位移才能让尸体离开冲刺线，从镜头旁边
+ * 甩出去。前向留一点（0.35）是为了不显得诡异 —— 被高速撞上的人当然会带一点前冲，但那只是
+ * 佐料，主菜是横着掀开。
+ */
+const LUNGE_SIDE_FORWARD = 0.35;
+const LUNGE_BODY_MARGIN = 13;
 
 /*
  * 不要在这里加"打击顿帧"（砍中就把整个世界停几十毫秒）。试过一版，是错的。
@@ -454,8 +489,31 @@ export class Battle {
   /** 正在往外跑的技能波。只有"破空"会往这里放东西。 */
   private readonly skillWaves: SkillWave[] = [];
 
+  /** 正在冲刺。Scene 拿它把玩家点亮 —— 高速位移得有个"我在冲"的信号。 */
+  get dashing(): boolean {
+    return this.lunge !== null;
+  }
+
   /** 突进：还剩多久、朝哪个方向冲。null = 没在冲。 */
-  private lunge: { left: number; heading: number; speed: number; power: number } | null = null;
+  private lunge: {
+    left: number;
+    heading: number;
+    speed: number;
+    power: number;
+    /** 收招时补的那一圈的半径，世界单位。0 = 不补。 */
+    finishRing: number;
+    /** 这一帧移动**之前**在哪儿。判定要按走过的那一整段算，不是按落点。 */
+    fromX: number;
+    fromY: number;
+  } | null = null;
+
+  /**
+   * 金钟罩：一个跟着玩家走的罩子，碰到的人全飞。
+   *
+   * 公开是给 Scene 画的 —— 它和别的技能不一样，不是一瞬间的事件而是一段**持续的状态**，
+   * 特效系统里"放出去就不管了"的冲击弧表达不了它，得每帧跟着人重画。
+   */
+  aegis: { left: number; total: number; radius: number; power: number } | null = null;
 
   /** 生命上限顶到了"无敌"那一档没有。面板要显示成文字，不是一串九。 */
   get invincible(): boolean {
@@ -596,6 +654,7 @@ export class Battle {
     // 跨帧的招式也得清掉：重开之后还有一道上一局的波在飞，会凭空杀掉刚铺下去的人。
     this.skillWaves.length = 0;
     this.lunge = null;
+    this.aegis = null;
     this.debris.clear();
     this.player.death = -1;
     this.player.hurt = 0;
@@ -900,6 +959,9 @@ export class Battle {
     // 身体走，能转向就等于能画出一条任意折线的死亡走廊。冲多远由 dashSpeed × duration
     // 定，一旦发动就是固定的一段。
     if (this.lunge) {
+      // 这一帧从哪儿走到哪儿。判定用它连成的线段，见 advanceSkills。
+      this.lunge.fromX = player.x;
+      this.lunge.fromY = player.y;
       // 方向和速度都在起手那一刻就存进去了：冲到一半换个技能不该改变这一次冲刺。
       const speed = this.lunge.speed;
       player.facing = this.lunge.heading;
@@ -949,7 +1011,7 @@ export class Battle {
    */
   private swing(): void {
     if (!this.autoAttack || !this.player.alive) return;
-    this.player.swing(attackDuration(this.player.def) + PLAYER_SWING_GAP);
+    this.player.swing(attackDuration(this.player.def) + PLAYER_SWING_GAP + skillAt(this.skillIndex).gap);
   }
 
   /** 选一个技能。越界忽略，菜单和键盘走同一条路。 */
@@ -991,8 +1053,14 @@ export class Battle {
    * @param power       1 = 平砍（只溅血），2 = 技能（血 + 甲片）。这是平砍和技能在画面上
    *                    唯一的区别 —— 两者都是碰到就死，但技能得看着更狠。
    */
-  private slay(e: Character, fromX: number, fromY: number, power: number): void {
-    e.kill(fromX, fromY);
+  private slay(
+    e: Character,
+    fromX: number,
+    fromY: number,
+    power: number,
+    launch: { force?: number; freeze?: number } = {},
+  ): void {
+    e.kill(fromX, fromY, launch);
     this.kills++;
 
     let dx = e.x - fromX;
@@ -1027,23 +1095,11 @@ export class Battle {
         // 整圈那一招的圆心是**人**，不是武器落点：转一圈扫开身周，落点在身前一侧没有意义。
         const full = arc >= Math.PI * 1.99;
         if (full) {
-          // 回旋：一圈从脚下推开的环。压在人群之上、加粗、放慢 —— 它扫过的地方正好站满了
-          // 人，贴地画等于白画（见 impact.ts 的 DEPTH_OVERHEAD）。
-          // power 固定 1，体型折进 weight（粗细）。
-          //
-          // 推进曲线里 to 会再乘一遍 power，所以"既给 power 又把 to 设成判定半径"等于把
-          // 半径乘了两次 —— 这正是画面圈比判定圈大三成四的原因。技能一律 power: 1，to 就
-          // 是字面意义上的视觉半径，改哪个数会变成什么样一眼能算出来。
-          this.effects.spawn(player.x, player.y, player.facing, {
-            power: 1,
-            span: Math.PI * 2,
-            from: 1.5,
-            to: reach / SKILL_HIT_MARGIN,
-            life: 0.5,
-            weight: 2.1 * player.def.bulk,
-            overhead: true,
-          });
-        } else {
+          // 回旋：一圈从脚下推开的环，见 castRing（突进的收招用的是同一份）。
+          this.castRing(reach, skill.power);
+          return;
+        }
+        {
           // 横扫也压在人群之上，但比另外三招轻一档。
           //
           // 它是菜单里能选的一招，完全看不见说不过去；但它同时是自动挥的那一下，每隔零点
@@ -1096,12 +1152,32 @@ export class Battle {
         return;
       }
 
+      case 'aura': {
+        this.aegis = { left: skill.duration, total: skill.duration, radius: reach, power: skill.power };
+        // 撑开那一下：一圈从脚下推开的环，比回旋快、比回旋细 —— 它说的是"罩子立起来了"，
+        // 不是"我扫了一圈"。罩子本身由 Scene 每帧跟着人画（见 aegis）。
+        this.effects.spawn(player.x, player.y, player.facing, {
+          power: 1,
+          span: Math.PI * 2,
+          from: 1,
+          to: reach / SKILL_HIT_MARGIN,
+          life: 0.3,
+          weight: 1.8 * player.def.bulk,
+          overhead: true,
+          tint: rgb(255, 226, 140),
+        });
+        return;
+      }
+
       case 'lunge':
         this.lunge = {
           left: skill.duration,
           heading: player.facing,
           speed: reach / LUNGE_TIME_SCALE,
           power: skill.power,
+          finishRing: player.def.attackRange * skill.finishRing,
+          fromX: player.x,
+          fromY: player.y,
         };
         // 突进：一道窄而急的前推弧，跟着人一起冲出去。
         this.effects.spawn(at.x, at.y, player.facing, {
@@ -1115,6 +1191,30 @@ export class Battle {
           tint: rgb(255, 232, 190),
         });
         return;
+    }
+  }
+
+  /**
+   * 原地炸一圈：以玩家为心的整圈判定，外加一道推开的环。
+   *
+   * 回旋是它、突进的收招也是它。抽出来不是为了省几行，是为了让"同一个形状"在画面和判定上
+   * 真的是同一份代码 —— 两处各写一遍的话，改了一处忘了另一处，玩家就会看到两个长得像但
+   * 判定不一样的圈。
+   */
+  private castRing(reach: number, power: number): void {
+    const { player } = this;
+    this.effects.spawn(player.x, player.y, player.facing, {
+      power: 1,
+      span: Math.PI * 2,
+      from: 1.5,
+      to: reach / SKILL_HIT_MARGIN,
+      life: 0.5,
+      weight: 2.1 * player.def.bulk,
+      overhead: true,
+    });
+    for (const e of this.enemies) {
+      if (!e.alive) continue;
+      if (inSector(player, e, reach, Math.PI * 2)) this.slay(e, player.x, player.y, power);
     }
   }
 
@@ -1146,19 +1246,68 @@ export class Battle {
       }
     }
 
+    if (this.aegis) {
+      this.aegis.left -= dt;
+      // 碰到罩子就飞。原点是玩家自己 —— 罩子是以他为心的，人本来就该被朝外推开。
+      for (const e of this.enemies) {
+        if (!e.alive) continue;
+        if (inSector(player, e, this.aegis.radius, Math.PI * 2)) {
+          this.slay(e, player.x, player.y, this.aegis.power);
+        }
+      }
+      if (this.aegis.left <= 0) this.aegis = null;
+    }
+
     if (this.lunge) {
       this.lunge.left -= dt;
       // 撞到谁谁死，判定就是人自己的身体加一点余量 —— 冲过去的是这个人，不是一个扇形。
+      //
+      // 但判定的是**这一帧走过的那条线段**，不是落点那一个圈。冲刺速度接近 500 单位/秒，
+      // 60 帧下一步就跨 8 个单位，而 main.ts 把 dt 夹在 1/20 —— 掉帧时一步跨 25 个单位，
+      // 比判定圈的直径还大，中间的人整个被跳过去。实测 20 帧下一条 18 人的队列漏掉 7 个，
+      // 而且漏的位置是散的（第 0、1、5、8、9 个），玩家读作"从人身上穿过去了"。
       const hit = player.radius + LUNGE_BODY_MARGIN;
+      const ax = this.lunge.fromX;
+      const ay = this.lunge.fromY;
+      const segX = player.x - ax;
+      const segY = player.y - ay;
+      const segLen2 = segX * segX + segY * segY;
+      // 冲刺方向和它的左手法线，用来把人往两侧掀。
+      const dirX = Math.cos(this.lunge.heading);
+      const dirY = Math.sin(this.lunge.heading);
       for (const e of this.enemies) {
         if (!e.alive) continue;
-        const dx = e.x - player.x;
-        const dy = e.y - player.y;
-        if (dx * dx + dy * dy <= (hit + e.radius) * (hit + e.radius)) {
-          this.slay(e, player.x, player.y, this.lunge.power);
+        // 点到线段的最近距离。t 夹在 [0,1]，所以线段两端之外按端点算。
+        let t = segLen2 > 1e-9 ? ((e.x - ax) * segX + (e.y - ay) * segY) / segLen2 : 0;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const dx = e.x - (ax + segX * t);
+        const dy = e.y - (ay + segY * t);
+        const reach = hit + e.radius;
+        if (dx * dx + dy * dy <= reach * reach) {
+          // 往哪一侧掀：看他落在冲刺线的哪一边。正好压在线上的人（横向分量接近 0）用他自己
+          // 那个固定的惯用侧 —— 不给定值的话方向会在零附近抖，同一帧里挨着的两个人可能被
+          // 掀向相反的方向，读作原地炸开而不是被犁开。
+          const side = -dx * dirY + dy * dirX;
+          const sign = Math.abs(side) > 0.05 ? Math.sign(side) : e.sideBias;
+          // 主要横着、带一点前冲。
+          let kx = -dirY * sign + dirX * LUNGE_SIDE_FORWARD;
+          let ky = dirX * sign + dirY * LUNGE_SIDE_FORWARD;
+          const kl = Math.hypot(kx, ky) || 1;
+          kx /= kl;
+          ky /= kl;
+          // kill() 是按"背对打击来源"算方向的，所以把来源放在想要的方向的反面。
+          this.slay(e, e.x - kx * 10, e.y - ky * 10, this.lunge.power, {
+            force: LUNGE_FORCE,
+            freeze: LUNGE_FREEZE,
+          });
         }
       }
-      if (this.lunge.left <= 0) this.lunge = null;
+      if (this.lunge.left <= 0) {
+        // 冲到头再炸一圈：把走廊两侧漏掉的人一起带走。冲锋该以"撞进人堆里停下"收尾，
+        // 而不是穿过去就没事了。
+        if (this.lunge.finishRing > 0) this.castRing(this.lunge.finishRing, this.lunge.power);
+        this.lunge = null;
+      }
     }
   }
 

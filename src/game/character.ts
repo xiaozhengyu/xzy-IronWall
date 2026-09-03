@@ -39,6 +39,11 @@ const SINK_TIME = 0.5;
  * 那下整个人离地一人多高），滞空 0.61～0.84 秒，飞出 38～79 单位 —— 敌人间距约 11，也就是
  * 掀翻三到七排。
  *
+ * force 只线性放大水平速度，竖直速度按 force^0.35 放。竖直全额放大的话滞空跟着线性变长
+ * （T = 2·UP/G），力度翻倍就在天上飘两倍久，读作被气流托着而不是被撞飞。指数压到 0.35 之后，
+ * 2.2 倍的力只把竖直放大 1.3 倍：最高点从 11~22 涨到 18~35 个单位（人高 19，也就是一到两个
+ * 身位），够读出"被撞上天"，又不至于像被防空炮打飞。
+ *
  * 抬高度时必须**同时抬重力**。只抬起跳速度的话滞空跟着变长（T = 2·UP/G），人在空中飘的
  * 时间和飞出去的距离一起涨，读起来是"被吹走了"而不是"被炸起来了"。把 G 从 150 提到 250
  * 之后，抛物线又高又急：起得猛、落得快，那才是爆炸。
@@ -230,13 +235,21 @@ export class Character {
 
   /**
    * @param fromX/fromY 打击来自世界坐标的哪一点，决定往哪边倒。
+   * @param options.force  击飞力度倍率。1 是站着挨一刀；被高速冲过来的人撞上该给得更大。
+   * @param options.freeze 受击定格时长，秒。默认 HIT_FREEZE。
+   *
+   * 这两个参数是为**突进**开的。撞飞本身一直是有的，但在冲刺里读不出来：尸体初速 78 单位/秒，
+   * 而冲刺中的玩家（也就是镜头）是 495 —— 相对屏幕，被撞的人是往后退的，不是被撞飞的。
+   * 再加上定格那 70 毫秒占掉整段冲刺的三分之一，人在镜头飞走的时候钉在原地不动。
+   *
+   * 所以撞人要给更大的力、更短的定格。被车撞和被刀砍本来就不是一回事。
    */
-  kill(fromX: number, fromY: number): void {
+  kill(fromX: number, fromY: number, options: { force?: number; freeze?: number } = {}): void {
     if (!this.alive) return;
     this.death = 0;
     this.attack = -1;
     this.speed = 0;
-    this.hitFreeze = HIT_FREEZE;
+    this.hitFreeze = options.freeze ?? HIT_FREEZE;
     // 定格的这几帧盖一层白光。定住的姿势说明"这一下打在他身上"，白光说明"是他"——四十个人
     // 挤在一起时，只靠一个定住不动的人是挑不出来的。
     this.hurt = 1;
@@ -254,8 +267,9 @@ export class Character {
     }
 
     // 击飞速度存世界系（away 就是世界方向）；底下那组 fall 是身体局部系，给姿势用的。
-    const out = LAUNCH_OUT_MIN + Math.random() * (LAUNCH_OUT_MAX - LAUNCH_OUT_MIN);
-    const up = LAUNCH_UP_MIN + Math.random() * (LAUNCH_UP_MAX - LAUNCH_UP_MIN);
+    const force = options.force ?? 1;
+    const out = (LAUNCH_OUT_MIN + Math.random() * (LAUNCH_OUT_MAX - LAUNCH_OUT_MIN)) * force;
+    const up = (LAUNCH_UP_MIN + Math.random() * (LAUNCH_UP_MAX - LAUNCH_UP_MIN)) * Math.pow(force, 0.35);
     this.turns = TUMBLE_TURNS_MIN + Math.floor(Math.random() * (TUMBLE_TURNS_MAX - TUMBLE_TURNS_MIN + 1));
     this.velX = awayX * out;
     this.velY = awayY * out;

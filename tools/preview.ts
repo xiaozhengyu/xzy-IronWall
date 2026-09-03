@@ -14,14 +14,18 @@ import { writeFileSync } from 'node:fs';
 import { CharacterAnimator, attackDuration, attackImpact } from '../src/characters/animator';
 import { PALETTE_BLUE, PALETTE_HERO, PALETTE_RED, flatPalette, type CharacterPalette } from '../src/characters/palette';
 import { drawCharacter } from '../src/characters/renderer';
-import { Pose } from '../src/characters/rig';
+import { Pose, RigSpec } from '../src/characters/rig';
 import { type UnitDef, UnitPresets } from '../src/characters/unitDef';
 import { ImpactEffects, weaponImpactPoint } from '../src/effects/impact';
 import { Character } from '../src/game/character';
+import { Battle } from '../src/game/battle';
+import { Field } from '../src/game/field';
+import { Skills as SkillList } from '../src/game/skills';
 import { Debris } from '../src/effects/debris';
 import { v2 } from '../src/core/math';
 import { Projection } from '../src/render/projection';
 import { Projector } from '../src/render/projector';
+import { drawAegisDome } from '../src/effects/aegisDome';
 import { forEachCursorPixel } from '../src/render/swordCursor';
 import { ShapeBatch, type PrimitiveSink } from '../src/render/shapeBatch';
 import { ellipseSegments, unitCircle } from '../src/render/ellipseFan';
@@ -785,13 +789,52 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
     { spawn: { power: 1, span: 0.9, from: 2, to: 96, life: 0.55, weight: 2.4, overhead: true, tint: rgb(214, 236, 255) }, t: 0.19, at: { x: -46, y: 0 }, head: 0 },
   ];
 
-  const sheet = new Canvas(W * cases.length, H * 2, [71, 105, 59]);
+  // 多一列给金钟罩：它不是冲击弧而是一段持续状态（罩子跟着人走），走的是 drawAegisDome，
+  // 所以只在上排画一次，下排留空——它没有"旧画法"可比。
+  const COLS = cases.length + 1;
+  const sheet = new Canvas(W * COLS, H * 2, [71, 105, 59]);
   cases.forEach((c, col) => {
     panel(sheet, col * W, 0, c.spawn, c.t, c.at, c.head);
     // 旧画法：同样的形状和尺寸，但贴地、不加粗、掉得快。
     const old = { ...c.spawn, weight: 1, overhead: false, tint: undefined, life: 0.4 };
     panel(sheet, col * W, H, old, c.t, c.at, c.head);
   });
+
+  {
+    const ox = cases.length * W;
+    const shapes = new ShapeBatch();
+    const sink = new ShapeSink();
+    const rootX = ox + W / 2;
+    const rootY = H / 2;
+
+    for (const c of folks) {
+      const at = v2(rootX + c.x * GRAIN, rootY + c.y * Projection.groundSquash * GRAIN);
+      drawCharacter(shapes, c.pose, new Projector(at, c.facing, Projection.groundSquash, GRAIN), PALETTE_RED, c.def);
+    }
+    // 玩家站中间，罩子罩着他。半径按 warlord 的 attackRange 34 × 0.95。
+    const hero = new Character(UnitPresets.warlord(), PALETTE_HERO, 32);
+    hero.facing = Math.PI * 0.4;
+    for (let k = 0; k < Math.round(0.35 / STEP); k++) hero.update(STEP, true);
+    drawCharacter(
+      shapes,
+      hero.pose,
+      new Projector(v2(rootX, rootY), hero.facing, Projection.groundSquash, GRAIN),
+      PALETTE_HERO,
+      hero.def,
+    );
+    drawAegisDome(
+      shapes,
+      rootX,
+      rootY,
+      34 * 0.95 * GRAIN,
+      RigSpec.chestZ * Projection.heightSquash * GRAIN,
+      GRAIN,
+      1,
+      1e6,
+    );
+    shapes.flushToMesh(sink);
+    for (const s2 of sink.shapes) sheet.fillPolygon(s2);
+  }
 
   writePng('.preview-skillfx.png', sheet.upscale(2));
   console.log('技能特效：上排新画法（压人群之上/加粗/放慢），下排旧画法（贴地）；列 = 横扫 / 回旋 / 破空');
@@ -922,9 +965,14 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   for (let k = 0; k < Math.round(0.35 / STEP); k++) hero.update(STEP, true);
 
   const RIM = flatPalette(rgba(255, 236, 176, 190));
-  const sheet = new Canvas(W * 2, H, [71, 105, 59]);
+  // 冲刺那一档：几乎不透明的暖白，偏移翻倍。和 Scene.drawRim 里的 HERO_DASH_PALETTE 一致。
+  const DASH = flatPalette(rgba(255, 248, 214, 246));
+  const sheet = new Canvas(W * 3, H, [71, 105, 59]);
 
-  [false, true].forEach((fancy, side) => {
+  // 三格：旧样子 / 现在（常驻轮廓光）/ 冲刺时（更厚更亮的那一档）
+  ([0, 1, 2] as const).forEach((mode, side) => {
+    const fancy = mode > 0;
+    const hot = mode === 2;
     const shapes = new ShapeBatch();
     const sink = new ShapeSink();
     const rootX = side * W + W / 2;
@@ -938,10 +986,10 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
     const hp = at(hero);
     if (fancy) {
       // 轮廓光：整个人再画四遍，各偏一个像素、压在自己身后。和 Scene.drawRim 同一套。
-      const off = Math.max(1, Math.round(GRAIN * 0.34));
+      const off = Math.max(1, Math.round(GRAIN * (hot ? 0.7 : 0.34)));
       for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
         const p = new Projector(v2(hp.x + dx * off, hp.y + dy * off), hero.facing, Projection.groundSquash, GRAIN, hp.y - 0.5);
-        drawCharacter(shapes, hero.pose, p, RIM, hero.def, { silhouette: true });
+        drawCharacter(shapes, hero.pose, p, hot ? DASH : RIM, hero.def, { silhouette: true });
       }
     }
     drawCharacter(
@@ -957,5 +1005,117 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   });
 
   writePng('.preview-hero.png', sheet.upscale(2));
-  console.log('玩家辨识：左旧（蓝方色、无轮廓光）/ 右新（专用亮色 + 轮廓光）');
+  console.log('玩家辨识：左旧（蓝方色）/ 中新（专用亮色 + 轮廓光）/ 右冲刺时（轮廓光加厚加亮）');
+}
+
+// ---------------------------------------------------------------- 冲刺连拍
+//
+// 真的跑一局 Battle，在人群里放一次突进，按**镜头视角**（跟着玩家、玩家永远在正中）连拍。
+//
+// 存在的理由：前面三轮都在争论"撞飞了没有"。判定、力度、方向逐个量过都对（撞到 29 人、
+// 横向甩出 108 个单位），但玩家说看不见 —— 那就不该再靠数字猜。数字回答"发生了什么"，
+// 这张图回答"看得见什么"，而后者才是问题本身。
+//
+// 每一格都重新以玩家为中心，所以格与格之间的画面位移就是玩家真实的冲刺速度；尸体要是能从
+// 中轴甩出去，在这张图上必须看得出来。
+{
+  const STEP = 1 / 60;
+  const FRAMES = 4;
+  /** 从发招那一帧起，每隔多久取一格。冲刺本身 0.22 秒，所以要盖住它和之后一小段。 */
+  const EVERY = 0.13;
+
+  const field2 = new Field(1200, 1200, 20260902);
+  for (let i = 0; i < Field.BAKE_SLICES; i++) field2.bakeSlice(i);
+
+  const b = new Battle(field2);
+  // 攒人群时**开着自动攻击**：玩家一直在杀，人群密度才是真实的稳态。关着的话十几秒就攒出
+  // 四百多人堵满整屏，那种密度下什么特效都看不见——但那不是玩家会遇到的画面。
+  b.setSkill(SkillList.findIndex((s) => s.id === 'sweep'));
+  b.player.maxHp = 1e9;
+  b.player.hp = 1e9;
+  const look = () => ({
+    x: b.player.x, y: b.player.y, radius: 220,
+    spawn: { x: b.player.x, y: b.player.y, halfW: 120, halfH: 109 },
+  });
+  b.seed(look());
+  // 让人群涌过来围住玩家，形成真实的间距
+  for (let i = 0; i < Math.round(14 / STEP); i++) b.update(STEP, { facing: 0, moving: false, running: false }, look());
+  console.log(`  冲刺前场上 ${b.enemies.filter((e) => e.alive).length} 人（稳态）`);
+  b.autoAttack = false;
+  b.setSkill(SkillList.findIndex((s) => s.id === 'lunge'));
+
+  const W = Math.round(96 * GRAIN);
+  const H = Math.round(84 * GRAIN * Projection.groundSquash + 16 * GRAIN);
+  const sheet = new Canvas(W * FRAMES, H, [71, 105, 59]);
+
+  const shoot = (col: number) => {
+    const shapes = new ShapeBatch();
+    const sink = new ShapeSink();
+    const rootX = col * W + W / 2;
+    const rootY = H / 2;
+    const px = b.player.x;
+    const py = b.player.y;
+    const at = (wx: number, wy: number) =>
+      v2(rootX + (wx - px) * GRAIN, rootY + (wy - py) * Projection.groundSquash * GRAIN);
+
+    for (const e of b.enemies) {
+      // 击飞轨迹线
+      if (!e.alive && e.trailCount >= 2) {
+        const total = e.trail.length / 3;
+        const point = (k: number) => {
+          const idx = ((e.trailHead - 1 - k + total * 2) % total) * 3;
+          const p2 = at(e.trail[idx], e.trail[idx + 1]);
+          return v2(p2.x, p2.y - e.trail[idx + 2] * Projection.heightSquash * GRAIN);
+        };
+        let prev = point(0);
+        for (let k = 1; k < e.trailCount; k++) {
+          const next = point(k);
+          const fade = 1 - k / e.trailCount;
+          shapes.capsule(prev, next, Math.max(1, GRAIN * 0.9 * fade), rgba(236, 226, 206, Math.round(200 * fade)), 1e5);
+          prev = next;
+        }
+      }
+      drawCharacter(
+        shapes,
+        e.pose,
+        new Projector(at(e.x, e.y), e.facing, Projection.groundSquash, GRAIN),
+        e.palette,
+        e.def,
+        { hurt: e.hurt, lift: e.lift },
+      );
+    }
+    // 玩家：轮廓光，冲刺时那一档
+    const hp = at(px, py);
+    const off = Math.max(1, Math.round(GRAIN * (b.dashing ? 0.7 : 0.34)));
+    const rimPal = flatPalette(rgba(255, b.dashing ? 248 : 236, b.dashing ? 214 : 176, b.dashing ? 246 : 190));
+    for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+      const p2 = new Projector(v2(hp.x + dx * off, hp.y + dy * off), b.player.facing, Projection.groundSquash, GRAIN, hp.y - 0.5);
+      drawCharacter(shapes, b.player.pose, p2, rimPal, b.player.def, { silhouette: true });
+    }
+    drawCharacter(
+      shapes,
+      b.player.pose,
+      new Projector(hp, b.player.facing, Projection.groundSquash, GRAIN),
+      b.player.palette,
+      b.player.def,
+    );
+    b.effects.draw(shapes, px, py, rootX, rootY, GRAIN);
+    b.debris.draw(shapes, px, py, rootX, rootY, GRAIN, () => 1e4);
+
+    shapes.flushToMesh(sink);
+    for (const s2 of sink.shapes) sheet.fillPolygon(s2);
+  };
+
+  b.swingNow();
+  // 先推进到真正开始冲（发招有一段起手）
+  while (!b.dashing) b.update(STEP, { facing: 0, moving: false, running: false }, look());
+  for (let col = 0; col < FRAMES; col++) {
+    shoot(col);
+    for (let i = 0; i < Math.round(EVERY / STEP); i++) {
+      b.update(STEP, { facing: 0, moving: false, running: false }, look());
+    }
+  }
+
+  writePng('.preview-dash.png', sheet.upscale(3));
+  console.log(`冲刺连拍：${FRAMES} 格，每格间隔 ${EVERY} 秒，镜头跟着玩家（他永远在正中）`);
 }
