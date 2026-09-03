@@ -103,7 +103,7 @@
   color: #12151c;
   background: #d9b877;
   border: 1px solid #d9b877;
-  cursor: pointer;
+  cursor: inherit;
 }
 
 .menu-start:hover {
@@ -115,7 +115,7 @@
   color: #6f7a90;
   background: #1c2231;
   border-color: #2b3242;
-  cursor: default;
+  cursor: inherit;
 }
 
 .menu-hint {
@@ -182,7 +182,7 @@
   color: #cdd5e4;
   background: #1c2231;
   border: 1px solid #333c50;
-  cursor: pointer;
+  cursor: inherit;
   white-space: nowrap;
 }
 
@@ -222,7 +222,7 @@
   color: #cdd5e4;
   background: #1c2231;
   border: 0;
-  cursor: pointer;
+  cursor: inherit;
 }
 
 .menu-spin button:hover {
@@ -306,4 +306,39 @@
   margin-top: -4px;
   color: #7d879c;
   font-size: 12px;
+}
+
+
+/* ---------------------------------------------------------------- 光标 */
+
+/*
+ * 面板里一律用那把剑，不许退回系统光标。
+ *
+ * 剑是挂在 <body> 上的（见 ui/cursorImage.ts），而 cursor 是继承属性 —— 但只要哪个元素
+ * 自己写了值就断了继承链。按钮上原本写着 cursor: pointer，于是鼠标一挪到按钮上就变回系统
+ * 手形，一半是剑一半是手，接缝比不换还难看。所以这里给面板内的所有东西钉上 inherit，
+ * 以后新加的控件也不用记得再写一遍。
+ */
+.menu,
+.menu * {
+  cursor: inherit;
+}
+
+/*
+ * 藏掉卡片的原生滚动条。
+ *
+ * 滚动条是浏览器自己画的一块区域，CSS 的 cursor 管不到它 —— 鼠标挪上去就是系统箭头，
+ * 而这是面板里最后一处还会露出系统光标的地方。滚动本身留着（overflow-y 还是 auto，滚轮
+ * 照常用），只是那根条不画了。
+ *
+ * 代价是少了"这里还能往下滚"的提示。这块面板只在窗口很矮时才滚得起来，为了那种情况
+ * 保留一根会在正常情况下也破坏光标一致性的条，不值。
+ */
+.menu-card {
+  scrollbar-width: none;
+}
+
+.menu-card::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }

@@ -22,6 +22,7 @@ import { Debris } from '../src/effects/debris';
 import { v2 } from '../src/core/math';
 import { Projection } from '../src/render/projection';
 import { Projector } from '../src/render/projector';
+import { forEachCursorPixel } from '../src/render/swordCursor';
 import { ShapeBatch, type PrimitiveSink } from '../src/render/shapeBatch';
 import { ellipseSegments, unitCircle } from '../src/render/ellipseFan';
 import { type Rgba, rgb, rgba } from '../src/render/color';
@@ -793,4 +794,91 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
 
   writePng('.preview-skillfx.png', sheet.upscale(2));
   console.log('技能特效：上排新画法（压人群之上/加粗/放慢），下排旧画法（贴地）；列 = 横扫 / 回旋 / 破空');
+}
+
+// ---------------------------------------------------------------- 准心
+//
+// 一群人上面摆两个准心：左边旧的十字，右边新的像素剑。
+//
+// 准心的全部问题是"在花的底色上找不找得到"，所以必须画在人堆上看。空地上那个十字也是看得
+// 见的 —— 正因为如此它才一直没被发现有问题。
+//
+// 剑走的是 src/render/swordCursor.ts 里那份像素数据，和运行时 Scene 画进 Graphics 的是
+// 同一份；这里只是换了个画笔（ShapeBatch 而不是 Graphics），形状不会两边不一样。
+{
+  const STEP = 1 / 120;
+  const COUNT = 46;
+  const SPAN_X = 92;
+  const SPAN_Y = 56;
+
+  const W = Math.round((SPAN_X + 20) * GRAIN);
+  const H = Math.round((SPAN_Y + 28) * GRAIN * Projection.groundSquash + 14 * GRAIN);
+
+  const rng = (() => {
+    let s = 20260905;
+    return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+  })();
+
+  const folks: Character[] = [];
+  for (let i = 0; i < COUNT; i++) {
+    const c = new Character(UnitPresets.thug(), PALETTE_RED, 20);
+    c.x = (rng() - 0.5) * SPAN_X;
+    c.y = (rng() - 0.5) * SPAN_Y;
+    c.facing = rng() * Math.PI * 2;
+    for (let k = 0; k < Math.round((0.2 + rng() * 0.6) / STEP); k++) c.update(STEP, true);
+    folks.push(c);
+  }
+
+  const sheet = new Canvas(W * 2, H, [71, 105, 59]);
+
+  // 准心画在最上面，所以给一个比谁都大的深度。运行时它压根不进批次（走单独的 Graphics）。
+  const ON_TOP = 1e7;
+
+  [false, true].forEach((sword, side) => {
+    const shapes = new ShapeBatch();
+    const sink = new ShapeSink();
+    const rootX = side * W + W / 2;
+    const rootY = H / 2;
+
+    for (const c of folks) {
+      const at = v2(rootX + c.x * GRAIN, rootY + c.y * Projection.groundSquash * GRAIN);
+      drawCharacter(shapes, c.pose, new Projector(at, c.facing, Projection.groundSquash, GRAIN), PALETTE_RED, c.def);
+    }
+
+    // 三个位置各摆一个：空地、人堆边上、人堆正中间。
+    const spots = [
+      v2(rootX - 34 * GRAIN, rootY + 20 * GRAIN),
+      v2(rootX + 4 * GRAIN, rootY - 4 * GRAIN),
+      v2(rootX + 30 * GRAIN, rootY + 6 * GRAIN),
+    ];
+
+    for (const spot of spots) {
+      const cx = Math.round(spot.x);
+      const cy = Math.round(spot.y);
+      if (sword) {
+        const px = Math.max(1, Math.min(4, Math.round(GRAIN / 2)));
+        forEachCursorPixel(px, (ox, oy, color) => {
+          shapes.rect(v2(cx + ox + px / 2, cy + oy + px / 2), px, px, 0, color, ON_TOP);
+        });
+      } else {
+        // 旧的十字：四个一像素宽的小方块，臂长跟着颗粒度。
+        const arm = Math.max(2, Math.round(GRAIN));
+        const old = rgba(240, 230, 210, 255);
+        for (const [ox, oy, w, h] of [
+          [-arm * 2, 0, arm, 1],
+          [arm, 0, arm, 1],
+          [0, -arm * 2, 1, arm],
+          [0, arm, 1, arm],
+        ]) {
+          shapes.rect(v2(cx + ox + w / 2, cy + oy + h / 2), w, h, 0, old, ON_TOP);
+        }
+      }
+    }
+
+    shapes.flushToMesh(sink);
+    for (const s of sink.shapes) sheet.fillPolygon(s);
+  });
+
+  writePng('.preview-cursor.png', sheet.upscale(3));
+  console.log('准心：左旧十字 / 右像素剑，各摆在空地、人堆边、人堆中');
 }

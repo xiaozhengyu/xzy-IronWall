@@ -6,13 +6,14 @@ import type { Field } from '../game/field';
 import type { ItemDef } from '../items/itemDef';
 import type { ItemSheet } from '../items/renderer';
 import { v2 } from '../core/math';
-import { rgba } from './color';
+import { rgba, toHex } from './color';
 import type { Camera } from './camera';
 import { PixelSurface } from './pixelSurface';
 import { PrimitiveMesh } from './primitiveMesh';
 import { Projection } from './projection';
 import { Projector } from './projector';
 import { ShapeBatch } from './shapeBatch';
+import { forEachCursorPixel } from './swordCursor';
 
 /**
  * 一帧画面从头到尾。
@@ -37,8 +38,16 @@ export interface SceneOverlay {
 
 const smooth = (prev: number, now: number): number => prev * 0.9 + now * 0.1;
 
-/** 准星的颜色，和整套画面的高光同一个值。 */
-const RETICLE_COLOR = 0xf0e6d2;
+/**
+ * 准心一格画多大（缓冲像素）。
+ *
+ * 跟着颗粒度走，但只走整数 —— 半格会让像素图糊掉，而这把剑的全部说服力就在于它的边是硬的。
+ *
+ * 除以 2 而不是除以 4：出货那一档（grain 4）得到 2，整把剑三十二个缓冲像素，和场上一把剑
+ * 的长度相当。第一版按 1 画，准心只有敌人武器的一半大，在人堆里非但不显眼，反而像是谁掉了
+ * 一把小刀。准心得比场上的东西**大**，不能只是"不小"。
+ */
+const cursorPixel = (grain: number): number => Math.max(1, Math.min(4, Math.round(grain / 2)));
 
 /**
  * 剔除时在视口四边各留多少世界单位。
@@ -348,17 +357,16 @@ export class Scene {
   private drawReticle(overlay: SceneOverlay): void {
     this.reticle.clear();
     if (!overlay.showReticle) return;
+
+    // 落在整数缓冲像素上。差半格的话，一张十六见方的像素图会被渲染器插值糊掉一圈。
     const cx = Math.round(overlay.cursor.x);
     const cy = Math.round(overlay.cursor.y);
-    const arm = Math.max(2, Math.round(this.camera.grain));
-    const gap = arm;
-    for (const [ox, oy, w, h] of [
-      [-gap - arm, 0, arm, 1],
-      [gap, 0, arm, 1],
-      [0, -gap - arm, 1, arm],
-      [0, gap, 1, arm],
-    ]) {
-      this.reticle.rect(cx + ox, cy + oy, w, h).fill(RETICLE_COLOR);
-    }
+    const px = cursorPixel(this.camera.grain);
+
+    // 一格一个 rect。十六见方里实着的大约六十格，比原来那个十字贵，但这是每帧只画一次的
+    // 东西 —— 场上一个人就有六七十个图元。
+    forEachCursorPixel(px, (ox, oy, color) => {
+      this.reticle.rect(cx + ox, cy + oy, px, px).fill({ color: toHex(color), alpha: color.a / 255 });
+    });
   }
 }

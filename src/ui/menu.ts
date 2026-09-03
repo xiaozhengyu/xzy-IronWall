@@ -1,5 +1,6 @@
 import './menu.css';
 import type { SkillId } from '../game/skills';
+import { swordCursorCss } from './cursorImage';
 import type { WeatherKind } from '../world/weather';
 
 /**
@@ -158,6 +159,11 @@ export class Menu {
     this.bridge = bridge;
     this.build();
     document.body.appendChild(this.root);
+
+    // 指针没锁的时候（加载、开始画面、暂停）露出来的是系统箭头，而游戏里是那把剑 —— 两套
+    // 光标的接缝很明显。挂在 body 上而不是面板上：cursor 是继承的，而面板的背景那一层
+    // pointer-events 是 none，光标样式落不到它头上（见 menu.css 顶上那段）。
+    document.body.style.cursor = swordCursorCss();
   }
 
   // ---------------------------------------------------------------- 三个状态
