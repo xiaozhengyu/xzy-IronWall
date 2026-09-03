@@ -615,7 +615,7 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   const STEP = 1 / 120;
   const FRAMES = 8;
   /** 分帧取到落地稍后一点。滞空随机，0.6～0.93 秒。 */
-  const FRAME_SPAN = 1.0;
+  const FRAME_SPAN = 0.95;
 
   const make = UnitPresets.thug;
   const palette = PALETTE_RED;
@@ -668,7 +668,8 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
       new Projector(v2(px, py), c.facing, Projection.groundSquash, GRAIN),
       palette,
       c.def,
-      { lift: c.lift },
+      // 受击白光也画出来：中刀定格那几帧全靠它说明"是这个人挨了"。
+      { lift: c.lift, hurt: c.hurt },
     );
     // 碎片的世界原点就是这个人现在站的地方，所以镜头传他自己的坐标。
     if (debris) debris.draw(shapes, c.x, c.y, px, py, GRAIN, () => 1e6);

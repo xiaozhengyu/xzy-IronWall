@@ -11,7 +11,14 @@ import { inAttackArc, inSector, sweptBy } from './combat';
 import type { Field } from './field';
 import { rgb } from '../render/color';
 import { SpatialGrid } from './grid';
-import { Skills, cappedReach, skillAt, type SkillDef } from './skills';
+import {
+  SKILL_HIT_MARGIN,
+  Skills,
+  WAVE_NEAR_HALF_WIDTH,
+  cappedReach,
+  skillAt,
+  type SkillDef,
+} from './skills';
 
 /**
  * 一局割草：场上的所有人，以及他们之间发生的事。
@@ -41,6 +48,17 @@ const HUMAN_PACE = 16;
  */
 const LUNGE_TIME_SCALE = 0.22;
 const LUNGE_BODY_MARGIN = 2.5;
+
+/*
+ * 不要在这里加"打击顿帧"（砍中就把整个世界停几十毫秒）。试过一版，是错的。
+ *
+ * 它在别的类型里是标准做法，在割草里是原则性错误：玩家每 0.7 秒自动挥一次、每次都杀到人，
+ * 于是世界每 0.7 秒停一下，占空比接近一成。那不读作"有力"，读作掉帧 —— 而割草的核心体验
+ * 恰恰是**不停地**推进，任何周期性的停顿都在跟这件事对着干。
+ *
+ * 顿帧真正想给的重量，由受击者自己表达就够了：他在中刀的姿势上定住几帧再被掀飞（见
+ * Character 的 HIT_FREEZE）。同样的冲击感，一分钱不从玩家的时间里出。
+ */
 
 /** 玩家的基础移动速度，以及按住 Shift 的速度。 */
 const PLAYER_SPEED = 32;
@@ -1011,13 +1029,18 @@ export class Battle {
         if (full) {
           // 回旋：一圈从脚下推开的环。压在人群之上、加粗、放慢 —— 它扫过的地方正好站满了
           // 人，贴地画等于白画（见 impact.ts 的 DEPTH_OVERHEAD）。
+          // power 固定 1，体型折进 weight（粗细）。
+          //
+          // 推进曲线里 to 会再乘一遍 power，所以"既给 power 又把 to 设成判定半径"等于把
+          // 半径乘了两次 —— 这正是画面圈比判定圈大三成四的原因。技能一律 power: 1，to 就
+          // 是字面意义上的视觉半径，改哪个数会变成什么样一眼能算出来。
           this.effects.spawn(player.x, player.y, player.facing, {
-            power: player.def.bulk,
+            power: 1,
             span: Math.PI * 2,
             from: 1.5,
-            to: reach,
+            to: reach / SKILL_HIT_MARGIN,
             life: 0.5,
-            weight: 2.1,
+            weight: 2.1 * player.def.bulk,
             overhead: true,
           });
         } else {
@@ -1060,7 +1083,9 @@ export class Battle {
           power: 1,
           span: wave.arc,
           from: wave.from,
-          to: wave.to,
+          // 判定比画面宽一圈，见 SKILL_HIT_MARGIN。近处那条走廊没有对应的画面 —— 它就在
+          // 玩家脚底下，那儿本来就是"我这一下打出去了"的位置，不需要再画一遍给他看。
+          to: wave.to / SKILL_HIT_MARGIN,
           life: wave.life,
           weight: 2.4,
           overhead: true,
@@ -1080,12 +1105,12 @@ export class Battle {
         };
         // 突进：一道窄而急的前推弧，跟着人一起冲出去。
         this.effects.spawn(at.x, at.y, player.facing, {
-          power: player.def.bulk,
+          power: 1,
           span: 1.1,
           from: 2,
           to: reach * 0.62,
           life: 0.42,
-          weight: 2.2,
+          weight: 2.2 * player.def.bulk,
           overhead: true,
           tint: rgb(255, 232, 190),
         });
@@ -1111,7 +1136,9 @@ export class Battle {
       const radius = frontRadius(Math.min(w.age / w.life, 1), w.from, w.to);
       for (const e of this.enemies) {
         if (!e.alive) continue;
-        if (sweptBy(e, w.x, w.y, w.heading, radius, w.arc)) this.slay(e, w.x, w.y, w.power);
+        if (sweptBy(e, w.x, w.y, w.heading, radius, w.arc, WAVE_NEAR_HALF_WIDTH)) {
+          this.slay(e, w.x, w.y, w.power);
+        }
       }
       if (w.age >= w.life) {
         this.skillWaves[i] = this.skillWaves[this.skillWaves.length - 1];

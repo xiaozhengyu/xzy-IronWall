@@ -56,6 +56,21 @@ const GRAVITY = 250;
  * 身体自然是平的。用"每秒转多少度"那种自由旋转的话，落地时身体停在一个随机角度上，
  * 得再补一段"转正"的过渡，而那段过渡在二十像素下看着就是尸体自己抽了一下。
  */
+/**
+ * 受击定格：中刀的那一下，**只有挨打的这个人**定住多久。
+ *
+ * 顿帧本来是把整个世界停住，那在别的类型里是标准做法，在割草里不行 —— 玩家每秒钟都在挥，
+ * 世界每秒钟都要停几次，读起来就是掉帧。而顿帧真正想给的是"这一刀有重量"，那个重量只需要
+ * 挨打的人来表达：他在中刀的姿势上定住几帧再被掀飞，玩家一帧都不停。
+ *
+ * 定格期间**什么都不推进** —— 姿势、弹道、倒地计时全停。所以他保持的是"活着的最后一帧"
+ * 那个姿势（走到一半、或者正挥到一半），不是倒地动画的第一帧。这一点很重要：倒地动画的
+ * 第一帧是个站直的待机姿势，定在那儿等于中刀先立正再飞出去。
+ *
+ * 70 毫秒，四帧上下。它不占玩家的时间，所以可以比世界顿帧给得大方一点。
+ */
+const HIT_FREEZE = 0.07;
+
 const TUMBLE_TURNS_MIN = 1;
 const TUMBLE_TURNS_MAX = 2;
 
@@ -93,6 +108,8 @@ export class Character {
   private flightSpan = 0;
   /** 这一次翻几圈。整数，落地才是平的。 */
   private turns = 1;
+  /** 受击定格还剩多久。见 HIT_FREEZE。 */
+  private hitFreeze = 0;
 
   /**
    * 击飞轨迹上最近的几个点，(x, y, z) 依次存放的环形缓冲。
@@ -219,6 +236,10 @@ export class Character {
     this.death = 0;
     this.attack = -1;
     this.speed = 0;
+    this.hitFreeze = HIT_FREEZE;
+    // 定格的这几帧盖一层白光。定住的姿势说明"这一下打在他身上"，白光说明"是他"——四十个人
+    // 挤在一起时，只靠一个定住不动的人是挑不出来的。
+    this.hurt = 1;
 
     // 背对打击方向倒下。转成身体局部坐标：y 是朝向，x 是右手边。
     let awayX = this.x - fromX;
@@ -344,6 +365,15 @@ export class Character {
    */
   update(dt: number, animate = true): boolean {
     if (this.death >= 0) {
+      // 受击定格：姿势、弹道、倒地计时一概不动，只有白光在褪。
+      if (this.hitFreeze > 0) {
+        this.hitFreeze -= dt;
+        this.hurt = Math.max(0, this.hurt - dt * 5);
+        return false;
+      }
+      // 死人身上的白光也得褪。这条以前漏在活人分支里，而那一支在死亡时就 return 了 ——
+      // 于是被打死的人会顶着一层白到沉进地里。
+      this.hurt = Math.max(0, this.hurt - dt * 5);
       this.death += dt;
 
       // 弹道。走在 animate 之外：画面外的人也得飞完这一程，否则镜头转回去时尸体还杵在

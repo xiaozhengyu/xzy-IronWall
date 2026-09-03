@@ -29,6 +29,7 @@ export function sweptBy(
   heading: number,
   radius: number,
   arc: number,
+  nearHalfWidth = 0,
 ): boolean {
   const dx = target.x - x;
   const dy = target.y - y;
@@ -44,7 +45,25 @@ export function sweptBy(
 
   let da = Math.atan2(dy, dx) - heading;
   da = Math.atan2(Math.sin(da), Math.cos(da));
-  return Math.abs(da) <= arc * 0.5 + Math.atan2(target.radius, dist);
+  if (Math.abs(da) <= arc * 0.5 + Math.atan2(target.radius, dist)) return true;
+
+  /*
+   * 扇形之外再补一条**等宽的走廊**。
+   *
+   * 一个纯扇形在圆心附近窄得没有意义：张角 0.9 弧度的波，在离落点十个单位处只有八九个
+   * 单位宽 —— 一个人的位置。于是玩家看到的是"波飞出去之后横扫一大片，可脚底下只死了一两
+   * 个"，而那一两个恰恰是他正对着的、最该死的。
+   *
+   * 补一条固定半宽的走廊，近处按走廊算、远处按扇形算（两者取并集，交界处自然过渡到扇形
+   * 更宽的那一侧）。这不是"把张角调大"——调大张角会让远端宽得离谱，而远端本来就够宽了。
+   */
+  if (nearHalfWidth <= 0) return false;
+  const cos = Math.cos(heading);
+  const sin = Math.sin(heading);
+  const along = dx * cos + dy * sin;
+  if (along < 0 || along > radius) return false;
+  const perp = Math.abs(-dx * sin + dy * cos);
+  return perp <= nearHalfWidth + target.radius;
 }
 
 export function inSector(

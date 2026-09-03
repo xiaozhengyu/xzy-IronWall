@@ -69,7 +69,10 @@ export const Skills: SkillDef[] = [
     note: '原地整圈，被围住时用',
     kind: 'instant',
     // 整圈换来的代价是够不远：同样一刀的力气摊到四面八方，只能覆盖贴身那一圈。
-    reach: 0.8,
+    //
+    // 1.25 看着比"够不远"大，是因为它现在是**判定**半径，而画面上那圈会按 SKILL_HIT_MARGIN
+    // 缩进去一点。修掉画面比判定大三成四那个 bug 之前，玩家看到的圈本来就是这么大。
+    reach: 1.25,
     arc: Math.PI * 2,
     duration: 0,
     power: 2,
@@ -97,6 +100,25 @@ export const Skills: SkillDef[] = [
     power: 2,
   },
 ];
+
+/**
+ * 判定半径比画出来的那一圈大多少。
+ *
+ * 方向是**判定 > 画面**，不能反过来。反过来的后果刚被撞到过：回旋原来的特效同时吃了
+ * power(1.34) 和 to(reach)，而推进曲线会把两者相乘 —— 画出来的圈比会杀人的圈大三成四，
+ * 于是"环明明扫过去了，圈里还站着人"。
+ *
+ * 略宽一点是这个工程一贯的取向（见 combat.ts 顶上那段）："擦过去却没死"比"隔着一点空气
+ * 死了"难受得多。
+ */
+export const SKILL_HIT_MARGIN = 1.15;
+
+/**
+ * 破空在近处的走廊半宽，世界单位。
+ *
+ * 敌人之间大约隔 11 个单位，所以 16 是"身前三排都清掉"。见 combat.ts 的 sweptBy。
+ */
+export const WAVE_NEAR_HALF_WIDTH = 16;
 
 export const skillAt = (index: number): SkillDef => Skills[Math.max(0, Math.min(Skills.length - 1, index))];
 
