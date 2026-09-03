@@ -2,6 +2,8 @@ import { Application } from 'pixi.js';
 import { RigSpec } from './characters/rig';
 import { Battle, PlayerPresets } from './game/battle';
 import { Field } from './game/field';
+import { ItemCatalog } from './items/catalog';
+import { ItemSheet } from './items/renderer';
 import { Camera } from './render/camera';
 import { Projection } from './render/projection';
 import { Scene } from './render/scene';
@@ -75,12 +77,14 @@ const menu = new Menu({
       invincible: battle.invincible,
       spawnBatch: battle.spawnBatch,
       recycled: battle.recycled,
+      restored: battle.restored,
       fps: lastFps,
       simMs: battle.simMs,
       buildMs: scene.buildMs,
       primitives: scene.primitives,
       preset: battle.presetIndex,
       autoAttack: battle.autoAttack,
+      showItems,
       skeleton: showSkeleton,
       maxEnemies: battle.maxEnemies,
       weather: field.weather.kind,
@@ -108,7 +112,10 @@ const menu = new Menu({
 const RENDERER_WEIGHT = 4;
 const TERRAIN_WEIGHT = 2;
 const FIELD_WEIGHT = 2;
-const BOOT_WORK = RENDERER_WEIGHT + TERRAIN_WEIGHT + Field.BAKE_SLICES + FIELD_WEIGHT;
+/** 物品精灵表：一次取图，比烘地面快得多，占一格就够。 */
+const SHEET_WEIGHT = 1;
+const BOOT_WORK =
+  RENDERER_WEIGHT + TERRAIN_WEIGHT + Field.BAKE_SLICES + SHEET_WEIGHT + FIELD_WEIGHT;
 let bootDone = 0;
 
 /**
@@ -154,6 +161,13 @@ for (let i = 0; i < Field.BAKE_SLICES; i++) {
   bootDone += 1;
 }
 
+await boot('加载物品贴图');
+// 图不在也照常开局 —— 这个工程本来一张图都不加载，物品表是后补的。加载不上时 ready 是
+// false，图鉴里显示一行提示，别的什么都不受影响。
+const itemSheet = new ItemSheet();
+await itemSheet.load();
+bootDone += SHEET_WEIGHT;
+
 const battle = new Battle(field);
 const controls = new Controls(app.canvas as HTMLCanvasElement, camera, {
   onKey: (code) => onKeyPressed(code),
@@ -179,6 +193,13 @@ const controls = new Controls(app.canvas as HTMLCanvasElement, camera, {
 let showSkeleton = false;
 
 /**
+ * 物品图鉴：画的不是战场而是一格一件的物品表（见 Scene.drawItems）。
+ *
+ * 和骨架叠加一样只影响画面，所以也留在这里。世界照常冻在暂停那一刻，图鉴关掉就回原样。
+ */
+let showItems = false;
+
+/**
  * 一个键（或者菜单上对应的那个按钮）该干什么。
  *
  * 键盘和菜单走同一张表，所以两条路的行为不会分岔 —— 详见 Menu 的 press 那段注释。
@@ -186,6 +207,23 @@ let showSkeleton = false;
 function onKeyPressed(code: string): void {
   if (code === 'Space') battle.swingNow();
   if (code === 'KeyK') showSkeleton = !showSkeleton;
+
+  // 图鉴。暂停时面板得跟着让开，否则那张图正好被遮罩盖住 —— 状态归这里管，所以由这里
+  // 告诉面板该显示成哪样，菜单自己不知道有"图鉴"这回事。
+  //
+  // 载入期间直接不认这个键：那时候按下去，开关翻了但一帧都画不出来，等启动结束那次 draw
+  // 就会画成图鉴而不是战场 —— 玩家只看到一屏对不上的东西，还不知道自己按过什么。
+  if (code === 'KeyI' && state !== 'loading') {
+    showItems = !showItems;
+    // 开始画面也能看：想核对一件东西画成什么样，不该逼人先开一局再暂停。
+    if (state === 'paused' || state === 'title') {
+      if (showItems) menu.showGallery(galleryCount());
+      else if (state === 'paused') menu.showPause();
+      else menu.showTitle();
+    }
+    // 暂停和开始画面都没有帧在跑，这一下得自己补一帧，和改颗粒度、拖窗口是同一个道理。
+    draw();
+  }
   if (code === 'KeyF') battle.autoAttack = !battle.autoAttack;
 
   // 天气。切换的是"在下什么"，地上积多少雪、湿到什么程度会自己慢慢跟上来。
@@ -282,7 +320,17 @@ function viewOf() {
   };
 }
 
+/** 图鉴里真正画得出来的件数。登记了但精灵表里还没这一格的不算。 */
+function galleryCount(): number {
+  if (!itemSheet.ready) return 0;
+  return ItemCatalog.filter((d) => itemSheet.textureOf(d) !== null).length;
+}
+
 function draw(): void {
+  if (showItems) {
+    scene.drawItems(ItemCatalog, itemSheet);
+    return;
+  }
   scene.draw(field, battle, {
     cursor: controls.cursor,
     showReticle: controls.pointerLocked,

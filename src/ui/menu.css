@@ -249,3 +249,47 @@
   font-weight: normal;
   color: #a9b3c6;
 }
+
+/* ---------------------------------------------------------------- 物品图鉴 */
+
+/*
+ * 图鉴画在画布上，不在这块面板里 —— 物品必须走真正的渲染路径才看得出出货尺寸下的样子
+ * （见 Scene.drawItems）。所以这个状态下面板要整个让开：底色撤掉、卡片收起，只留顶上
+ * 一条窄栏说明当前在看什么、怎么回去。
+ */
+.menu.peek {
+  background: transparent;
+}
+
+.menu.peek .menu-card {
+  display: none;
+}
+
+.menu-peek {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 10px;
+  background: rgba(11, 13, 18, 0.82);
+  border-bottom: 1px solid #2b3242;
+  /* 窄栏本身不吃点击，只有里头的按钮吃 —— 和 .menu 的理由一样，点空白处要能穿过去。 */
+  pointer-events: none;
+}
+
+.menu-peek[hidden] {
+  display: none;
+}
+
+.menu-peek-k {
+  letter-spacing: 0.08em;
+  color: #8f9ab2;
+}
+
+.menu-peek .menu-btn {
+  pointer-events: auto;
+}

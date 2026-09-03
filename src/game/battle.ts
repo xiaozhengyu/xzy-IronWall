@@ -131,6 +131,45 @@ const SPAWN_JITTER = 24;
 const DESPAWN_MARGIN = 0.3;
 
 /**
+ * 回收之后，那个**位置**还替原主留多久，秒。
+ *
+ * 修的是跑步机最容易穿帮的一处：左边聚起几百人，玩家往右跑几步再回头，人海没了 —— 那一坨
+ * 人明明只是走出了回收框，回来时却要从视野外重新走进来，中间有好几秒的空场。真实世界里
+ * 转身回头看到的应该是同一群人站在同一个地方。
+ *
+ * 所以回收只丢**模型**，位置进一张预留表；视线回来时照着表把人放回去（见 restoreReserved）。
+ *
+ * 12 秒是按"跑开再回头"这件事本身的时长定的：玩家冲刺 60、回收框边缘离镜头中心约 156 个
+ * 单位（出货视口半宽 120 × 1.3），也就是跑 2.6 秒才刚把最外圈甩掉；往返再加上转身，一次
+ * "去看看那边再回来"大约就是十秒出头。给到 12 秒，正常的回头都还认得出原来那片人海；再长
+ * 就开始不像回事了 —— 离开半分钟回来还是原封不动的一群人，反而假。
+ *
+ * 想让人海"记得更久"就往上调，想让它更快忘掉就往下调。这个值只影响观感，不影响人数稳态
+ * （稳态还是回收框定的）。
+ */
+const RESERVE_TIME = 12;
+
+/**
+ * 预留表的条数上限。纯粹是内存兜底。
+ *
+ * 稳态下用不到：冲刺时每秒回收一百多个，12 秒也就一千五百条上下，而一条只是几个数加两个
+ * 共享引用。留 6000 是给"缩放拉远 + 出兵拉满"那种调试情形的余量。顶到上限就不再记新的 ——
+ * 丢掉的是最新回收的那些，它们离视线最远，最不可能被立刻看回来。
+ */
+const MAX_RESERVATIONS = 6000;
+
+/**
+ * "重新获得视线"的判定框，同样按出货视口半宽/半高的倍数。
+ *
+ * 必须**小于** DESPAWN_MARGIN，两者之间那条带子就是迟滞区。少了它，恰好卡在回收线上的位置
+ * 会每帧"恢复—回收—恢复"地抖，白白搅动人数。
+ *
+ * 0.15：恢复线落在视口外 0.15 × 120 = 18 个单位，人是在**画面外**放回去的，看不到凭空出现；
+ * 而离回收线还有 18 个单位，冲刺也要 0.3 秒才穿过，抖不起来。
+ */
+const RESTORE_MARGIN = 0.15;
+
+/**
  * 玩家在动时，出怪往前方偏多少。0 是四面八方，1 是正后方完全不出。
  *
  * 理由是物理性的：玩家跑起来（60）比每一种敌人都快，生在身后的人永远追不上，走两步就被
@@ -280,6 +319,28 @@ export interface BattleView {
 
 const smooth = (prev: number, now: number): number => prev * 0.9 + now * 0.1;
 
+/**
+ * 一个被回收掉的敌人留下的**位置**。
+ *
+ * 存的是重建一个一模一样的人所需的全部东西。def 和 palette 是 EnemyKinds 里那份共享的只读
+ * 数据，直接引用即可，不用记下标 —— 一千条预留指向同五份 def。
+ *
+ * 不记血量和倒地进度：只有活人进这张表（见 recycle）。尸体在画面外躺满两秒多就沉掉了，把
+ * 一具尸体"恢复"回来没有意义，反而会让人看见一片凭空长出来的尸体。
+ */
+interface Reservation {
+  x: number;
+  y: number;
+  facing: number;
+  def: UnitDef;
+  palette: CharacterPalette;
+  speed: number;
+  /** 出手冷却。连这个也带上，回来的那一群才不会整齐划一地同时挥。 */
+  cooldown: number;
+  /** clock 走到这个值就作废。 */
+  expires: number;
+}
+
 export class Battle {
   readonly player: Character;
   readonly enemies: Character[] = [];
@@ -387,6 +448,19 @@ export class Battle {
 
   /** 这一局回收掉多少人。面板上显示，用来看跑步机转得对不对。 */
   recycled = 0;
+  /** 这一局按预留位置放回去多少人。和 recycled 一起看就知道"回头"这件事有没有生效。 */
+  restored = 0;
+
+  /**
+   * 回收掉的位置，等着视线回来。见 RESERVE_TIME。
+   *
+   * 用普通数组加"末位换补"删除：这张表每帧要整个扫一遍判过期，顺序没有意义，而每帧的增删
+   * 都是几十上百条，链表或者堆在这个量级上只会更慢。
+   */
+  private readonly reserved: Reservation[] = [];
+
+  /** 这一局跑了多久，秒。目前只有预留位置的过期判定用它。 */
+  private clock = 0;
 
   /** 逻辑这一段花掉的毫秒，指数平滑。暂停面板要读。 */
   simMs = 0;
@@ -429,8 +503,11 @@ export class Battle {
   /** 清场重来。 */
   reset(view: BattleView): void {
     this.enemies.length = 0;
+    // 预留的是"刚才那片人海"，重开之后它不该再长回来。
+    this.reserved.length = 0;
     this.kills = 0;
     this.recycled = 0;
+    this.restored = 0;
     this.player.death = -1;
     this.player.hurt = 0;
     this.player.hp = this.player.maxHp;
@@ -495,19 +572,119 @@ export class Battle {
    * 和出怪保持同一把尺子 —— 否则调试时拉远镜头，出怪按出货框算、回收按当前框算，两边打架。
    *
    * 尸体也一起回收：它们已经在画面外，没人看得见，留着只是占着数组。
+   *
+   * 抹掉的是**模型**，不是那个人站过的地方：活人在离场时把位置记进预留表，视线回来时照着
+   * 放回去（见 RESERVE_TIME / restoreReserved）。
    */
   private recycle(view: BattleView): void {
     const box = view.spawn;
     const keepX = box.halfW * (1 + DESPAWN_MARGIN);
     const keepY = box.halfH * (1 + DESPAWN_MARGIN);
     const enemies = this.enemies;
+    const reserved = this.reserved;
     for (let i = enemies.length - 1; i >= 0; i--) {
       const e = enemies[i];
       if (Math.abs(e.x - box.x) <= keepX && Math.abs(e.y - box.y) <= keepY) continue;
+      if (e.alive && reserved.length < MAX_RESERVATIONS) {
+        reserved.push({
+          x: e.x,
+          y: e.y,
+          facing: e.facing,
+          def: e.def,
+          palette: e.palette,
+          speed: e.walkSpeed,
+          cooldown: e.attackCooldown,
+          expires: this.clock + RESERVE_TIME,
+        });
+      }
       enemies[i] = enemies[enemies.length - 1];
       enemies.pop();
       this.recycled++;
     }
+  }
+
+  /**
+   * 视线回到哪儿，就把那儿预留的人放回去。
+   *
+   * 一条预留只要进了恢复框就**用掉**，不管放没放成 —— 放不下（那儿已经站了人、或者压着树）
+   * 就丢掉。留着等下一帧看是错的：那时它已经在框里、再往里就是画面上，成功了也是当着面
+   * 凭空长出一个人来。宁可少一个，不能穿帮。
+   *
+   * 必须在 grid.build 之后调：判"那儿有没有人"走的是同一张邻居表。这一帧刚放回去的人不在
+   * 表里，所以两条预留之间的重叠查不出来 —— 但同一批预留本来就是从同一个瞬间的人群里记
+   * 下来的，彼此天然不重叠；万一有残留，separate() 紧接着就收拾掉了。
+   */
+  private restoreReserved(view: BattleView): void {
+    const box = view.spawn;
+    const seeX = box.halfW * (1 + RESTORE_MARGIN);
+    const seeY = box.halfH * (1 + RESTORE_MARGIN);
+    const reserved = this.reserved;
+    const enemies = this.enemies;
+
+    for (let i = reserved.length - 1; i >= 0; i--) {
+      const r = reserved[i];
+      const expired = this.clock >= r.expires;
+      // 还没看见、也还没过期：留着。
+      if (!expired && (Math.abs(r.x - box.x) > seeX || Math.abs(r.y - box.y) > seeY)) continue;
+
+      reserved[i] = reserved[reserved.length - 1];
+      reserved.pop();
+      if (expired || enemies.length >= this.maxEnemies) continue;
+
+      if (!this.spotFree(r.x, r.y, r.def)) continue;
+
+      const e = new Character(r.def, r.palette, r.speed);
+      e.x = r.x;
+      e.y = r.y;
+      e.facing = r.facing;
+      e.attackCooldown = r.cooldown;
+      enemies.push(e);
+      this.restored++;
+    }
+  }
+
+  /**
+   * (x, y) 能不能塞得下 who：地形不挡、玩家不在那儿、也没有别的活人占着。
+   *
+   * 只给恢复用。出怪那条路不查这个 —— 出怪点在视野外的空地上，撞上了由分离顺手推开就行；
+   * 而恢复是往**人堆里**放，放错了就是两个人叠在一起从画面外走出来。
+   */
+  private spotFree(x: number, y: number, def: UnitDef): boolean {
+    const { field, grid, enemies, player, crowdSpacing } = this;
+    // 尺寸只由 def 推出来（见 Character 的 radius / spacing），所以不必先造一个人再来问。
+    // 这条路每帧会为每个还没放回去的预留走一次，白造的 Character 会连带 Pose 和 Animator。
+    const radius = RigSpec.hipHalfWidth * def.bulk * 1.15;
+    const spacing = RigSpec.torsoHalfWidth * def.bulk;
+    if (!isFreeSpot(field.terrain, field.props, x, y, radius)) return false;
+
+    const toPlayer = (player.spacing + spacing) * crowdSpacing;
+    if ((x - player.x) ** 2 + (y - player.y) ** 2 < toPlayer * toPlayer) return false;
+
+    // 最坏情况下够得着的距离：对面是场上最胖的那位。按它开查询窗口，格子数才与间距无关。
+    const reach = (spacing + MAX_SPACING) * crowdSpacing;
+    const span = Math.max(1, Math.ceil(reach / grid.cellSize));
+    const cx = grid.colOf(x);
+    const cy = grid.rowOf(y);
+    const x0 = Math.max(0, cx - span);
+    const x1 = Math.min(grid.cols - 1, cx + span);
+    const y0 = Math.max(0, cy - span);
+    const y1 = Math.min(grid.rows - 1, cy + span);
+    const items = grid.indices;
+
+    for (let gy = y0; gy <= y1; gy++) {
+      for (let gx = x0; gx <= x1; gx++) {
+        const end = grid.end(gx, gy);
+        for (let k = grid.begin(gx, gy); k < end; k++) {
+          const other = enemies[items[k]];
+          if (!other.alive) continue;
+          const min = (spacing + other.spacing) * crowdSpacing;
+          const dx = other.x - x;
+          const dy = other.y - y;
+          if (dx * dx + dy * dy < min * min) return false;
+        }
+      }
+    }
+    return true;
   }
 
   /**
@@ -571,6 +748,7 @@ export class Battle {
     const t0 = performance.now();
     const { player, enemies, field } = this;
 
+    this.clock += dt;
     this.movePlayer(dt, input);
     this.recycle(view);
     this.spawnWave(dt, view);
@@ -578,6 +756,8 @@ export class Battle {
     this.advancePlayerAttack(dt);
     // 先建一次表：敌人要先查"前面有没有人占着位子"。分离那边会按挪完的位置再建一次。
     this.grid.build(enemies);
+    // 恢复排在建表之后：判"那个位置有没有人"要用这张表。见 restoreReserved。
+    this.restoreReserved(view);
     this.driveEnemies(dt, view);
     this.separate();
 
@@ -590,6 +770,8 @@ export class Battle {
       this.player.hp = this.player.maxHp;
       this.player.hurt = 0;
       enemies.length = 0;
+      // 和 reset 一样：清场就该是真的清场，不能让预留把上一条命的人海放回来。
+      this.reserved.length = 0;
       this.seed(view);
     }
 

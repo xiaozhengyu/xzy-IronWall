@@ -1,8 +1,10 @@
-import { Graphics, type Renderer } from 'pixi.js';
+import { Container, Graphics, Sprite, type Renderer } from 'pixi.js';
 import { drawCharacter, drawSkeleton } from '../characters/renderer';
 import type { Character } from '../game/character';
 import type { Battle } from '../game/battle';
 import type { Field } from '../game/field';
+import type { ItemDef } from '../items/itemDef';
+import type { ItemSheet } from '../items/renderer';
 import type { Camera } from './camera';
 import { PixelSurface } from './pixelSurface';
 import { PrimitiveMesh } from './primitiveMesh';
@@ -63,6 +65,16 @@ export class Scene {
   private readonly prim = new PrimitiveMesh();
   /** 准星单独一个 Graphics：四个小矩形，不值得进批次，而且它要压在最上面。 */
   private readonly reticle = new Graphics();
+  /**
+   * 物品图鉴那一屏的精灵。
+   *
+   * 物品是贴图，进不了 ShapeBatch —— 那条路只认多边形。所以它们是真正的 Sprite，挂在
+   * 描边那一层里，于是和人物吃同一圈暗边、同一次放大，看到的就是物品掉在场上时的样子。
+   *
+   * 精灵留着复用，不每次重建：图鉴一开着就每帧走一遍，几十个 Sprite 反复 new 是白扔。
+   */
+  private readonly itemLayer = new Container();
+  private readonly itemSprites: Sprite[] = [];
 
   /** 上一帧的统计。游戏里不显示，暂停面板要读。 */
   primitives = 0;
@@ -78,7 +90,8 @@ export class Scene {
   constructor(renderer: Renderer, camera: Camera) {
     this.camera = camera;
     this.surface = new PixelSurface(renderer, camera.magnify);
-    this.surface.units.addChild(this.prim.mesh, this.reticle);
+    this.itemLayer.visible = false;
+    this.surface.units.addChild(this.prim.mesh, this.itemLayer, this.reticle);
   }
 
   /** 挂到 stage 上的那个精灵：放大后的整帧。 */
@@ -115,6 +128,7 @@ export class Scene {
 
   draw(field: Field, battle: Battle, overlay: SceneOverlay): void {
     const t0 = performance.now();
+    this.itemLayer.visible = false;
     const cam = this.camera;
     const { x: camX, y: camY, rootX, rootY, grain } = cam;
     const shapes = this.shapes;
@@ -178,6 +192,82 @@ export class Scene {
 
     this.surface.render();
     this.buildMs = smooth(this.buildMs, performance.now() - t0);
+  }
+
+  /**
+   * 物品图鉴：把整本物品表摆成网格铺满缓冲，场上的人和树一个都不画。
+   *
+   * 走的是和打仗时同一层描边、同一个放大倍数，底下的地面精灵也留着不擦 —— 物品最终是掉在
+   * 草地上的，白底上好看不算数。这是这个界面存在的意义：看到的必须是玩家会看到的东西。
+   *
+   * @returns 真正画出来的件数。表是空的、或者精灵表还没画好时是 0，菜单靠它决定提示什么。
+   */
+  drawItems(defs: ItemDef[], sheet: ItemSheet): number {
+    const t0 = performance.now();
+    const w = this.surface.width;
+    const h = this.surface.height;
+
+    // 图元那一批清空：图鉴里没有人也没有树。
+    this.prim.begin();
+    this.prim.end();
+    this.primitives = 0;
+    this.reticle.clear();
+
+    this.itemLayer.visible = true;
+
+    // 格子边长按颗粒度走，不按屏幕像素 —— 要校对的是出货尺寸下的样子，放大了看反而看不出
+    // 该调哪个数。一屏放不下就整体缩小，不做滚动翻页：能一眼扫完全部才是这个界面的理由。
+    const box = 16;
+    const margin = 8;
+    let cell = Math.max(4, Math.round((box + margin) * this.camera.grain));
+    let cols = Math.max(1, Math.floor(w / cell));
+    let rows = Math.ceil(Math.max(1, defs.length) / cols);
+    while (rows * cell > h && cell > 4) {
+      cell--;
+      cols = Math.max(1, Math.floor(w / cell));
+      rows = Math.ceil(Math.max(1, defs.length) / cols);
+    }
+
+    const span = (cell * box) / (box + margin);
+    const x0 = (w - cols * cell) / 2;
+    const y0 = (h - rows * cell) / 2;
+
+    let shown = 0;
+    for (const def of defs) {
+      const texture = sheet.textureOf(def);
+      if (!texture) continue; // 这一件还没画进精灵表，或者 frame 写出界了。
+
+      const sprite = this.itemSpriteAt(shown);
+      sprite.texture = texture;
+      sprite.visible = true;
+      // 按长边等比缩进格子：长剑和果子不该被拉成一样方。
+      const k = span / Math.max(texture.width, texture.height);
+      sprite.scale.set(k);
+      // 位置取整：像素图落在半个像素上，最近邻会把边啃掉一行。
+      sprite.position.set(
+        Math.round(x0 + (shown % cols) * cell + cell / 2),
+        Math.round(y0 + Math.floor(shown / cols) * cell + cell / 2),
+      );
+      shown++;
+    }
+    for (let i = shown; i < this.itemSprites.length; i++) this.itemSprites[i].visible = false;
+
+    this.drawn = shown;
+    this.surface.render();
+    this.buildMs = smooth(this.buildMs, performance.now() - t0);
+    return shown;
+  }
+
+  /** 第 i 个图鉴精灵，不够就补一个。 */
+  private itemSpriteAt(i: number): Sprite {
+    let sprite = this.itemSprites[i];
+    if (!sprite) {
+      sprite = new Sprite();
+      sprite.anchor.set(0.5);
+      this.itemSprites.push(sprite);
+      this.itemLayer.addChild(sprite);
+    }
+    return sprite;
   }
 
   /** 把一个单位画到它在缓冲里该在的位置上。 */

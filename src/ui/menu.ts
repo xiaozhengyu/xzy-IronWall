@@ -28,6 +28,8 @@ export interface MenuState {
   spawnBatch: number;
   /** 这一局回收掉多少人（走出回收框、看不见了的）。用来看跑步机转得对不对。 */
   recycled: number;
+  /** 其中有多少是玩家回头之后按预留位置放回去的。 */
+  restored: number;
 
   fps: number;
   /** 逻辑和绘制各自花掉的毫秒。暂停时世界是冻住的，这里是暂停那一刻的值。 */
@@ -37,6 +39,8 @@ export interface MenuState {
 
   preset: number;
   autoAttack: boolean;
+  /** 物品图鉴开着的时候面板要让开，见 showGallery。 */
+  showItems: boolean;
   skeleton: boolean;
   maxEnemies: number;
 
@@ -121,6 +125,12 @@ export class Menu {
   private readonly loadPercent = el('span');
   private readonly barFill = el('div', 'menu-bar-fill');
 
+  /**
+   * 图鉴状态下顶上那条窄栏。挂在 root 上而不是卡片里 —— 卡片这时候是收起来的。
+   */
+  private readonly peek = el('div', 'menu-peek');
+  private readonly peekLabel = el('span', 'menu-peek-k');
+
   private readonly startBox = el('div');
   private readonly startButton = el('button', 'menu-start');
   private readonly hint = el('div', 'menu-hint');
@@ -146,6 +156,7 @@ export class Menu {
   /** @param progress 0..1。 */
   showLoading(label: string, progress: number): void {
     this.root.hidden = false;
+    this.setPeek(false);
     this.mode.textContent = '载入中';
     this.loading.hidden = false;
     this.startBox.hidden = true;
@@ -158,6 +169,7 @@ export class Menu {
 
   showTitle(): void {
     this.root.hidden = false;
+    this.setPeek(false);
     this.mode.textContent = '准备开始';
     this.loading.hidden = true;
     this.startBox.hidden = false;
@@ -171,6 +183,7 @@ export class Menu {
 
   showPause(): void {
     this.root.hidden = false;
+    this.setPeek(false);
     this.mode.textContent = '已暂停';
     this.loading.hidden = true;
     this.startBox.hidden = false;
@@ -183,7 +196,30 @@ export class Menu {
 
   hide(): void {
     this.root.hidden = true;
+    this.setPeek(false);
     this.locking = false;
+  }
+
+  /**
+   * 物品图鉴：面板让开，让画布上那张图露出来。
+   *
+   * 不做成第四个"模式"，因为它和载入/开始/暂停不是一个维度的东西 —— 那三个是游戏所处的
+   * 阶段，图鉴只是暂停时临时把面板挪走看一眼。回来还是暂停。
+   */
+  showGallery(count: number): void {
+    this.root.hidden = false;
+    this.setPeek(true);
+    // 一件都画不出来时，窄栏就是唯一能说清楚"为什么是空的"的地方 —— 画布上写不了字，
+    // 那是像素缓冲，十三号字过一遍就没法看了（见这个文件顶上那段）。
+    this.peekLabel.textContent =
+      count > 0
+        ? `物品图鉴 · ${count} 件`
+        : '物品图鉴 · 空 —— 把精灵表放到 public/items.png，再到 src/items/catalog.ts 登记帧矩形';
+  }
+
+  private setPeek(on: boolean): void {
+    this.root.classList.toggle('peek', on);
+    this.peek.hidden = !on;
   }
 
   // ---------------------------------------------------------------- 刷新
@@ -199,7 +235,7 @@ export class Menu {
 
     this.stats.kills.textContent = String(s.kills);
     this.stats.alive.textContent = `${s.alive} 画 ${s.drawn}`;
-    this.stats.recycled.textContent = String(s.recycled);
+    this.stats.recycled.textContent = `${s.recycled} 回 ${s.restored}`;
     this.stats.deaths.textContent = String(s.deaths);
     this.stats.hp.textContent = s.invincible
       ? '无敌'
@@ -279,10 +315,18 @@ export class Menu {
 
     card.appendChild(el('div', 'menu-rule'));
 
+    // ---- 图鉴那条窄栏
+    //
+    // 挂在 root 上而不是卡片里：图鉴状态下卡片整个是收起来的，挂在里面就跟着一起没了。
+    this.peek.hidden = true;
+    this.peek.appendChild(this.peekLabel);
+    this.peek.appendChild(this.button('返回菜单', 'I', 'KeyI'));
+    this.root.appendChild(this.peek);
+
     const keys = el('div', 'menu-keys');
     keys.innerHTML =
       '<b>按住左键</b> 移动 · <b>Shift</b> 跑 · <b>空格</b> 挥击 · ' +
-      '<b>滚轮</b> 缩放 · <b>ESC</b> 暂停 · 点空白处也能继续';
+      '<b>滚轮</b> 缩放 · <b>I</b> 物品图鉴 · <b>ESC</b> 暂停 · 点空白处也能继续';
     card.appendChild(keys);
   }
 
@@ -335,6 +379,8 @@ export class Menu {
     view.appendChild(this.spin('grain', 'Minus', 'Equal'));
     view.appendChild(this.button('复位', '0', 'Digit0'));
     view.appendChild(this.spin('magnify', 'BracketLeft', 'BracketRight'));
+    // 图鉴归"画面"而不是"战斗"：它看的是东西画成什么样，和场上打得怎么样无关。
+    view.appendChild(this.toggle('物品图鉴', 'I', 'KeyI', (s) => s.showItems));
   }
 
   /** 一个普通按钮。给了 code 就等于按下那个键。 */
