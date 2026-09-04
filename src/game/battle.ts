@@ -528,6 +528,9 @@ export class Battle {
    */
   aegis: { left: number; total: number; radius: number; power: number } | null = null;
 
+  /** 天地法相：持续判定跟着玩家走；公开状态只供 Scene 同步上半身外壳。 */
+  dharma: { left: number; total: number; radius: number; power: number } | null = null;
+
   /** 穿云箭：升空后在第 0.8 秒选定当前视口内的落点，再从天而降。Scene 只读这个状态来画箭。 */
   skyArrow: {
     age: number;
@@ -677,6 +680,7 @@ export class Battle {
     this.skillWaves.length = 0;
     this.lunge = null;
     this.aegis = null;
+    this.dharma = null;
     this.skyArrow = null;
     this.debris.clear();
     this.player.death = -1;
@@ -1192,6 +1196,21 @@ export class Battle {
         return;
       }
 
+      case 'dharma': {
+        this.dharma = { left: skill.duration, total: skill.duration, radius: reach, power: skill.power };
+        this.effects.spawn(player.x, player.y, player.facing, {
+          power: 1,
+          span: Math.PI * 2,
+          from: 1,
+          to: reach / SKILL_HIT_MARGIN,
+          life: 0.3,
+          weight: 1.8 * player.def.bulk,
+          overhead: true,
+          tint: rgb(255, 196, 72),
+        });
+        return;
+      }
+
       case 'skyArrow': {
         // 落点不是起手时锁死：等待期间镜头跟着玩家移动，0.8 秒一到才在“此刻”的视口里抽取位置。
         this.skyArrow = { age: 0, targetX: 0, targetY: 0, radius: reach, power: skill.power };
@@ -1314,6 +1333,17 @@ export class Battle {
         }
       }
       if (this.aegis.left <= 0) this.aegis = null;
+    }
+
+    if (this.dharma) {
+      this.dharma.left -= dt;
+      for (const e of this.enemies) {
+        if (!e.alive) continue;
+        if (inSector(player, e, this.dharma.radius, Math.PI * 2)) {
+          this.slay(e, player.x, player.y, this.dharma.power);
+        }
+      }
+      if (this.dharma.left <= 0) this.dharma = null;
     }
 
     if (this.lunge) {

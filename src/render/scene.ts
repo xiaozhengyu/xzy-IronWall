@@ -1,6 +1,7 @@
 import { Container, Graphics, Sprite, type Renderer } from 'pixi.js';
 import { RigSpec } from '../characters/rig';
 import { drawAegisDome } from '../effects/aegisDome';
+import { drawDharmaAspect } from '../effects/dharmaAspect';
 import { drawSkyBlade, skyArrowBlade } from '../effects/skyBlade';
 import { drawCharacter, drawSkeleton } from '../characters/renderer';
 import { flatPalette } from '../characters/palette';
@@ -224,6 +225,11 @@ export class Scene {
       if (Math.abs(e.x - camX) > cullX || oy < -cullUp || oy > cullDown) continue;
       this.drawCharacterAt(e);
       this.drawn++;
+    }
+    const playerAt = cam.worldToScreen(battle.player.x, battle.player.y);
+    const dharma = battle.dharma;
+    if (dharma) {
+      drawDharmaAspect(shapes, battle.player, playerAt, grain, dharma.left, dharma.total);
     }
     this.drawCharacterAt(battle.player, true, battle.dashing);
 

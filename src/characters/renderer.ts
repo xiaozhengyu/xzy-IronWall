@@ -121,6 +121,29 @@ export function drawCharacter(
 }
 
 /**
+ * 只画角色腰部以上的模型。
+ *
+ * 天地法相复用玩家正在使用的骨架、装备和动作，但不需要腿、影子与武器：法相本身是一层罩住
+ * 玩家的大型上半身外壳。保留双臂和双手，玩家转身、挥击时外壳会和本体保持完全相同的朝向与
+ * 姿态。
+ */
+export function drawCharacterUpperBody(
+  shapes: ShapeBatch,
+  pose: Pose,
+  p: Projector,
+  palette: CharacterPalette,
+  def: UnitDef,
+  options: Pick<DrawOptions, 'silhouette'> = {},
+): void {
+  const silhouette = options.silhouette ?? false;
+  drawTorso(shapes, p, pose, palette, def);
+  drawArm(shapes, p, pose, palette, def, 0);
+  drawArm(shapes, p, pose, palette, def, 1);
+  drawHead(shapes, p, pose, palette, def, silhouette);
+  drawHands(shapes, p, pose, palette, def);
+}
+
+/**
  * 八像素高时，一整个人只用四个 quad。
  *
  * 影子、躯干、头，外加刚挨打时的白光。躯干带阵营色、头带自己的色调，这两样是那个尺寸下
