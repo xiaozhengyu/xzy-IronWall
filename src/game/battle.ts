@@ -13,6 +13,7 @@ import type { Field } from './field';
 import { rgb } from '../render/color';
 import { SpatialGrid } from './grid';
 import { SkillLoadout, type ActiveSkillSlot } from './skillLoadout';
+import { Collectibles } from '../world/collectibles';
 import {
   SKILL_HIT_MARGIN,
   WAVE_NEAR_HALF_WIDTH,
@@ -528,6 +529,8 @@ export class Battle {
   readonly effects = new ImpactEffects();
   /** 打碎溅出来的血珠和甲片。同上：谁放出来的归战斗管，画它的是 Scene。 */
   readonly debris = new Debris();
+  /** 地图上的掉落物。数值结算尚未接入，目前只负责生成、落地和吸附。 */
+  readonly collectibles = new Collectibles();
   /** 弓箭手已经射出的箭。公开只供 Scene 读取并绘制。 */
   readonly enemyArrows: EnemyArrow[] = [];
 
@@ -769,6 +772,7 @@ export class Battle {
     this.resetSkillRuntime();
     this.enemyArrows.length = 0;
     this.debris.clear();
+    this.collectibles.clear();
     this.player.death = -1;
     this.player.hurt = 0;
     this.player.hp = this.player.maxHp;
@@ -1046,6 +1050,7 @@ export class Battle {
 
     this.effects.update(dt);
     this.debris.update(dt);
+    this.collectibles.update(dt, player);
     field.update(dt, this.actors());
 
     // 玩家倒下了就重开：清场、回血、重新铺一批。
@@ -1058,6 +1063,7 @@ export class Battle {
       this.reserved.length = 0;
       this.resetSkillRuntime();
       this.enemyArrows.length = 0;
+      this.collectibles.clear();
       this.seed(view);
     }
 
@@ -1273,6 +1279,7 @@ export class Battle {
   ): void {
     e.kill(fromX, fromY, launch);
     this.kills++;
+    this.collectibles.dropGem(e.x, e.y);
 
     let dx = e.x - fromX;
     let dy = e.y - fromY;

@@ -33,6 +33,7 @@ import { type Rgba, rgb, rgba } from '../src/render/color';
 import { Terrain } from '../src/world/terrain';
 import { Weather } from '../src/world/weather';
 import { Props } from '../src/world/props';
+import { Collectibles } from '../src/world/collectibles';
 
 // ---------------------------------------------------------------- 极小的栅格化器
 
@@ -1168,4 +1169,59 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   writePng(shot.file, sheet.upscale(shot.span > 150 ? 1 : 2));
   console.log(`${shot.label}连拍：取样于 ${shot.at.join(' / ')} 秒，镜头跟着玩家（他永远在正中）`);
   }
+}
+
+// ---------------------------------------------------------------- 掉落宝石与吸附连拍
+{
+  const STEP = 1 / 120;
+  const W = 180;
+  const H = 100;
+  const frames = [
+    { settle: 0.1, pull: 0 },
+    { settle: 0.62, pull: 0 },
+    { settle: 0.62, pull: 0.12 },
+    { settle: 0.62, pull: 0.34 },
+  ];
+  const sheet = new Canvas(W * frames.length, H, [71, 105, 59]);
+
+  frames.forEach((frame, col) => {
+    const collectibles = new Collectibles();
+    const target = { x: 0, y: 0 };
+    const origins = [
+      { x: -26, y: -11 },
+      { x: -20, y: 13 },
+      { x: 23, y: -8 },
+      { x: 27, y: 15 },
+      { x: 13, y: 24 },
+    ];
+    for (const p of origins) collectibles.dropGem(p.x, p.y);
+    const far = { x: 1000, y: 1000 };
+    for (let t = 0; t < frame.settle; t += STEP) collectibles.update(STEP, far);
+    for (let t = 0; t < frame.pull; t += STEP) collectibles.update(STEP, target);
+
+    const shapes = new ShapeBatch();
+    const sink = new ShapeSink();
+    const rootX = col * W + W / 2;
+    const rootY = H / 2 + 8;
+    const at = (x: number, y: number) =>
+      v2(rootX + x * GRAIN, rootY + y * Projection.groundSquash * GRAIN);
+    const depthOf = (worldY: number) =>
+      Math.round(rootY + worldY * Projection.groundSquash * GRAIN) * Projector.DEPTH_PER_ROW;
+
+    collectibles.draw(shapes, 0, 0, rootX, rootY, GRAIN, depthOf);
+    const hero = new Character(UnitPresets.warlord(), PALETTE_HERO, 32);
+    hero.facing = -Math.PI * 0.5;
+    drawCharacter(
+      shapes,
+      hero.pose,
+      new Projector(at(0, 0), hero.facing, Projection.groundSquash, GRAIN),
+      hero.palette,
+      hero.def,
+    );
+    shapes.flushToMesh(sink);
+    for (const shape of sink.shapes) sheet.fillPolygon(shape);
+  });
+
+  writePng('.preview-collectibles.png', sheet.upscale(2));
+  console.log('掉落宝石：弹出 / 悬浮 / 加速吸附 / 拾取闪光，连拍 4 格');
 }

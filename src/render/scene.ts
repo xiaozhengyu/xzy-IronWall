@@ -216,6 +216,11 @@ export class Scene {
     field.terrain.drawTrees(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
     field.props.draw(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
 
+    // 掉落物和角色、树木共用深度排序：人在宝石前面时会挡住它，走到后面时宝石也能盖住鞋面。
+    battle.collectibles.draw(shapes, camX, camY, rootX, rootY, grain, (worldY) =>
+      Math.round(cam.worldToScreen(camX, worldY).y) * Projector.DEPTH_PER_ROW,
+    );
+
     // 按**矩形**剔除，不是圆。
     //
     // 屏幕是矩形，而以视口对角线为半径的圆比它大一倍 —— 人堆密起来的时候，画出去的人里有
