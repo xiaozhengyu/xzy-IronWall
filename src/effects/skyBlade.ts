@@ -1,4 +1,4 @@
-import { v2, type Vec2 } from '../core/math';
+import { clamp, v2, type Vec2 } from '../core/math';
 import { type Rgba, rgba } from '../render/color';
 import type { ShapeBatch } from '../render/shapeBatch';
 
@@ -103,10 +103,10 @@ export interface BladePose {
 }
 
 /** 剑有多长多宽，世界单位。约三个人高（人高 19）。 */
-const SKY_LENGTH = 54;
+export const SKY_BLADE_LENGTH = 54;
 // 12 而不是 9.5：俯冲段大半程只看得到刃身（柄还在画面上方），此时"是不是一把大剑"全靠
 // 刃的宽度说话。窄了就读作一道光柱。
-const SKY_WIDTH = 12;
+export const SKY_BLADE_WIDTH = 12;
 
 /** 冲天段和俯冲段各占多久，秒。和 Battle 里 skyArrow 的时间轴对齐。 */
 const RISE_TIME = 0.18;
@@ -132,8 +132,8 @@ export function skyArrowBlade(
   screenH: number,
   grain: number,
 ): BladePose | null {
-  const length = SKY_LENGTH * grain;
-  const width = SKY_WIDTH * grain;
+  const length = SKY_BLADE_LENGTH * grain;
+  const width = SKY_BLADE_WIDTH * grain;
   const side = v2(1, 0);
 
   if (age < RISE_TIME) {
@@ -159,5 +159,30 @@ export function skyArrowBlade(
     side,
     width,
     alpha: 235,
+  };
+}
+
+/**
+ * 开天使用的地面飞剑姿态。剑尖、柄尾都已经由 Scene 投影到缓冲空间；这里只补出与剑身垂直
+ * 的宽度轴，以及出现、消失时很短的淡入淡出。剑的具体造型仍由 drawSkyBlade 统一绘制。
+ */
+export function heavenSplitBlade(
+  age: number,
+  left: number,
+  butt: Vec2,
+  tip: Vec2,
+  grain: number,
+): BladePose {
+  const dx = tip.x - butt.x;
+  const dy = tip.y - butt.y;
+  const length = Math.hypot(dx, dy) || 1;
+  const enter = clamp(age / 0.06, 0, 1);
+  const exit = clamp(left / 0.1, 0, 1);
+  return {
+    tip,
+    butt,
+    side: v2(-dy / length, dx / length),
+    width: SKY_BLADE_WIDTH * grain,
+    alpha: Math.round(235 * enter * exit),
   };
 }

@@ -2,7 +2,7 @@ import { Container, Graphics, Sprite, type Renderer } from 'pixi.js';
 import { RigSpec } from '../characters/rig';
 import { drawAegisDome } from '../effects/aegisDome';
 import { drawDharmaAspect } from '../effects/dharmaAspect';
-import { drawSkyBlade, skyArrowBlade } from '../effects/skyBlade';
+import { SKY_BLADE_LENGTH, drawSkyBlade, heavenSplitBlade, skyArrowBlade } from '../effects/skyBlade';
 import { drawCharacter, drawSkeleton } from '../characters/renderer';
 import { flatPalette } from '../characters/palette';
 import type { Character } from '../game/character';
@@ -236,6 +236,7 @@ export class Scene {
     // 金钟罩画在人之后：它罩在玩家身上，不是垫在他底下。
     this.drawAegis(battle, camX, camY, rootX, rootY, grain);
     this.drawSkyArrow(battle, camX, camY, rootX, rootY, grain);
+    this.drawHeavenSplit(battle, grain);
 
     // 击飞的轨迹线画在人之后：它是从身体拖出来的，压在别人身上比断在别人身后好读。
     for (const e of battle.enemies) {
@@ -423,6 +424,31 @@ export class Scene {
       pose.alpha,
       SKY_ARROW_TINT,
       (shadow?.y ?? y) * Projector.DEPTH_PER_ROW + 30,
+    );
+  }
+
+  /** 开天：穿云剑模型沿施放时锁定的行走朝向贴地飞出。 */
+  private drawHeavenSplit(battle: Battle, grain: number): void {
+    const blade = battle.heavenSplit;
+    if (!blade) return;
+
+    const dirX = Math.cos(blade.heading);
+    const dirY = Math.sin(blade.heading);
+    const butt = this.camera.worldToScreen(blade.x, blade.y);
+    const tip = this.camera.worldToScreen(
+      blade.x + dirX * SKY_BLADE_LENGTH,
+      blade.y + dirY * SKY_BLADE_LENGTH,
+    );
+    const pose = heavenSplitBlade(blade.age, blade.left, butt, tip, grain);
+    drawSkyBlade(
+      this.shapes,
+      pose.tip,
+      pose.butt,
+      pose.side,
+      pose.width,
+      pose.alpha,
+      SKY_ARROW_TINT,
+      ((pose.tip.y + pose.butt.y) * 0.5) * Projector.DEPTH_PER_ROW + 30,
     );
   }
 

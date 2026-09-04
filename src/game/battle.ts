@@ -5,6 +5,7 @@ import { type UnitDef, UnitPresets } from '../characters/unitDef';
 import { clamp } from '../core/math';
 import { Debris } from '../effects/debris';
 import { ImpactEffects, frontRadius, weaponImpactPoint } from '../effects/impact';
+import { SKY_BLADE_LENGTH, SKY_BLADE_WIDTH } from '../effects/skyBlade';
 import { Character } from './character';
 import { isFreeSpot, moveWithCollision } from './collision';
 import { inAttackArc, inSector, sweptBy } from './combat';
@@ -16,6 +17,7 @@ import {
   Skills,
   WAVE_NEAR_HALF_WIDTH,
   cappedReach,
+  exitDistance,
   skillAt,
   type SkillDef,
   type SkillId,
@@ -531,6 +533,18 @@ export class Battle {
   /** 天地法相：持续判定跟着玩家走；公开状态只供 Scene 同步上半身外壳。 */
   dharma: { left: number; total: number; radius: number; power: number } | null = null;
 
+  /** 开天：柄的位置沿施放时的行走朝向推进；Scene 用同一状态画穿云剑模型。 */
+  heavenSplit: {
+    age: number;
+    left: number;
+    total: number;
+    x: number;
+    y: number;
+    heading: number;
+    speed: number;
+    power: number;
+  } | null = null;
+
   /** 穿云箭：升空后在第 0.8 秒选定当前视口内的落点，再从天而降。Scene 只读这个状态来画箭。 */
   skyArrow: {
     age: number;
@@ -681,6 +695,7 @@ export class Battle {
     this.lunge = null;
     this.aegis = null;
     this.dharma = null;
+    this.heavenSplit = null;
     this.skyArrow = null;
     this.debris.clear();
     this.player.death = -1;
@@ -1211,6 +1226,34 @@ export class Battle {
         return;
       }
 
+      case 'heavenSplit': {
+        // 玩家只有“朝准星向前走”这一种移动方式，所以 cast 这一帧的 facing 就是行走朝向。
+        // 起手后把它锁进状态，飞剑不会再跟着鼠标拐弯。
+        const heading = player.facing;
+        const clearance = SKY_BLADE_WIDTH * 1.4;
+        const outOfView = exitDistance(player.x, player.y, heading, {
+          x: view.spawn.x,
+          y: view.spawn.y,
+          halfW: view.spawn.halfW + clearance,
+          halfH: view.spawn.halfH + clearance,
+        });
+        // reach 继续定义原来的飞行速度；实际距离至少走完 reach，并延长到剑柄也越过扩张后的
+        // 视口边界。这样增大窗口、切换体型或站到屏幕偏侧时，都恰好是整把剑飞出画面后消失。
+        const speed = reach / skill.duration;
+        const duration = Math.max(reach, outOfView) / speed;
+        this.heavenSplit = {
+          age: 0,
+          left: duration,
+          total: duration,
+          x: player.x,
+          y: player.y,
+          heading,
+          speed,
+          power: skill.power,
+        };
+        return;
+      }
+
       case 'skyArrow': {
         // 落点不是起手时锁死：等待期间镜头跟着玩家移动，0.8 秒一到才在“此刻”的视口里抽取位置。
         this.skyArrow = { age: 0, targetX: 0, targetY: 0, radius: reach, power: skill.power };
@@ -1346,6 +1389,31 @@ export class Battle {
       if (this.dharma.left <= 0) this.dharma = null;
     }
 
+    if (this.heavenSplit) {
+      const blade = this.heavenSplit;
+      const fromX = blade.x;
+      const fromY = blade.y;
+      const dirX = Math.cos(blade.heading);
+      const dirY = Math.sin(blade.heading);
+      blade.age += dt;
+      blade.left -= dt;
+      blade.x += dirX * blade.speed * dt;
+      blade.y += dirY * blade.speed * dt;
+
+      // 上一帧的柄到这一帧的剑尖是一条连续线段，包含整截剑身和这一帧扫过的距离。判定半径
+      // 与画出来的刃宽一致；命中后的横向击飞与定格则直接走突进的同一个函数。
+      this.slayAlongLunge(
+        fromX,
+        fromY,
+        blade.x + dirX * SKY_BLADE_LENGTH,
+        blade.y + dirY * SKY_BLADE_LENGTH,
+        blade.heading,
+        SKY_BLADE_WIDTH * 0.5,
+        blade.power,
+      );
+      if (blade.left <= 0) this.heavenSplit = null;
+    }
+
     if (this.lunge) {
       this.lunge.left -= dt;
       // 撞到谁谁死，判定就是人自己的身体加一点余量 —— 冲过去的是这个人，不是一个扇形。
@@ -1354,48 +1422,64 @@ export class Battle {
       // 60 帧下一步就跨 8 个单位，而 main.ts 把 dt 夹在 1/20 —— 掉帧时一步跨 25 个单位，
       // 比判定圈的直径还大，中间的人整个被跳过去。实测 20 帧下一条 18 人的队列漏掉 7 个，
       // 而且漏的位置是散的（第 0、1、5、8、9 个），玩家读作"从人身上穿过去了"。
-      const hit = player.radius + LUNGE_BODY_MARGIN;
       const ax = this.lunge.fromX;
       const ay = this.lunge.fromY;
-      const segX = player.x - ax;
-      const segY = player.y - ay;
-      const segLen2 = segX * segX + segY * segY;
-      // 冲刺方向和它的左手法线，用来把人往两侧掀。
-      const dirX = Math.cos(this.lunge.heading);
-      const dirY = Math.sin(this.lunge.heading);
-      for (const e of this.enemies) {
-        if (!e.alive) continue;
-        // 点到线段的最近距离。t 夹在 [0,1]，所以线段两端之外按端点算。
-        let t = segLen2 > 1e-9 ? ((e.x - ax) * segX + (e.y - ay) * segY) / segLen2 : 0;
-        t = t < 0 ? 0 : t > 1 ? 1 : t;
-        const dx = e.x - (ax + segX * t);
-        const dy = e.y - (ay + segY * t);
-        const reach = hit + e.radius;
-        if (dx * dx + dy * dy <= reach * reach) {
-          // 往哪一侧掀：看他落在冲刺线的哪一边。正好压在线上的人（横向分量接近 0）用他自己
-          // 那个固定的惯用侧 —— 不给定值的话方向会在零附近抖，同一帧里挨着的两个人可能被
-          // 掀向相反的方向，读作原地炸开而不是被犁开。
-          const side = -dx * dirY + dy * dirX;
-          const sign = Math.abs(side) > 0.05 ? Math.sign(side) : e.sideBias;
-          // 主要横着、带一点前冲。
-          let kx = -dirY * sign + dirX * LUNGE_SIDE_FORWARD;
-          let ky = dirX * sign + dirY * LUNGE_SIDE_FORWARD;
-          const kl = Math.hypot(kx, ky) || 1;
-          kx /= kl;
-          ky /= kl;
-          // kill() 是按"背对打击来源"算方向的，所以把来源放在想要的方向的反面。
-          this.slay(e, e.x - kx * 10, e.y - ky * 10, this.lunge.power, {
-            force: LUNGE_FORCE,
-            freeze: LUNGE_FREEZE,
-          });
-        }
-      }
+      this.slayAlongLunge(
+        ax,
+        ay,
+        player.x,
+        player.y,
+        this.lunge.heading,
+        player.radius + LUNGE_BODY_MARGIN,
+        this.lunge.power,
+      );
       if (this.lunge.left <= 0) {
         // 冲到头再炸一圈：把走廊两侧漏掉的人一起带走。冲锋该以"撞进人堆里停下"收尾，
         // 而不是穿过去就没事了。
         if (this.lunge.finishRing > 0) this.castRing(this.lunge.finishRing, this.lunge.power);
         this.lunge = null;
       }
+    }
+  }
+
+  /**
+   * 按突进规则扫过一条线段：连续碰撞、向路径两侧击飞，并使用突进的力度和短定格。
+   * 玩家突进与开天的剑体共用这一份，保证“按照突进技能处理”不是近似相同而是同一条代码路径。
+   */
+  private slayAlongLunge(
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
+    heading: number,
+    hit: number,
+    power: number,
+  ): void {
+    const segX = bx - ax;
+    const segY = by - ay;
+    const segLen2 = segX * segX + segY * segY;
+    const dirX = Math.cos(heading);
+    const dirY = Math.sin(heading);
+    for (const e of this.enemies) {
+      if (!e.alive) continue;
+      let t = segLen2 > 1e-9 ? ((e.x - ax) * segX + (e.y - ay) * segY) / segLen2 : 0;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const dx = e.x - (ax + segX * t);
+      const dy = e.y - (ay + segY * t);
+      const reach = hit + e.radius;
+      if (dx * dx + dy * dy > reach * reach) continue;
+
+      const side = -dx * dirY + dy * dirX;
+      const sign = Math.abs(side) > 0.05 ? Math.sign(side) : e.sideBias;
+      let kx = -dirY * sign + dirX * LUNGE_SIDE_FORWARD;
+      let ky = dirX * sign + dirY * LUNGE_SIDE_FORWARD;
+      const kl = Math.hypot(kx, ky) || 1;
+      kx /= kl;
+      ky /= kl;
+      this.slay(e, e.x - kx * 10, e.y - ky * 10, power, {
+        force: LUNGE_FORCE,
+        freeze: LUNGE_FREEZE,
+      });
     }
   }
 
