@@ -2,6 +2,7 @@ import { Application } from 'pixi.js';
 import { RigSpec } from './characters/rig';
 import { Battle, PlayerPresets } from './game/battle';
 import { Skills } from './game/skills';
+import { ACTIVE_SKILL_CODES, type ActiveSkillSlot } from './game/skillLoadout';
 import { Field } from './game/field';
 import { ItemCatalog } from './items/catalog';
 import { ItemSheet } from './items/renderer';
@@ -59,12 +60,18 @@ const camera = new Camera();
  */
 const menu = new Menu({
   presets: PlayerPresets.map((p) => p.name),
-  skills: Skills.map((s) => ({ id: s.id, name: s.name, note: s.note })),
+  skills: Skills.map((s) => ({
+    id: s.id,
+    name: s.name,
+    note: s.note,
+    category: s.category,
+    cooldown: s.cooldown,
+  })),
   press: (code) => onKeyPressed(code),
   setWeather: (kind) => {
     field.weather.kind = kind;
   },
-  setSkill: (index) => battle.setSkill(index),
+  toggleSkill: (id) => battle.toggleSkill(id),
   requestLock: () => controls.requestLock(),
   read: () => {
     // 人从脚底到头顶大约 18.3 个世界单位，被相机俯角压掉一截才是屏幕上的高度。
@@ -86,7 +93,7 @@ const menu = new Menu({
       buildMs: scene.buildMs,
       primitives: scene.primitives,
       preset: battle.presetIndex,
-      skill: Skills[battle.skillIndex].id,
+      skillLoadout: battle.skillLoadout.snapshot(),
       autoAttack: battle.autoAttack,
       showItems,
       skeleton: showSkeleton,
@@ -229,7 +236,9 @@ function onKeyPressed(code: string): void {
     draw();
   }
   if (code === 'KeyF') battle.autoAttack = !battle.autoAttack;
-  if (code === 'KeyJ') battle.cycleSkill();
+  if (code === 'KeyJ') battle.cycleAttackSkill();
+  const activeSlot = ACTIVE_SKILL_CODES.indexOf(code as (typeof ACTIVE_SKILL_CODES)[number]);
+  if (activeSlot >= 0) battle.triggerActiveSkill(activeSlot as ActiveSkillSlot, viewOf());
 
   // 天气。切换的是"在下什么"，地上积多少雪、湿到什么程度会自己慢慢跟上来。
   const weather = field.weather;
@@ -239,7 +248,7 @@ function onKeyPressed(code: string): void {
   }
   if (code === 'KeyC') weather.cloudiness = weather.cloudiness > 0.05 ? 0 : 0.55;
   if (code === 'KeyG') weather.windSpeed = weather.windSpeed > 0.6 ? 0.1 : 0.9;
-  if (code === 'KeyR') battle.reset(viewOf());
+  if (code === 'KeyX') battle.reset(viewOf());
 
   // 颗粒度：人由多少像素构成。
   if (code === 'Minus') camera.zoom(false);

@@ -20,7 +20,6 @@ import { ImpactEffects, weaponImpactPoint } from '../src/effects/impact';
 import { Character } from '../src/game/character';
 import { Battle } from '../src/game/battle';
 import { Field } from '../src/game/field';
-import { Skills as SkillList } from '../src/game/skills';
 import { Debris } from '../src/effects/debris';
 import { v2 } from '../src/core/math';
 import { Projection } from '../src/render/projection';
@@ -1043,7 +1042,11 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   const b = new Battle(field2);
   // 攒人群时**开着自动攻击**：玩家一直在杀，人群密度才是真实的稳态。关着的话十几秒就攒出
   // 四百多人堵满整屏，那种密度下什么特效都看不见——但那不是玩家会遇到的画面。
-  b.setSkill(SkillList.findIndex((s) => s.id === 'sweep'));
+  b.setSkillEnabled('sweep', true);
+  b.setSkillEnabled('heavenSplit', false);
+  b.setSkillEnabled('skyArrow', false);
+  b.setSkillEnabled('aegis', false);
+  b.setSkillEnabled('ironBody', false);
   b.player.maxHp = 1e9;
   b.player.hp = 1e9;
   const look = () => ({
@@ -1055,7 +1058,6 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   for (let i = 0; i < Math.round(14 / STEP); i++) b.update(STEP, { facing: 0, moving: false, running: false }, look());
   console.log(`  冲刺前场上 ${b.enemies.filter((e) => e.alive).length} 人（稳态）`);
   b.autoAttack = false;
-  b.setSkill(SkillList.findIndex((s) => s.id === shot.id));
 
   const W = Math.round(shot.span * GRAIN);
   const H = Math.round(shot.span * 0.88 * GRAIN * Projection.groundSquash + 16 * GRAIN);
@@ -1131,7 +1133,8 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
     for (const s2 of sink.shapes) sheet.fillPolygon(s2);
   };
 
-  b.swingNow();
+  if (shot.id === 'lunge') b.triggerActiveSkill(0, look());
+  else b.setSkillEnabled(shot.id, true);
   // 先推进到这一招真的开始（发招有一段起手）
   const started = () => (shot.id === 'lunge' ? b.dashing : b.skyArrow !== null);
   for (let i = 0; i < Math.round(1.5 / STEP) && !started(); i++) {

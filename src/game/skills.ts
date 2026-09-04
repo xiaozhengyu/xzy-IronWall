@@ -13,7 +13,39 @@
  * 碰到就死，和基础攻击的规则完全一致。先把四种形状摆出来看手感，数值等形状定了再谈。
  */
 
-export type SkillId = 'sweep' | 'spin' | 'wave' | 'lunge' | 'aegis' | 'dharma' | 'heavenSplit' | 'skyArrow';
+export type SkillId =
+  | 'sweep'
+  | 'spin'
+  | 'wave'
+  | 'lunge'
+  | 'aegis'
+  | 'dharma'
+  | 'heavenSplit'
+  | 'skyArrow'
+  | 'ironBody';
+
+/**
+ * 技能放进哪一种槽。类别只规定“能装备几个、由谁触发”，kind 继续规定具体怎么结算。
+ * 新技能通常只要在 Skills 里选择一个 category，再实现自己的 kind；装备规则不需要跟着加分支。
+ */
+export type SkillCategory = 'attack' | 'projectile' | 'guard' | 'active';
+export type SkillEquipMode = 'single' | 'multiple' | 'activeSlots';
+export type SkillTrigger = 'attack' | 'automatic' | 'passive' | 'manual';
+
+export interface SkillCategoryRule {
+  name: string;
+  equip: SkillEquipMode;
+  trigger: SkillTrigger;
+  maxSlots: number;
+}
+
+/** 所有类别的兼容规则集中在这里；后续增加类别时，菜单与装备器都会读同一张表。 */
+export const SkillCategoryRules: Record<SkillCategory, SkillCategoryRule> = {
+  attack: { name: '自动攻击技', equip: 'single', trigger: 'attack', maxSlots: 1 },
+  projectile: { name: '发射', equip: 'multiple', trigger: 'automatic', maxSlots: Number.POSITIVE_INFINITY },
+  guard: { name: '护身', equip: 'single', trigger: 'passive', maxSlots: 1 },
+  active: { name: '主动技', equip: 'activeSlots', trigger: 'manual', maxSlots: 4 },
+};
 
 /**
  * 判定怎么结算。这是三条不同的代码路径，不是三个参数。
@@ -23,7 +55,7 @@ export type SkillId = 'sweep' | 'spin' | 'wave' | 'lunge' | 'aegis' | 'dharma' |
  *   lunge    人跨帧向前冲，每帧结算身体**这一帧碰到**的人。
  *   aura     一个罩子跟着人走，持续若干秒，每帧结算**碰到罩子**的人。
  */
-export type SkillKind = 'instant' | 'wave' | 'lunge' | 'aura' | 'dharma' | 'heavenSplit' | 'skyArrow';
+export type SkillKind = 'instant' | 'wave' | 'lunge' | 'aura' | 'dharma' | 'heavenSplit' | 'skyArrow' | 'passive';
 
 export interface SkillDef {
   id: SkillId;
@@ -31,6 +63,7 @@ export interface SkillDef {
   name: string;
   /** 菜单上那行小字，说明它是什么形状。 */
   note: string;
+  category: SkillCategory;
   kind: SkillKind;
   /**
    * 判定够多远，按施放者自己的 attackRange 的倍数。
@@ -46,19 +79,17 @@ export interface SkillDef {
   /**
    * 打中时溅多少碎片。1 = 只飙血，2 = 血加甲片。
    *
-   * 这是"平砍"和"技能"在画面上唯一的区别 —— 四招都是碰到就死，但一发破空该看着比一次
+   * 这是"平砍"和"技能"在画面上唯一的区别 —— 现有技能都是碰到就死，但一发破空该看着比一次
    * 横扫更碎。等以后真要分强弱，这个数是第一个该跟着技能走的。
    */
   power: number;
   /**
-   * 这一招打完之后，除了动作本身还要多等多久才能再来一次，秒。
+   * 这项技能再次可用前要等多久，秒。每个技能都有自己独立的运行时计时器。
    *
-   * 基础节奏本来就是动作时长（见 PLAYER_SWING_GAP），这个值加在它之上。位移大、覆盖广的
-   * 招该等得久一点 —— 突进一下就跨过大半个屏幕，跟平砍同一个频率的话，玩家等于一直在瞬移。
-   *
-   * 现在技能是自动放的，所以这是唯一的节奏阀门；等改成按键触发之后，它就是冷却时间。
+   * 自动攻击类会把它加在武器动作时长之后；自动发射和主动技则从发动时刻直接计时。
+   * 位移大、覆盖广的招该等得久一点 —— 突进一下就跨过大半个屏幕，冷却太短等于一直在瞬移。
    */
-  gap: number;
+  cooldown: number;
   /**
    * 收招时在落点补一圈，半径按施放者 attackRange 的倍数。0 = 不补。
    *
@@ -73,19 +104,21 @@ export const Skills: SkillDef[] = [
     id: 'sweep',
     name: '横扫',
     note: '前方扇形，一次算清',
+    category: 'attack',
     kind: 'instant',
     reach: 1,
     arc: null,
     duration: 0,
     // 横扫就是基础那一下，不该有"打碎了"的表现。
     power: 1,
-    gap: 0,
+    cooldown: 0,
     finishRing: 0,
   },
   {
     id: 'spin',
     name: '回旋',
     note: '原地整圈，被围住时用',
+    category: 'attack',
     kind: 'instant',
     // 整圈换来的代价是够不远：同样一刀的力气摊到四面八方，只能覆盖贴身那一圈。
     //
@@ -95,26 +128,28 @@ export const Skills: SkillDef[] = [
     arc: Math.PI * 2,
     duration: 0,
     power: 2,
-    gap: 0.25,
+    cooldown: 0.25,
     finishRing: 0,
   },
   {
     id: 'wave',
     name: '破空',
     note: '波向前飞，路过就死',
+    category: 'attack',
     kind: 'wave',
     // 够得最远，但只有一条窄带。远近和宽窄是这一套技能里唯一真正的取舍。
     reach: 4.5,
     arc: 0.9,
     duration: 0.55,
     power: 2,
-    gap: 0.45,
+    cooldown: 0.45,
     finishRing: 0,
   },
   {
     id: 'lunge',
     name: '突进',
     note: '向前冲，撞到的全死',
+    category: 'active',
     kind: 'lunge',
     // lunge 的 reach 不是判定距离而是**冲多远**：判定跟着身体走，宽度就是人的宽度。
     reach: 3.2,
@@ -122,7 +157,7 @@ export const Skills: SkillDef[] = [
     duration: 0.22,
     power: 2,
     // 一下跨过大半个屏幕，不该和平砍同一个频率 —— 那等于玩家一直在瞬移。
-    gap: 0.85,
+    cooldown: 1.5,
     // 冲到头再炸一圈。
     finishRing: 0.95,
   },
@@ -130,52 +165,67 @@ export const Skills: SkillDef[] = [
     id: 'aegis',
     name: '金钟罩',
     note: '罩子跟着人走，碰到就飞',
+    category: 'active',
     kind: 'aura',
     // 贴身一圈。它换来的不是范围是**时间**：别的招是一瞬间的事，这个能顶几秒。
     reach: 0.95,
     arc: null,
-    // 持续时间必须**短于**出手间隔，否则自动挥会把它一直续上，变成常驻无敌圈而不是一个技能。
-    // 现在开 2 秒、歇 1.3 秒左右，玩家看得出它有开有关。等技能改成按键触发之后，这两个数
-    // 就是"持续时间"和"冷却"，那时才谈得上平衡。
+    // 主动开启 2 秒，冷却从按键发动时开始独立计算。
     duration: 2,
     power: 2,
-    gap: 2.6,
+    cooldown: 3.3,
     finishRing: 0,
   },
   {
     id: 'dharma',
     name: '天地法相',
     note: '上半身法相随身转向，罩住自身',
+    category: 'active',
     kind: 'dharma',
     reach: 1.2,
     arc: null,
     duration: 2.8,
     power: 2,
-    gap: 3.6,
+    cooldown: 4.3,
     finishRing: 0,
   },
   {
     id: 'heavenSplit',
     name: '开天',
     note: '巨剑沿行走朝向飞出，剑体横扫敌群',
+    category: 'projectile',
     kind: 'heavenSplit',
     reach: 3.8,
     arc: null,
     duration: 0.5,
     power: 2,
-    gap: 1,
+    cooldown: 1.7,
     finishRing: 0,
   },
   {
     id: 'skyArrow',
     name: '穿云箭',
     note: '冲天后随机落下，落地回旋',
+    category: 'projectile',
     kind: 'skyArrow',
     reach: 1.5,
     arc: null,
     duration: 0,
     power: 2,
-    gap: 1.1,
+    cooldown: 1.9,
+    finishRing: 0,
+  },
+  {
+    id: 'ironBody',
+    name: '铁布衫',
+    note: '永久生效，通体呼吸提亮并强化轮廓光',
+    category: 'guard',
+    kind: 'passive',
+    reach: 0,
+    arc: null,
+    duration: 0,
+    power: 0,
+    cooldown: 0,
     finishRing: 0,
   },
 ];
@@ -200,6 +250,15 @@ export const SKILL_HIT_MARGIN = 1.15;
 export const WAVE_NEAR_HALF_WIDTH = 16;
 
 export const skillAt = (index: number): SkillDef => Skills[Math.max(0, Math.min(Skills.length - 1, index))];
+
+export const skillById = (id: SkillId): SkillDef => {
+  const skill = Skills.find((entry) => entry.id === id);
+  if (!skill) throw new Error(`Unknown skill: ${id}`);
+  return skill;
+};
+
+export const skillsInCategory = (category: SkillCategory): SkillDef[] =>
+  Skills.filter((skill) => skill.category === category);
 
 /** 一个轴对齐的框，世界坐标。就是 BattleView.spawn 那个出货视口。 */
 export interface ViewBox {

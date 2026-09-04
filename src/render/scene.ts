@@ -4,7 +4,7 @@ import { drawAegisDome } from '../effects/aegisDome';
 import { drawDharmaAspect } from '../effects/dharmaAspect';
 import { SKY_BLADE_LENGTH, drawSkyBlade, heavenSplitBlade, skyArrowBlade } from '../effects/skyBlade';
 import { drawCharacter, drawSkeleton } from '../characters/renderer';
-import { flatPalette } from '../characters/palette';
+import { brightenPalette, flatPalette } from '../characters/palette';
 import type { Character } from '../game/character';
 import { enemyArrowPosition, type Battle } from '../game/battle';
 import type { Field } from '../game/field';
@@ -80,6 +80,7 @@ const RIM_OFFSETS: readonly (readonly [number, number])[] = [
 const HERO_RIM_PALETTE = flatPalette(rgba(255, 236, 176, 190));
 /** 冲刺时那一档：几乎不透明的暖白，偏移也翻倍（见 drawRim）。 */
 const HERO_DASH_PALETTE = flatPalette(rgba(255, 248, 214, 246));
+const IRON_BODY_GLOW = rgb(255, 242, 190);
 
 /**
  * 金钟罩压在玩家之上（他站在罩子里），但比技能弧低一档 —— 弧是一瞬间的事件，罩子一直都在，
@@ -237,7 +238,9 @@ export class Scene {
     if (dharma) {
       drawDharmaAspect(shapes, battle.player, playerAt, grain, dharma.left, dharma.total);
     }
-    this.drawCharacterAt(battle.player, true, battle.dashing);
+    const ironBody = battle.skillLoadout.isEquipped('ironBody');
+    const ironBreath = 0.5 + 0.5 * Math.sin((battle.elapsed * Math.PI * 2) / 2.1);
+    this.drawCharacterAt(battle.player, true, battle.dashing, ironBody ? ironBreath : null);
 
     this.drawEnemyArrows(battle, camX, camY, rootX, rootY, grain);
 
@@ -629,12 +632,15 @@ export class Scene {
   }
 
   /** 把一个单位画到它在缓冲里该在的位置上。 */
-  private drawCharacterAt(c: Character, rim = false, hot = false): void {
+  private drawCharacterAt(c: Character, rim = false, hot = false, ironBreath: number | null = null): void {
     const at = this.camera.worldToScreen(c.x, c.y);
     const grain = this.camera.grain;
-    if (rim) this.drawRim(c, at, grain, hot);
+    if (rim) this.drawRim(c, at, grain, hot, ironBreath);
     const p = new Projector(at, c.facing, Projection.groundSquash, grain);
-    drawCharacter(this.shapes, c.pose, p, c.palette, c.def, { hurt: c.hurt, lift: c.lift });
+    const palette = ironBreath === null
+      ? c.palette
+      : brightenPalette(c.palette, 0.1 + ironBreath * 0.16, IRON_BODY_GLOW);
+    drawCharacter(this.shapes, c.pose, p, palette, c.def, { hurt: c.hurt, lift: c.lift });
   }
 
   /**
@@ -650,14 +656,19 @@ export class Scene {
    * 只给玩家画。代价是四份完整的人物图元（约二百八十个），对一个人可以接受，对场上一千人
    * 不行 —— 也没必要，人海里需要被一眼找到的只有一个。
    */
-  private drawRim(c: Character, at: Vec2, grain: number, hot = false): void {
+  private drawRim(c: Character, at: Vec2, grain: number, hot = false, ironBreath: number | null = null): void {
     // 冲刺时换一档更厚更亮的边。
     //
     // 冲刺是这个游戏里唯一一次"玩家自己高速位移"，而高速位移在俯视角下最容易读丢 —— 画面
     // 里几百个人都在动，凭什么看出哪一下是我冲出去的。把常驻那圈轮廓光加厚加亮就够了：
     // 不用另做一套特效，玩家看到的是"我本来就在发光，冲的时候更亮"，是同一件东西的两档。
-    const off = Math.max(1, Math.round(grain * (hot ? 0.7 : 0.34)));
-    const palette = hot ? HERO_DASH_PALETTE : HERO_RIM_PALETTE;
+    const iron = ironBreath !== null;
+    const off = Math.max(1, Math.round(grain * (hot ? 0.7 : iron ? 0.54 : 0.34)));
+    const palette = hot
+      ? HERO_DASH_PALETTE
+      : iron
+        ? flatPalette(rgba(255, 245, 198, Math.round(218 + ironBreath * 37)))
+        : HERO_RIM_PALETTE;
     // 压在自己身后半个屏幕行。再深就会被身后那一排人盖住，再浅就会盖住自己的腿。
     const depthRow = at.y - 0.5;
     for (const [dx, dy] of RIM_OFFSETS) {

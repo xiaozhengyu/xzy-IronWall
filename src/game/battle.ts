@@ -12,13 +12,13 @@ import { inAttackArc, inSector, sweptBy } from './combat';
 import type { Field } from './field';
 import { rgb } from '../render/color';
 import { SpatialGrid } from './grid';
+import { SkillLoadout, type ActiveSkillSlot } from './skillLoadout';
 import {
   SKILL_HIT_MARGIN,
-  Skills,
   WAVE_NEAR_HALF_WIDTH,
   cappedReach,
   exitDistance,
-  skillAt,
+  skillById,
   type SkillDef,
   type SkillId,
 } from './skills';
@@ -161,14 +161,6 @@ const PLAYER_HP = 100;
  * 每种武器自己的属性，这个常量只是在它之上再加一段停顿。
  */
 const PLAYER_SWING_GAP = 0;
-
-/**
- * 开局默认用哪一招。
- *
- * 按 id 找而不是写死下标：技能表往里插一条、或者调一下顺序，下标就悄悄指向另一招了，而这种
- * 错不会报任何错，只会让开局手感莫名其妙变了。
- */
-const DEFAULT_SKILL: SkillId = 'wave';
 
 /**
  * 出怪间隔。玩家清场的速度约每秒三个，所以这个值定得比它快不少，场面才会一直是满的 ——
@@ -562,12 +554,13 @@ export class Battle {
   autoAttack = true;
 
   /**
-   * 当前选中的攻击技能，见 game/skills.ts。菜单里直接选，也可以按 J 循环。
-   *
-   * 只作用于玩家。敌人一直走基础攻击那条路 —— 让杂兵也放技能，画面上会同时有几十道波，
-   * 分不清哪道是自己放的。
+   * 玩家当前拥有的技能、互斥槽与每项独立冷却。敌人仍只使用自己的基础攻击。
+   * 装备规则全部收在 SkillLoadout，Battle 只负责到了触发时刻之后具体发生什么。
    */
-  skillIndex = Skills.findIndex((s) => s.id === DEFAULT_SKILL);
+  readonly skillLoadout = new SkillLoadout();
+
+  /** 一次挥击起手时锁定的自动攻击；中途改菜单不会把已经挥出的招偷换掉。 */
+  private pendingAttackSkill: SkillId = this.skillLoadout.attackSkill;
 
   /** 正在往外跑的技能波。只有"破空"会往这里放东西。 */
   private readonly skillWaves: SkillWave[] = [];
@@ -712,6 +705,11 @@ export class Battle {
   /** 这一局跑了多久，秒。目前只有预留位置的过期判定用它。 */
   private clock = 0;
 
+  /** 只读的战斗时间，供不改变战斗状态的呼吸光等连续视觉使用。 */
+  get elapsed(): number {
+    return this.clock;
+  }
+
   /** 逻辑这一段花掉的毫秒，指数平滑。暂停面板要读。 */
   simMs = 0;
 
@@ -760,19 +758,26 @@ export class Battle {
     this.kills = 0;
     this.recycled = 0;
     this.restored = 0;
-    // 跨帧的招式也得清掉：重开之后还有一道上一局的波在飞，会凭空杀掉刚铺下去的人。
-    this.skillWaves.length = 0;
-    this.lunge = null;
-    this.aegis = null;
-    this.dharma = null;
-    this.heavenSplit = null;
-    this.skyArrow = null;
+    // 跨帧招式和各自冷却一起归零；装备方案保留，重开不会替玩家换技能。
+    this.resetSkillRuntime();
     this.enemyArrows.length = 0;
     this.debris.clear();
     this.player.death = -1;
     this.player.hurt = 0;
     this.player.hp = this.player.maxHp;
     this.seed(view);
+  }
+
+  /** 清掉已经放出的技能状态与冷却，但保留玩家的装备方案。 */
+  private resetSkillRuntime(): void {
+    this.skillWaves.length = 0;
+    this.lunge = null;
+    this.aegis = null;
+    this.dharma = null;
+    this.heavenSplit = null;
+    this.skyArrow = null;
+    this.pendingAttackSkill = this.skillLoadout.attackSkill;
+    this.skillLoadout.resetCooldowns();
   }
 
   /**
@@ -1021,6 +1026,7 @@ export class Battle {
     this.advanceEnemyArrows(dt);
     this.recycle(view);
     this.spawnWave(dt, view);
+    this.advanceSkillSchedule(dt, view);
     this.swing();
     this.advancePlayerAttack(dt, view);
     this.advanceSkills(dt, view);
@@ -1043,8 +1049,7 @@ export class Battle {
       enemies.length = 0;
       // 和 reset 一样：清场就该是真的清场，不能让预留把上一条命的人海放回来。
       this.reserved.length = 0;
-      this.skillWaves.length = 0;
-      this.lunge = null;
+      this.resetSkillRuntime();
       this.enemyArrows.length = 0;
       this.seed(view);
     }
@@ -1132,23 +1137,93 @@ export class Battle {
    */
   private swing(): void {
     if (!this.autoAttack || !this.player.alive) return;
-    this.player.swing(attackDuration(this.player.def) + PLAYER_SWING_GAP + skillAt(this.skillIndex).gap);
+    this.startPlayerAttack();
   }
 
-  /** 选一个技能。越界忽略，菜单和键盘走同一条路。 */
-  setSkill(index: number): void {
-    if (index < 0 || index >= Skills.length) return;
-    this.skillIndex = index;
+  /**
+   * 显式装备或卸下一个技能。单选类别会自动替换旧项，多选类别互不影响，主动类占一个空槽。
+   * 返回 false 表示装备规则拒绝了这次操作。
+   */
+  setSkillEnabled(id: SkillId, enabled: boolean): boolean {
+    const oldGuard = this.skillLoadout.guardSkill;
+    const wasEquipped = this.skillLoadout.isEquipped(id);
+    if (!this.skillLoadout.setEquipped(id, enabled)) return false;
+
+    if (oldGuard && oldGuard !== this.skillLoadout.guardSkill) this.clearSkillEffect(oldGuard);
+    if (wasEquipped && !this.skillLoadout.isEquipped(id)) this.clearSkillEffect(id);
+    return true;
   }
 
-  /** 循环切下一个技能（键盘用）。 */
-  cycleSkill(): void {
-    this.skillIndex = (this.skillIndex + 1) % Skills.length;
+  toggleSkill(id: SkillId): boolean {
+    const skill = skillById(id);
+    return this.setSkillEnabled(id, skill.category === 'attack' || !this.skillLoadout.isEquipped(id));
+  }
+
+  /** J 只在三个自动攻击之间循环，不再把护身、发射或主动技能塞进武器挥击。 */
+  cycleAttackSkill(): void {
+    this.skillLoadout.cycleAttack();
+  }
+
+  /** Q/W/E/R 触发对应主动槽；技能未装备、尚在冷却或玩家正在位移时都不会发动。 */
+  triggerActiveSkill(slot: ActiveSkillSlot, view: BattleView): boolean {
+    const id = this.skillLoadout.activeSkillSlots[slot];
+    if (!id || !this.player.alive || this.dashing || !this.skillLoadout.ready(id)) return false;
+    const skill = skillById(id);
+    if (skill.category !== 'active') return false;
+    this.castSkill(skill, view);
+    this.skillLoadout.consume(id);
+    return true;
   }
 
   /** 手动挥一下（空格）。已经在挥或者还在冷却就忽略。 */
   swingNow(): void {
-    this.player.swing();
+    this.startPlayerAttack();
+  }
+
+  skillCooldown(id: SkillId): number {
+    return this.skillLoadout.cooldownOf(id);
+  }
+
+  private startPlayerAttack(): boolean {
+    const skill = skillById(this.skillLoadout.attackSkill);
+    if (!this.skillLoadout.ready(skill.id)) return false;
+    const started = this.player.swing(attackDuration(this.player.def) + PLAYER_SWING_GAP + skill.cooldown);
+    if (!started) return false;
+    this.pendingAttackSkill = skill.id;
+    this.skillLoadout.consume(skill.id);
+    return true;
+  }
+
+  /** 所有自动型技能各减各的冷却；同一帧到点也可以同时发动。 */
+  private advanceSkillSchedule(dt: number, view: BattleView): void {
+    this.skillLoadout.tick(dt);
+    if (!this.player.alive) return;
+    for (const skill of this.skillLoadout.automaticSkills()) {
+      if (!this.skillLoadout.ready(skill.id)) continue;
+      this.castSkill(skill, view);
+      this.skillLoadout.consume(skill.id);
+    }
+  }
+
+  /** 菜单卸下技能时同步撤掉它尚未结束的实体；已经飞出去的通用冲击波仍自然播完。 */
+  private clearSkillEffect(id: SkillId): void {
+    switch (id) {
+      case 'aegis':
+        this.aegis = null;
+        break;
+      case 'dharma':
+        this.dharma = null;
+        break;
+      case 'heavenSplit':
+        this.heavenSplit = null;
+        break;
+      case 'skyArrow':
+        this.skyArrow = null;
+        break;
+      case 'lunge':
+        this.lunge = null;
+        break;
+    }
   }
 
   /**
@@ -1162,7 +1237,7 @@ export class Battle {
   private advancePlayerAttack(dt: number, view: BattleView): void {
     const { player } = this;
     if (!player.update(dt)) return;
-    this.castSkill(skillAt(this.skillIndex), view);
+    this.castSkill(skillById(this.pendingAttackSkill), view);
   }
 
   /**
@@ -1200,8 +1275,8 @@ export class Battle {
   /**
    * 放一招。
    *
-   * 三种结算方式对应 skills.ts 里那三条路：instant 当场算清，wave 和 lunge 只是把一个
-   * 会跨帧推进的东西放出去，真正的杀伤在 advanceSkills 里逐帧结算。
+   * kind 对应 skills.ts 里的结算路径：instant 当场算清，其余持续或飞行技能把状态放出去，
+   * 真正的杀伤在 advanceSkills 里逐帧结算。
    *
    * 谁被打中都是**碰到就死**，和基础攻击完全一样 —— 技能之间的区别只有形状，没有强度。
    */
@@ -1211,6 +1286,9 @@ export class Battle {
     const reach = player.def.attackRange * skill.reach;
 
     switch (skill.kind) {
+      case 'passive':
+        return;
+
       case 'instant': {
         const arc = skill.arc ?? player.def.attackArc;
         // 整圈那一招的圆心是**人**，不是武器落点：转一圈扫开身周，落点在身前一侧没有意义。
@@ -1401,9 +1479,9 @@ export class Battle {
   }
 
   /**
-   * 推进跨帧的那两招，并结算它们这一帧碰到的人。
+   * 推进所有跨帧技能，并结算它们这一帧碰到的人。
    *
-   * 这两招是**故意**偏离"发招那一刻一次算清"那条规矩的（combat.ts 顶上那段）。理由很直接：
+   * 这些技能是**故意**偏离"发招那一刻一次算清"那条规矩的（combat.ts 顶上那段）。理由很直接：
    * 一道要飞两百个单位的波，如果在起手那一帧就把远处的人杀了，玩家会看到人先倒、波后到 ——
    * 画面在撒谎。而"碰到就死"本来就是这个游戏唯一的伤害规则，让它按时间发生正是这条规则的
    * 字面意思。基础攻击和 instant 类技能仍然走老路：它们的范围只有十几个单位，一帧之内到达，

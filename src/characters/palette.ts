@@ -1,4 +1,4 @@
-import { type Rgba, rgb } from '../render/color';
+import { lerpColor, type Rgba, rgb } from '../render/color';
 
 /**
  * 一个单位身上所有的颜色。移植自 overlord 的 CharacterPalette。
@@ -165,6 +165,15 @@ export const flatPalette = (color: Rgba): CharacterPalette => {
   const all = {} as Record<keyof CharacterPalette, Rgba>;
   for (const key of Object.keys(PALETTE_HERO) as (keyof CharacterPalette)[]) all[key] = color;
   return all as CharacterPalette;
+};
+
+/** 保留各材质原有色差，把整套人物颜色朝指定亮色推近。 */
+export const brightenPalette = (palette: CharacterPalette, amount: number, glow: Rgba): CharacterPalette => {
+  const brightened = {} as Record<keyof CharacterPalette, Rgba>;
+  for (const key of Object.keys(palette) as (keyof CharacterPalette)[]) {
+    brightened[key] = lerpColor(palette[key], glow, amount);
+  }
+  return brightened as CharacterPalette;
 };
 
 export const paletteForFaction = (faction: number): CharacterPalette =>
