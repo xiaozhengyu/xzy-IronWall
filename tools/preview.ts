@@ -277,6 +277,7 @@ function renderCell(cell: Cell, cellW: number, cellH: number, canvas: Canvas, ox
 const presets: [string, () => UnitDef][] = [
   ['warlord', UnitPresets.warlord],
   ['hero', UnitPresets.hero],
+  ['knight', UnitPresets.knight],
   ['thug', UnitPresets.thug],
   ['shieldman', UnitPresets.shieldman],
   ['spearman', UnitPresets.spearman],
@@ -407,7 +408,7 @@ writePng('.preview-attack.png', attackStrip.upscale(2));
 {
   const rows: [string, () => UnitDef, CharacterPalette][] = [
     ['warlord', UnitPresets.warlord, PALETTE_BLUE],
-    ['spearman', UnitPresets.spearman, PALETTE_RED],
+    ['knight', UnitPresets.knight, PALETTE_RED],
     ['elite', UnitPresets.elite, PALETTE_RED],
   ];
   const closeFacings = [0, Math.PI * 0.5, Math.PI, Math.PI * 1.5];

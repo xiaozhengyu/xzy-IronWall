@@ -8,7 +8,7 @@
 export type WeaponKind = 'none' | 'sword' | 'spear' | 'halberd' | 'bow' | 'hammer';
 export type ShieldKind = 'none' | 'round' | 'tower';
 /** 头部装备，按遮住脸的程度递增。 */
-export type HelmetKind = 'topknot' | 'soft' | 'cap' | 'kettle' | 'conical' | 'great';
+export type HelmetKind = 'topknot' | 'soft' | 'cap' | 'kettle' | 'conical' | 'great' | 'visor';
 export type ArmorKind = 'cloth' | 'leather' | 'lamellar' | 'plate';
 
 export interface UnitDef {
@@ -17,8 +17,35 @@ export interface UnitDef {
   helmet: HelmetKind;
   armor: ArmorKind;
 
-  /** 马鬃盔缨。 */
+  /** 马鬃盔缨：从盔顶往后垂下去的一束马尾。 */
   plume: boolean;
+  /**
+   * 盔冠：伏在盔顶上、前后走向的一道刷子，和 plume 是两种东西。
+   *
+   * 马尾长在头后面，所以从正面看只是耳朵后一点颜色；盔冠长在头顶上，任何朝向都在
+   * 轮廓的最高处。人堆里要认出一个人靠的是后者。两个都开也行，参考图上就是一道盔冠
+   * 加一截往后飘的尾。
+   */
+  crest: boolean;
+  /**
+   * 颈甲。头和胸之间只有 0.2 个单位的空隙，所以这套骨架本来就没有脖子 —— 头是直接坐在
+   * 肩上的。一条比头略宽、比肩略窄的钢带垫在下巴底下，头才读作"扣在铠甲上"而不是
+   * "摆在铠甲上"。
+   */
+  gorget: boolean;
+  /** 膝甲：膝盖上的一枚钢碗。 */
+  poleyns: boolean;
+  /**
+   * 皮质的袖子、手套和靴子。
+   *
+   * 默认的袖子是罩袍色压暗一档，于是整个人从肩到脚是同一个色相的一团。参考图把四肢换成
+   * 棕皮，红罩袍就被夹在两块棕色中间 —— 阵营色的面积小了，反而更响。
+   */
+  leatherKit: boolean;
+  /** 斜挎过胸口的皮带。 */
+  baldric: boolean;
+  /** 甲裙正前方垂下来的一条罩袍垂片。 */
+  tabard: boolean;
   /** 肩甲。 */
   pauldrons: boolean;
   /** 腰带下的甲裙。 */
@@ -70,6 +97,12 @@ const DEFAULTS: UnitDef = {
   helmet: 'topknot',
   armor: 'cloth',
   plume: false,
+  crest: false,
+  gorget: false,
+  poleyns: false,
+  leatherKit: false,
+  baldric: false,
+  tabard: false,
   pauldrons: false,
   skirt: false,
   quiver: false,
@@ -205,6 +238,58 @@ export const UnitPresets = {
       bulk: 0.92,
       attackRange: 13,
       attackArc: 1.4,
+    }),
+
+  /**
+   * 骑士：面甲盔 + 盔冠 + 圆盾 + 剑。照着 example/role (4).png 那张参考图搭的。
+   *
+   * 这张参考图和这套骨架的比例本来就对得上（头 22%、躯干 33%、腿 45%，骨架是 27/29/40），
+   * 所以它一个骨骼数字都没动 —— 差距全在部件上：一颗有面甲的头、垫在下巴底下的颈甲、
+   * 圆的而不是方的肩甲、和罩袍拉开色相的皮四肢。
+   *
+   * **这是个 boss，不进 EnemyKinds。** 两条理由，性能只是其中比较轻的那条：
+   *
+   *   贵 —— 出货那一档（grain 4）他是 120 个图元 / 920 个顶点，差不多两个杂兵。等概率
+   *   混进出怪表就是场上六分之一，实测视口内四百人时图元 26.3k → 30.1k、顶点占那 400k
+   *   缓冲从 54% 涨到 60%。不会崩，但那六个百分点是给地形和特效留的。
+   *
+   *   更要紧的是他不该被看烂 —— 面甲、盔冠、颈甲、金护手这些是为"这个人不一样"准备的，
+   *   一屏站二十个的时候它们什么也不说明了。杂兵的辨识度靠轮廓（枪最长、盾最方、弓手
+   *   最瘦），boss 的辨识度才靠细节。他的 attackRange 16 / attackArc 1.7 也是 boss 的量级
+   *   （杂兵是 11 / 1.6），当普通兵放出去，难度会跟着一起变。
+   *
+   * 真要做 boss 的话这里还差血量、受击反馈和出场逻辑 —— 那些不属于 UnitDef，它只管长相。
+   */
+  knight: (): UnitDef =>
+    makeUnitDef({
+      weapon: 'sword',
+      shield: 'round',
+      helmet: 'visor',
+      // 参考图上他一身钢，这里却挂 leather —— armor 决定的是"躯干上铺什么"，不是
+      // 这个人有多硬。
+      //
+      // plate 把躯干本色调成罩袍和钢的中间色再压一条阵营色宽带，出来是灰蓝胸甲上横着
+      // 一道红；lamellar 会在胸口铺掉三分之二躯干高的钢带。两条都让金属占了大面积，
+      // 而参考图正好相反：一件红袍罩在钢上，钢只从领口、腰带、肩甲和裙摆边缘漏出来。
+      // cloth 的躯干就是一整块罩袍本色，上面只有腰带一条皮带 —— 领口那块钢交给
+      // gorget，肩上那两块交给 pauldrons，胸前那条斜的交给 baldric。金属于是全都落在
+      // 轮廓的边上，中间留给红色，和参考图的分配一致。
+      //
+      // （leather 试过了：它在胸口还有一条 1.4 单位高的皮带，加上腰带和挎带，躯干
+      // 三分之二是棕的，人读作一个棕色的箱子。）
+      armor: 'cloth',
+      crest: true,
+      gorget: true,
+      poleyns: true,
+      leatherKit: true,
+      baldric: true,
+      tabard: true,
+      pauldrons: true,
+      skirt: true,
+      bulk: 1.08,
+      helmetTone: 1.1,
+      attackRange: 16,
+      attackArc: 1.7,
     }),
 
   /** 精英：重甲、大盾、戟。 */

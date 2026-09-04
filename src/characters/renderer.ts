@@ -282,21 +282,36 @@ function drawLeg(
   const legBase = def.armor === 'plate' ? palette.steel : palette.cloth;
   const trouser = shade(legBase, 0.76 * dim);
   const trouserDark = shade(legBase, 0.6 * dim);
-  const boot = shade(legBase, far ? 0.5 : 0.58);
 
-  const greaves = def.armor === 'plate';
+  const hide = def.leatherKit;
+  const greaves = !hide && def.armor === 'plate';
+  const shin = hide ? shade(palette.leather, dim) : greaves ? shade(palette.steelShade, dim) : trouser;
+  const shinDark = hide ? shade(palette.leatherDark, dim) : greaves ? shade(palette.steelDark, dim) : trouserDark;
+  const boot = hide ? shade(palette.leather, 0.82 * dim) : shade(legBase, far ? 0.5 : 0.58);
+
   const thick = RigSpec.legThickness * def.bulk;
 
   limb(shapes, p.screen(hip), p.screen(knee), p.s(thick), trouser, trouserDark, depth);
-  limb(
-    shapes,
-    p.screen(knee),
-    p.screen(foot),
-    p.s(thick * 0.9),
-    greaves ? shade(palette.steelShade, dim) : trouser,
-    greaves ? shade(palette.steelDark, dim) : trouserDark,
-    depth + 0.01,
-  );
+  limb(shapes, p.screen(knee), p.screen(foot), p.s(thick * 0.9), shin, shinDark, depth + 0.01);
+
+  // 膝甲：膝盖上的一枚小钢碗。膝盖是这条腿上唯一一个"关节在哪儿"读得出来的位置，
+  // 一块高光钉在那儿，走路时腿的折弯才有东西可看 —— 否则一条从胯直通到脚的色带
+  // 在任何步态下都只是在平移。
+  if (def.poleyns) {
+    const at = p.screen(knee);
+    const kr = p.s(thick * 0.62);
+    // 和尾锤、盾钉一样走矩形：这个尺寸下的膝甲是四五个像素，圆盘的顶点全花在看不见的
+    // 圆角上。
+    shapes.rect(at, kr * 1.7, kr * 1.5, 0, shade(palette.steelShade, dim), depth + 0.015);
+    shapes.rect(
+      v2(at.x + kr * 0.3 * ShapeBatch.LIGHT_DIR.x, at.y + kr * 0.3 * ShapeBatch.LIGHT_DIR.y),
+      kr * 0.8,
+      kr * 0.6,
+      0,
+      shade(palette.steel, dim),
+      depth + 0.016,
+    );
+  }
 
   // 一个圆头的鞋尖，完全没有方向性。
   //
@@ -304,7 +319,14 @@ function drawLeg(
   // 走时它的横向分量被地面压扁、朝镜头走时完全不压 —— 于是同一个外撇侧看什么都不是、
   // 正看却几乎翻倍，脚尖看起来内扣正是出在这儿。这个尺寸下整只靴子不到两个单位宽，方向
   // 本来就读不出来；而一个圆点不可能内八。
-  shapes.disc(p.screen(foot), p.s(thick * RigSpec.footThickness * 0.5), boot, depth + 0.02);
+  const footR = p.s(thick * RigSpec.footThickness * 0.5 * (hide ? 1.55 : 1));
+  shapes.disc(p.screen(foot), footR, boot, depth + 0.02);
+  // 皮靴宽到能容下一条鞋底。那一像素的近黑是脚和草地之间唯一的分界 —— 少了它，
+  // 靴子的下缘会直接融进影子里，人看着像陷在地里半寸。
+  if (hide) {
+    const at = p.screen(foot);
+    shapes.rect(v2(at.x, at.y + footR * 0.58), footR * 1.9, footR * 0.62, 0, shade(palette.leatherDark, dim), depth + 0.022);
+  }
 }
 
 /**
@@ -441,7 +463,22 @@ function drawTorso(shapes: ShapeBatch, p: Projector, pose: Pose, palette: Charac
   // 胯以下的外袍，先画，垂到大腿中段。刻意不算进"臀-腰-胸"那一串：那些带子都是按胯到胸
   // 的比例定位的，把这段跨度拉长会把腰带和甲片一起往下拽。
   const hem = p.screen(v3(pose.hip.x, pose.hip.y, pose.hip.z - RigSpec.hemDrop));
-  slab(shapes, hem, seat, wPelvis * 0.94, shade(bodyDark, 0.82), shade(body, 0.84), shade(bodyLit, 0.84), depth);
+  const skirtShadow = shade(bodyDark, 0.82);
+  const skirtMid = shade(body, 0.84);
+  const skirtLit = shade(bodyLit, 0.84);
+  if (def.skirt) {
+    // 甲裙张开，分两段画。一整条等宽的板挂在胯下读作一条筒裙，而参考图上（以及几乎所有
+    // 这个路子的美术里）裙摆是往外张的 —— 张开的下摆把整个人的轮廓收成一个梯形，
+    // 那个梯形才是"重装"在远处唯一还读得出来的信号。
+    //
+    // 两段而不是一条锥线：这个尺寸下一条连续的斜边会被栅格化成锯齿，而一个台阶就是
+    // 一个台阶。
+    const knee = lerp2(hem, seat, 0.46);
+    slab(shapes, knee, seat, wPelvis * 0.98, skirtShadow, skirtMid, skirtLit, depth);
+    slab(shapes, hem, knee, wPelvis * 1.16, skirtShadow, skirtMid, skirtLit, depth + 0.001);
+  } else {
+    slab(shapes, hem, seat, wPelvis * 0.94, skirtShadow, skirtMid, skirtLit, depth);
+  }
 
   // 臀、腰、胸廓 —— 自下而上画，胸最后压在上面。骨盆压暗一档：它在胸廓的悬垂之下，
   // 永远吃不到主光。
@@ -483,13 +520,69 @@ function drawTorso(shapes: ShapeBatch, p: Projector, pose: Pose, palette: Charac
       break;
   }
 
+  // 斜挎带。一条从右肩越过胸口到左胯的皮带 —— 参考图上它是整个躯干唯一一条斜线，
+  // 而躯干上其它所有东西（腰带、甲片、罩袍带）都是横的。一条斜线就够把一块平板读成
+  // 一个有厚度的胸膛。
+  //
+  // 背对镜头时不画：挎带走的是胸前，从背后看那儿是空的。
+  if (def.baldric && p.facingCamera > -0.3) {
+    const front = RigSpec.torsoHalfDepth * def.bulk * 0.7;
+    const shoulder = pose.shoulderSocket(1);
+    const a = v3(shoulder.x * 0.72, shoulder.y - front * 0.7, shoulder.z - 0.5);
+    const b = v3(-RigSpec.hipHalfWidth * 0.55 * def.bulk, pose.hip.y - front, pose.hip.z + 1.7);
+    shapes.bar(p.screen(a), p.screen(b), p.s(0.85 * def.bulk), palette.leather, depth + 0.05);
+    shapes.bar(p.screen(lerp3(a, b, 0.55)), p.screen(b), p.s(0.85 * def.bulk), palette.leatherDark, depth + 0.051);
+  }
+
+  // 甲裙前面垂下来的罩袍垂片。甲裙本身是一圈横带，任何朝向下都长一个样；垂片只挂在身前，
+  // 于是它同时也是一个朝向指示器 —— 看得见垂片就是看得见这个人的正面。
+  // 背对镜头时整块跳过，而不是压到躯干后面去 —— 垂片比甲裙长半个单位，压在后面仍然会
+  // 从下摆底下露出一截红舌头。
+  if (def.tabard && p.facingCamera > -0.15) {
+    const front = RigSpec.torsoHalfDepth * def.bulk * 0.92;
+    const top = v3(0, pose.hip.y - front, pose.hip.z + 1.0);
+    const bottom = v3(0, pose.hip.y - front, pose.hip.z - RigSpec.hemDrop - 0.5);
+    const wTab = p.crossSectionWidth(1.6 * def.bulk, 0.28);
+    const tabDepth = depth + 0.055;
+    // 比罩袍亮一档。同色的一块布贴在同色的一件袍子上，除了轮廓什么也读不出来 ——
+    // 垂片要成立，它和身后那片红之间必须有一个台阶。
+    slab(shapes, p.screen(top), p.screen(bottom), wTab, palette.clothShade, shade(palette.cloth, 1.18), palette.clothLight, tabDepth);
+    {
+      // 金边和中间的一枚菱形。出货尺寸下这几笔各占一两个像素，但它们是垂片上仅有的
+      // 非阵营色，红布上一点金比再多一条布褶有用得多。
+      const mid = lerp2(p.screen(top), p.screen(bottom), 0.52);
+      shapes.rect(mid, wTab * 0.34, wTab * 0.34, PI_OVER_2 * 0.5, palette.trim, tabDepth + 0.01);
+      shapes.rect(mid, wTab * 0.18, wTab * 0.18, PI_OVER_2 * 0.5, palette.clothShade, tabDepth + 0.012);
+    }
+  }
+
   if (def.pauldrons) {
     const r = 1.5 * def.bulk;
     for (let i = 0; i < 2; i++) {
       const socket = pose.shoulderSocket(i);
       const at = p.screen(v3(socket.x + (i === 0 ? -0.3 : 0.3), socket.y, socket.z + 0.5));
-      shapes.rect(at, p.s(r * 2.1), p.s(r * 1.5), 0, palette.steel, depth + 0.06);
-      shapes.rect(v2(at.x, at.y + p.s(r * 0.5)), p.s(r * 2.1), p.s(r * 0.5), 0, palette.steelDark, depth + 0.062);
+
+      // 碗，不是方块。原来是两个矩形，于是肩上那块金属在轮廓里是两个直角 —— 那读作
+      // 垫肩。参考图上的肩甲是一枚扣在肩头的碗：上缘一条弧、下缘一道硬边、朝光那侧
+      // 一点高光。同样的四个图元，得到的是一块有体积的金属。
+      //
+      // 扁的，宽高比接近 5:3。做成正圆的话它就是一个球，而武将两手各拎着一个球形锤头 ——
+      // 四个同样大小的白圆挂在一个人身上，那不是重甲，那是雪人。肩甲得是一片盖下来的
+      // 檐，不是一颗珠子。
+      const rx = p.s(r * 1.3);
+      const ry = p.s(r * 0.78);
+      shapes.ellipse(at, rx, ry, 0, palette.steelShade, depth + 0.06);
+      shapes.ellipse(v2(at.x, at.y - ry * 0.22), rx * 0.92, ry * 0.76, 0, palette.steel, depth + 0.062);
+      shapes.ellipse(
+        v2(at.x + rx * 0.3 * ShapeBatch.LIGHT_DIR.x, at.y + ry * 0.5 * ShapeBatch.LIGHT_DIR.y),
+        rx * 0.38,
+        ry * 0.3,
+        0,
+        palette.steelLight,
+        depth + 0.064,
+      );
+      // 下缘那道硬边。碗和袖子之间没有它的话，两块灰会在肩关节处糊成一片。
+      shapes.rect(v2(at.x, at.y + ry * 0.72), rx * 1.78, p.s(0.5), 0, palette.steelDark, depth + 0.066);
     }
   }
 }
@@ -509,17 +602,15 @@ function drawArm(
   const depth = p.depth(hand) + DEPTH_ARM;
   const thick = RigSpec.armThickness * def.bulk;
   const plated = def.armor === 'plate';
+  // 皮袖优先于甲：默认的袖子是罩袍色压暗一档，于是这个人从肩到脚是同一个色相的一团，
+  // 手臂只是躯干边上颜色略深的两条。换成棕皮之后，阵营色被夹在两块棕色中间 —— 它占的
+  // 面积小了，读起来反而更响，而且手臂第一次真的和身体分了家。
+  const hide = def.leatherKit;
+  const sleeve = hide ? palette.leather : plated ? palette.steelShade : shade(palette.cloth, 0.86);
+  const sleeveDark = hide ? palette.leatherDark : plated ? palette.steelDark : palette.clothShade;
 
   // 袖子比外衣差一档，手臂才读作压在身体上的一条独立肢体。
-  limb(
-    shapes,
-    p.screen(shoulder),
-    p.screen(elbow),
-    p.s(thick),
-    plated ? palette.steelShade : shade(palette.cloth, 0.86),
-    plated ? palette.steelDark : palette.clothShade,
-    depth,
-  );
+  limb(shapes, p.screen(shoulder), p.screen(elbow), p.s(thick), sleeve, sleeveDark, depth);
 
   // 前臂也是袖子，只是亮一档 —— 袖子在肘部就断掉的话，人的两侧会各留一条裸露的皮肤，
   // 而皮肤是调色板里最亮的东西，人堆里手臂会喊得比人还响。拳头仍然是皮肤，一个拳头就是
@@ -529,8 +620,8 @@ function drawArm(
     p.screen(elbow),
     p.screen(hand),
     p.s(thick * 0.92),
-    plated ? palette.steel : shade(palette.cloth, 0.96),
-    plated ? palette.steelDark : palette.clothShade,
+    hide ? shade(palette.leather, 1.14) : plated ? palette.steel : shade(palette.cloth, 0.96),
+    sleeveDark,
     depth + 0.01,
   );
 }
@@ -542,9 +633,10 @@ function drawArm(
  */
 function drawHands(shapes: ShapeBatch, p: Projector, pose: Pose, palette: CharacterPalette, def: UnitDef): void {
   const plated = def.armor === 'plate';
-  const dark = plated ? palette.steelDark : palette.skinShade;
-  const mid = plated ? palette.steel : palette.skin;
-  const r = RigSpec.handRadius * def.bulk;
+  // 手套跟着袖子走，不跟着甲走：一条棕皮袖子末端接一只钢拳，那只手会读作断了。
+  const dark = def.leatherKit ? palette.leatherDark : plated ? palette.steelDark : palette.skinShade;
+  const mid = def.leatherKit ? shade(palette.leather, 1.2) : plated ? palette.steel : palette.skin;
+  const r = RigSpec.handRadius * def.bulk * (def.leatherKit ? 1.2 : 1);
 
   // 持盾那只手是例外：它从盾牌后面握着，一直待在那儿。
   if (def.shield === 'none') fist(shapes, p.screen(pose.handL), p.s(r), mid, dark, p.depth(pose.handL) + DEPTH_HAND);
@@ -586,9 +678,12 @@ function drawHead(
   // 是 0、正侧面时是 ±1 —— 正好是这块板该朝前缘滑多远。
   const faceShift = p.ground({ x: 0, y: 1, z: 0 }).x;
 
-  const steel = def.helmet === 'cap' || def.helmet === 'kettle' || def.helmet === 'conical' || def.helmet === 'great';
+  // 全罩式头盔：脸那块板不再是皮肤，而是一片钢。
+  const closed = def.helmet === 'visor';
+  const steel =
+    closed || def.helmet === 'cap' || def.helmet === 'kettle' || def.helmet === 'conical' || def.helmet === 'great';
   const felt = def.helmet === 'soft';
-  const crownR = def.helmet === 'great' ? r * 1.12 : r;
+  const crownR = def.helmet === 'great' ? r * 1.12 : closed ? r * 1.1 : r;
 
   // 整条头部装备色阶一起平移，所以它仍然是一条色阶，只有相对身体的明暗在动。
   const t = def.helmetTone <= 0 ? 1 : def.helmetTone;
@@ -621,12 +716,15 @@ function drawHead(
   }
 
   if (face > 0.04) {
+    // 面甲把脸整个换成一片钢。它必须比盔顶暗一档：面甲是竖直的一块板，永远吃不到从上面
+    // 来的主光，而且底下的目缝要有个能压得住的底色 —— 目缝是近黑的，压在亮钢上会读作
+    // 一条划痕，压在暗钢上才读作一个洞。
     shapes.rect(
       v2(headAt.x + cw * 0.24 * faceShift, headAt.y + bandH * 0.72),
       cw * (0.5 + 0.3 * face),
       bandH * (0.45 + 0.72 * face),
       0,
-      palette.skin,
+      closed ? shade(cap, 0.8) : palette.skin,
       depth + 0.002,
     );
   }
@@ -663,6 +761,44 @@ function drawHead(
       shapes.rect(v2(headAt.x, headAt.y + bandH * 0.46), cw * 1.06, bandH * 0.36, 0, tone(palette.steelShade, t), depth + 0.02);
       break;
 
+    case 'visor': {
+      // 面甲盔。参考图上这颗头是全身信息量最大的地方，所以它值得比别的部件多花几个图元 ——
+      // 一颗只有十几像素宽的头能不能被读成"人"，全看有没有一条水平的暗缝。
+      //
+      // 四层，自上而下：收窄的盔顶（轮廓上的一道弧，而不是一个方角）、眉脊的硬暗线、
+      // 目缝、透气孔。目缝是这里唯一不能省的东西 —— 去掉它剩下的就是一块铁疙瘩。
+      shapes.rect(v2(headAt.x, headAt.y - bandH * 1.02), cw * 0.7, bandH * 0.42, 0, cap, depth + 0.016);
+      shapes.rect(v2(headAt.x, headAt.y - bandH * 1.12), cw * 0.4, bandH * 0.24, 0, capLight, depth + 0.018);
+
+      // 眉脊：盔顶和面甲之间的一道硬边台阶。它同时也是帽檐，两侧比头骨略宽一点。
+      shapes.rect(v2(headAt.x, headAt.y + bandH * 0.24), cw * 1.1, bandH * 0.34, 0, capDark, depth + 0.02);
+
+      if (face > 0.12) {
+        const fx = headAt.x + cw * 0.24 * faceShift;
+        // 目缝。宽度跟着脸转开而收窄，正侧面时它自然缩成一条竖线然后消失。
+        shapes.rect(v2(fx, headAt.y + bandH * 0.56), cw * 0.66 * face, bandH * 0.26, 0, rgba(0, 0, 0, 210), depth + 0.03);
+
+        // 下半张脸（护颏）比面甲上半亮一档，脸于是有了一条横向的分界，不再是一整块铁。
+        shapes.rect(v2(fx, headAt.y + bandH * 1.0), cw * 0.56 * face, bandH * 0.42, 0, cap, depth + 0.028);
+
+        // 两侧的护颊。面甲左右各压一条暗边，中间那块才成为"一张脸"而不是"盔的正面"——
+        // 一个矩形里要读出五官，得先有一个比它窄的框把范围划出来。
+        const cheek = cw * 0.31 * face;
+        for (let i = -1; i <= 1; i += 2) {
+          shapes.rect(v2(fx + cheek * i, headAt.y + bandH * 0.82), cw * 0.1 * face, bandH * 0.8, 0, capDark, depth + 0.026);
+        }
+
+        // 透气孔。三个竖点，只在放大时出现 —— 出货尺寸下它们各自不足一像素，
+        // 画出来只会把护颏糊成一团。
+        if (p.detailed && face > 0.5) {
+          for (let i = -1; i <= 1; i++) {
+            shapes.rect(v2(fx + cw * 0.15 * i, headAt.y + bandH * 1.02), cw * 0.06, bandH * 0.34, 0, capDark, depth + 0.032);
+          }
+        }
+      }
+      break;
+    }
+
     case 'great':
       // 宽檐，外加一条顺着面门下来的鼻梁 —— 这是唯一被允许把皮肤板一切为二的头盔，
       // 因为大盔本来就干这个。
@@ -670,6 +806,18 @@ function drawHead(
       if (face > 0.02)
         shapes.rect(v2(headAt.x, headAt.y + bandH * 0.85), cw * 0.2, bandH * 0.9 * face, 0, palette.steelShade, depth + 0.04);
       break;
+  }
+
+  // 颈甲。这套骨架的头顶在 15.8、胸在 13.1，减掉头骨半径之后头和躯干之间只剩 0.2 个
+  // 单位 —— 也就是说根本没有脖子，头是直接摆在肩膀上的，而"摆着"正是它读作一个飘在
+  // 上面的方块的原因。一条比头宽、比肩窄的钢带垫进去，同一颗头就变成扣在铠甲上的。
+  //
+  // 它跟着 face 往下走，和下面那条遮挡线用的是同一个位置：脸转过来时下巴露得多，
+  // 颈甲也要跟着退下去，否则正面看它会啃掉护颏。
+  if (def.gorget && !silhouette) {
+    const gy = headAt.y + bandH * (0.86 + 0.62 * face);
+    shapes.rect(v2(headAt.x, gy), cw * 1.14, bandH * 0.44, 0, tone(palette.steelShade, t), depth + 0.045);
+    shapes.rect(v2(headAt.x, gy + bandH * 0.16), cw * 1.14, bandH * 0.16, 0, tone(palette.steelDark, t), depth + 0.046);
   }
 
   // 头和身体交界处的遮挡：下巴底下一条近黑的带子。那几个暗像素对轮廓的贡献超过任何额外
@@ -685,7 +833,52 @@ function drawHead(
     );
   }
 
+  if (def.crest) drawCrest(shapes, p, pose, palette, crownR);
   if (def.plume) drawPlume(shapes, p, pose, palette, crownR);
+}
+
+/**
+ * 盔冠：伏在盔顶上、前后走向的一道刷子。
+ *
+ * 和马尾（drawPlume）是两件不同的东西，区别不在造型在位置：马尾长在头后面，正面看只是
+ * 耳后的一点颜色；盔冠长在头顶上，任何朝向下它都在这个人轮廓的最高处。人堆里认人靠的是
+ * 后者，所以它才是主力标记。
+ *
+ * 沿身体前轴取五个样，每个样是一根竖着的短棒 —— 一个整体的多边形在这个尺寸下会被
+ * 栅格化成一块砖，而五根各自带深度的短棒转到侧面时会自然地互相错开，读作一排毛。
+ */
+function drawCrest(shapes: ShapeBatch, p: Projector, pose: Pose, palette: CharacterPalette, crownR: number): void {
+  const baseZ = pose.head.z + crownR * 0.66;
+  // 矮而长。第一版是 1.7 高、1.15 粗，五根叠起来在头顶得到一个和头一样大的红方块 ——
+  // 那读作一顶贝雷帽。冠的比例是横着的：前后要比上下长一倍以上，眼睛才会把它读成
+  // "一道顺着头走的刷子"而不是"头上顶了个东西"。
+  // 八根，不是五根。样点之间必须比棒子细 —— 俯视角把身体的前后轴压掉了将近一半，五根
+  // 0.9 粗、间距 0.75 的棒子在屏幕上刚好分家，冠就读作一把梳子。
+  const SAMPLES = 8;
+  const FRONT = 1.35;
+  const BACK = -1.8;
+
+  for (let i = 0; i < SAMPLES; i++) {
+    const t = i / (SAMPLES - 1);
+    // 前低、中高、后拖一条尾巴。正弦的峰压在 0.42 上，冠的最高点于是落在额头稍后一点，
+    // 和参考图一样 —— 峰在正中的话，冠会读作对称的一个拱，那是个装饰，不是一顶盔。
+    const height = 0.42 + 0.78 * Math.sin(Math.PI * Math.min(1, t / 0.42 / 2 + (t > 0.42 ? (t - 0.42) * 0.62 : 0)));
+    const foot = v3(pose.head.x, pose.head.y + lerp(FRONT, BACK, t), baseZ - 0.3);
+    const top = v3(foot.x, foot.y, baseZ + height);
+    // 每根按自己那一段的深度排序，转到侧面时靠近镜头的几根自然压在后面几根上。
+    const depth = p.depth(foot) + DEPTH_PLUME;
+    shapes.bar(p.screen(foot), p.screen(top), p.s(1.05), palette.plume, depth);
+    // 顶上一道亮边。刷子的形状是从上缘读出来的，而上缘正好是唯一朝着光的那条边。
+    shapes.bar(
+      p.screen(v3(top.x, top.y, top.z - 0.3)),
+      p.screen(top),
+      p.s(1.05),
+      shade(palette.plume, 1.32),
+      depth + 0.001,
+    );
+    // 根部压暗，冠才读作插在盔上而不是浮在盔上。
+    shapes.bar(p.screen(foot), p.screen(v3(foot.x, foot.y, foot.z + 0.35)), p.s(1.05), palette.plumeShade, depth + 0.002);
+  }
 }
 
 /**
@@ -733,7 +926,9 @@ function drawShield(shapes: ShapeBatch, p: Projector, pose: Pose, palette: Chara
   const footZ = SHIELD_FOOT_Z;
   const topZ = SHIELD_TOP_Z;
   const halfHeight = (topZ - footZ) * 0.5;
-  const carried = lerp3(pose.chest, pose.handL, 0.55);
+  // 0.72 而不是 0.55：盾是挎在一边的。偏 0.55 时盾心几乎压在胸骨上，正面看整个人
+  // 就是一面盾加一个头，肩甲、腰带、垂片全被吃掉。
+  const carried = lerp3(pose.chest, pose.handL, 0.72);
   const center = v3(carried.x, carried.y + 1.6, footZ + halfHeight);
   const screen = p.screen(center);
 
@@ -751,8 +946,51 @@ function drawShield(shapes: ShapeBatch, p: Projector, pose: Pose, palette: Chara
     // 接近正侧面时没有地方放盾面和盾心 —— 层层嵌套的细条只会读作噪点，所以那时盾就是
     // 一圈素边。
     if (sy > 0.4) {
-      shapes.ellipse(screen, p.s((radius - 0.7) * sx), p.s((radius - 0.7) * sy), rot, palette.shieldFace, depth + 0.01);
-      shapes.ellipse(screen, p.s(1.0 * sx), p.s(1.0 * sy), rot, palette.steel, depth + 0.02);
+      shapes.ellipse(screen, p.s((radius - 0.75) * sx), p.s((radius - 0.75) * sy), rot, palette.shieldFace, depth + 0.01);
+
+      // 盾心：一枚鼓出来的钢碗，占盾面直径的三分之一。原来是个半径 1 的小圆点，在盾面
+      // 中央读作一处污渍；参考图上这块金属大得多，而它是整面盾上唯一的高光 —— 圆盾在
+      // 人堆里能被认出来靠的就是"红面上一点亮"这个组合。
+      const boss = radius * 0.36;
+      shapes.ellipse(screen, p.s(boss * sx), p.s(boss * sy), rot, palette.steelShade, depth + 0.02);
+      shapes.ellipse(
+        v2(screen.x + p.s(boss * sx * 0.2) * ShapeBatch.LIGHT_DIR.x, screen.y + p.s(boss * sy * 0.24) * ShapeBatch.LIGHT_DIR.y),
+        p.s(boss * 0.66 * sx),
+        p.s(boss * 0.66 * sy),
+        rot,
+        palette.steel,
+        depth + 0.022,
+      );
+      if (p.detailed) {
+        // 盾心上的高光走矩形：它躺在一枚已经是圆的盾心里面，边缘轮廓由盾心负责，
+        // 这一块只负责"这儿反光"。圆盘要二十个顶点，矩形四个。
+        shapes.rect(
+          v2(screen.x + p.s(boss * sx * 0.36) * ShapeBatch.LIGHT_DIR.x, screen.y + p.s(boss * sy * 0.42) * ShapeBatch.LIGHT_DIR.y),
+          p.s(boss * 0.6 * sx),
+          p.s(boss * 0.6 * sy),
+          rot,
+          palette.steelLight,
+          depth + 0.024,
+        );
+        // 盾面上的四枚饰钉。它们在出货尺寸下各占一个像素，但四个点绕着盾心排开时，
+        // 眼睛读到的是"这面盾有花纹"，而不是四个点。
+        //
+        // 用矩形：这个尺寸下一枚钉子就是四个像素，方圆完全一样，而一个圆盘要二十个顶点。
+        // 四枚圆钉是每个持盾兵八十个顶点，场上一百个持盾兵就是八千个 —— 为了看不出来的
+        // 圆角花掉的。
+        for (let i = 0; i < 4; i++) {
+          const a = rot + (i * Math.PI) / 2 + Math.PI / 4;
+          const rr = radius * 0.66;
+          shapes.rect(
+            v2(screen.x + Math.cos(a) * p.s(rr * sx), screen.y + Math.sin(a) * p.s(rr * sy)),
+            p.s(1.1 * sx),
+            p.s(1.1 * sy),
+            rot,
+            palette.trim,
+            depth + 0.015,
+          );
+        }
+      }
     }
     return;
   }
@@ -833,20 +1071,56 @@ function drawHammer(
   );
 }
 
+/**
+ * 剑：柄、尾锤、护手，加一片会收尖的剑身。
+ *
+ * 原来剑身是一根等粗的胶囊，两头一样宽 —— 那是根钢棍。剑之所以读作剑，靠的是从护手到
+ * 剑尖那个收窄；在这个尺寸下不需要真的做锥形，掰成两段、后段窄一档就够了，一个硬边台阶
+ * 比一条渐变的锥线在像素网格上活得久。
+ */
 function drawSword(shapes: ShapeBatch, p: Projector, pose: Pose, palette: CharacterPalette, def: UnitDef): void {
   const hand = pose.weaponGrip;
   const dir = pose.weaponDir;
   const depth = p.depth(hand) + DEPTH_WEAPON;
 
+  const length = bladeLength(def);
   const pommel = addScaled(hand, dir, -1.4);
   const guard = addScaled(hand, dir, 0.9);
-  const tip = addScaled(hand, dir, bladeLength(def));
+  const waist = addScaled(guard, dir, (length - 0.9) * 0.6);
+  const tip = addScaled(hand, dir, length);
+
+  // 好装备配金件。杂兵的刀留在钢色上 —— 满场人手一把金护手的话，金就不再是"这人不一样"
+  // 的信号了。用肩甲当门槛：有肩甲的都是把自己武装到位的人，而杂兵一个都没有。
+  const fine = def.pauldrons || def.armor === 'plate' || def.armor === 'lamellar';
+  const fitting = fine ? palette.trim : palette.steelShade;
 
   shapes.capsule(p.screen(pommel), p.screen(guard), p.s(1.1), palette.leather, depth);
-  shapes.shadedCapsule(p.screen(guard), p.screen(tip), p.s(1.5), palette.steelShade, palette.steel, palette.steelLight, depth + 0.01);
+
+  // 剑身根部走方头板，只有剑尖那段用圆头胶囊。
+  //
+  // shadedCapsule 是七个图元，其中四个是圆头的关节盘 —— 出货那一档每个要 32 个顶点，
+  // 一根就是一百四十个。而根部这一段两头都是内接缝：一头压在护手底下，一头压在剑尖那段
+  // 底下，圆头一个像素都露不出来。场上一多半的人握着剑，这一处的选择比它看起来重要得多。
+  slab(
+    shapes,
+    p.screen(guard),
+    p.screen(waist),
+    p.s(1.75),
+    palette.steelShade,
+    palette.steel,
+    palette.steelLight,
+    depth + 0.01,
+  );
+  shapes.shadedCapsule(p.screen(waist), p.screen(tip), p.s(1.2), palette.steelShade, palette.steel, palette.steelLight, depth + 0.012);
 
   const side = sideAxis(dir);
-  shapes.bar(p.screen(addScaled(guard, side, -1.5)), p.screen(addScaled(guard, side, 1.5)), p.s(1.0), palette.steelShade, depth + 0.02);
+  shapes.bar(p.screen(addScaled(guard, side, -1.7)), p.screen(addScaled(guard, side, 1.7)), p.s(1.1), fitting, depth + 0.02);
+  // 尾锤。柄尾要是就这么断掉，剑会读作从拳头里长出来的。
+  //
+  // 方的，不是圆的。出货那一档它只有七个像素宽，方圆读起来是一回事 —— 但一个圆盘要按
+  // ellipseSegments 展成 24 个顶点，一个矩形只要 4 个，而场上一多半的人手里都握着一把剑。
+  const pommelAt = p.screen(pommel);
+  shapes.rect(pommelAt, p.s(1.5), p.s(1.5), 0, fitting, depth + 0.021);
 }
 
 /** 枪和戟：同一根杆，不同的头。 */
