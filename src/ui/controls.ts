@@ -89,10 +89,14 @@ export class Controls {
 
     addEventListener('mousemove', (e) => {
       if (!this.pointerLocked) return;
-      // movementX/Y 是 CSS 像素，缓冲是物理像素除以放大倍数，所以两次换算。
-      const perCssPixel = (camera.resolution || 1) / camera.magnify;
-      this.cursor.x = clamp(this.cursor.x + e.movementX * perCssPixel, 0, camera.viewWidth);
-      this.cursor.y = clamp(this.cursor.y + e.movementY * perCssPixel, 0, camera.viewHeight);
+      // movementX/Y 是窗口 CSS 像素，而准星存的是固定逻辑画幅里的缓冲坐标。画布现在会为了
+      // 适配窗口整体缩放，所以从真实显示矩形反推比例；这样 4:3 的上下黑边和超宽屏的左右
+      // 黑边都不会让准星速度或瞄准角度发生变化。
+      const rect = this.canvas.getBoundingClientRect();
+      const scaleX = camera.viewWidth / Math.max(1, rect.width);
+      const scaleY = camera.viewHeight / Math.max(1, rect.height);
+      this.cursor.x = clamp(this.cursor.x + e.movementX * scaleX, 0, camera.viewWidth);
+      this.cursor.y = clamp(this.cursor.y + e.movementY * scaleY, 0, camera.viewHeight);
     });
 
     addEventListener('keydown', (e) => {

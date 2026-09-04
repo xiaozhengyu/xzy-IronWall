@@ -50,6 +50,19 @@ const FIELD_W = 1200;
 const FIELD_H = 1200;
 const FIELD_SEED = 20260902;
 
+/**
+ * 固定的游戏构图。窗口只负责把这张 16:9 画面等比放大或缩小，不再改变玩家能看见多少世界。
+ * renderer 用 2 倍分辨率输出 1920×1080，PixelSurface 再按自己的 magnify 生成像素颗粒。
+ */
+const VIEW_WIDTH = 960;
+const VIEW_HEIGHT = 540;
+const VIEW_RESOLUTION = 2;
+
+const appRoot = document.querySelector<HTMLDivElement>('#app')!;
+const gameViewport = document.createElement('div');
+gameViewport.className = 'game-viewport';
+appRoot.appendChild(gameViewport);
+
 const camera = new Camera();
 
 /**
@@ -143,16 +156,15 @@ function boot(label: string): Promise<void> {
 await boot('启动渲染器');
 const app = new Application();
 await app.init({
-  resizeTo: window,
+  width: VIEW_WIDTH,
+  height: VIEW_HEIGHT,
   background: '#0b0d12',
   antialias: false,
-  // 这两个是清晰度的关键。默认 resolution 是 1：在 125%/150% 缩放的屏幕上，画布只按 CSS
-  // 尺寸出图，再被浏览器用双线性插值拉到物理像素上 —— 于是整个画面糊掉，而且是"最近邻
-  // 放大之后又被重新插值"这种最难看的糊法。
-  resolution: window.devicePixelRatio || 1,
-  autoDensity: true,
+  // 输出尺寸固定为 1920×1080。浏览器只缩放最终画布，不参与相机和出怪范围的计算。
+  resolution: VIEW_RESOLUTION,
+  autoDensity: false,
 });
-document.querySelector<HTMLDivElement>('#app')!.appendChild(app.canvas);
+gameViewport.appendChild(app.canvas);
 
 const scene = new Scene(app.renderer, camera);
 app.stage.addChild(scene.view);
@@ -305,7 +317,7 @@ addEventListener('resize', () => {
   }
 });
 
-/** 把缓冲和镜头对齐到当前的窗口、颗粒度和玩家位置。 */
+/** 把缓冲和镜头对齐到固定逻辑画幅、颗粒度和玩家位置。窗口变化只影响 CSS 外框。 */
 function layout(): void {
   scene.resize(app.screen.width, app.screen.height, app.renderer.resolution);
   camera.follow(battle.player.x, battle.player.y, field.width, field.height);

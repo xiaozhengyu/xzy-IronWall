@@ -6,7 +6,12 @@
 
 .menu {
   position: fixed;
-  inset: 0;
+  left: 50%;
+  top: 50%;
+  width: min(100vw, 177.7778vh);
+  height: min(100vh, 56.25vw);
+  aspect-ratio: 16 / 9;
+  transform: translate(-50%, -50%);
   z-index: 10;
   display: flex;
   align-items: center;
