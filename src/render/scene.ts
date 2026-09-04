@@ -1,6 +1,7 @@
 import { Container, Graphics, Sprite, type Renderer } from 'pixi.js';
 import { RigSpec } from '../characters/rig';
 import { drawAegisDome } from '../effects/aegisDome';
+import { drawSkyBlade, skyArrowBlade } from '../effects/skyBlade';
 import { drawCharacter, drawSkeleton } from '../characters/renderer';
 import { flatPalette } from '../characters/palette';
 import type { Character } from '../game/character';
@@ -9,7 +10,7 @@ import type { Field } from '../game/field';
 import type { ItemDef } from '../items/itemDef';
 import type { ItemSheet } from '../items/renderer';
 import { v2, type Vec2 } from '../core/math';
-import { rgba, toHex } from './color';
+import { rgb, rgba, toHex } from './color';
 import type { Camera } from './camera';
 import { PixelSurface } from './pixelSurface';
 import { PrimitiveMesh } from './primitiveMesh';
@@ -84,6 +85,14 @@ const HERO_DASH_PALETTE = flatPalette(rgba(255, 248, 214, 246));
  * 让它压过每一道弧会把技能反馈盖掉。
  */
 const DEPTH_AEGIS = 16;
+
+/**
+ * 穿云箭那把剑的色调：暖金偏白。
+ *
+ * 和招式自己那圈落点提示环（255,198,92）同一个色系 —— 一招里的东西该看着像一套。破空那道
+ * 波用的是偏冷的白，两招在余光里就分得开。
+ */
+const SKY_ARROW_TINT = rgb(255, 236, 190);
 /** 还剩多少秒开始闪。 */
 const AEGIS_WARN = 1;
 
@@ -341,7 +350,11 @@ export class Scene {
    * 快到期时闪一下（见 blink）：这是玩家唯一能知道"还剩多久"的地方，而一个没有预告就消失的
    * 护盾会让人觉得是被偷走的。
    */
-  /** 穿云箭的两个可见段：起手迅速冲出屏幕，0.8 秒后在随机落点从天而降。 */
+  /**
+   * 穿云箭的两个可见段：起手迅速冲出屏幕，0.8 秒后在随机落点从天而降。
+   *
+   * 中间那段空拍是有意的（招式那边留的）：人在等天外一剑，什么都不画反而把等待撑起来了。
+   */
   private drawSkyArrow(
     battle: Battle,
     camX: number,
@@ -387,12 +400,24 @@ export class Scene {
       );
     }
 
-    const depth = (shadow?.y ?? y) * Projector.DEPTH_PER_ROW + 30;
-    const tail = v2(x, y + 8 * grain);
-    const tip = v2(x, y - 8 * grain);
-    this.shapes.capsule(tail, tip, Math.max(1, grain * 0.9), rgba(97, 57, 28, 255), depth);
-    this.shapes.bar(v2(x - 3 * grain, y - 3 * grain), tip, Math.max(1, grain * 1.2), rgba(255, 231, 154, 255), depth + 0.1);
-    this.shapes.bar(v2(x + 3 * grain, y - 3 * grain), tip, Math.max(1, grain * 1.2), rgba(255, 231, 154, 255), depth + 0.1);
+    // 天上掉下来的是一把三个人高的大剑，不是一支箭。
+    //
+    // 原来画的是一根细杆加两撇倒钩，在满屏几百人的画面里读作一根牙签。这一招要等将近一秒
+    // 才落地，等待本身就是在给它攒份量 —— 掉下来的东西必须配得上那个等待。
+    //
+    // 摆位由 skyArrowBlade 从招式状态算（运行时和离线预览共用同一份），这里只负责把它画出来。
+    const pose = skyArrowBlade(arrow.age, this.camera.worldToScreen(battle.player.x, battle.player.y), v2(x, shadow?.y ?? y), this.surface.height, grain);
+    if (!pose) return;
+    drawSkyBlade(
+      this.shapes,
+      pose.tip,
+      pose.butt,
+      pose.side,
+      pose.width,
+      pose.alpha,
+      SKY_ARROW_TINT,
+      (shadow?.y ?? y) * Projector.DEPTH_PER_ROW + 30,
+    );
   }
 
   private drawAegis(

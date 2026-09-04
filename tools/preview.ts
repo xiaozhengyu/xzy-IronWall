@@ -26,6 +26,7 @@ import { v2 } from '../src/core/math';
 import { Projection } from '../src/render/projection';
 import { Projector } from '../src/render/projector';
 import { drawAegisDome } from '../src/effects/aegisDome';
+import { drawSkyBlade, skyArrowBlade } from '../src/effects/skyBlade';
 import { forEachCursorPixel } from '../src/render/swordCursor';
 import { ShapeBatch, type PrimitiveSink } from '../src/render/shapeBatch';
 import { ellipseSegments, unitCircle } from '../src/render/ellipseFan';
@@ -1008,7 +1009,7 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   console.log('玩家辨识：左旧（蓝方色）/ 中新（专用亮色 + 轮廓光）/ 右冲刺时（轮廓光加厚加亮）');
 }
 
-// ---------------------------------------------------------------- 冲刺连拍
+// ---------------------------------------------------------------- 技能连拍
 //
 // 真的跑一局 Battle，在人群里放一次突进，按**镜头视角**（跟着玩家、玩家永远在正中）连拍。
 //
@@ -1020,13 +1021,24 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
 // 中轴甩出去，在这张图上必须看得出来。
 {
   const STEP = 1 / 60;
-  const FRAMES = 4;
-  /** 从发招那一帧起，每隔多久取一格。冲刺本身 0.22 秒，所以要盖住它和之后一小段。 */
-  const EVERY = 0.13;
 
   const field2 = new Field(1200, 1200, 20260902);
   for (let i = 0; i < Field.BAKE_SLICES; i++) field2.bakeSlice(i);
 
+  /**
+   * 取样时刻写死，不用等间隔。
+   *
+   * 穿云箭的时间轴是"冲天 0.18 秒 → 空拍到 0.8 秒 → 俯冲 0.28 秒 → 落地炸圈"。等间隔取样
+   * 会把格子全花在中间那段什么都不画的空拍上（第一次就是这么渲的，五格里三格是空的）。
+   * 招式各有各的节奏，取样点就该跟着节奏走。
+   */
+  for (const shot of [
+    { id: 'lunge' as const, file: '.preview-dash.png', label: '突进', at: [0, 0.08, 0.16, 0.26, 0.4], span: 96 },
+    // 画幅得盖住**整个出货视口**：落点是在视口里随机抽的（±94 × ±78 世界单位），画幅小了
+    // 剑就砸在框外面，看着像根本没落下来。第一次就是这么渲的，落点 y=199 而画幅高才 187。
+    { id: 'skyArrow' as const, file: '.preview-skyarrow.png', label: '穿云箭', at: [0.02, 0.84, 0.92, 1.0, 1.14], span: 250 },
+  ]) {
+  const FRAMES = shot.at.length;
   const b = new Battle(field2);
   // 攒人群时**开着自动攻击**：玩家一直在杀，人群密度才是真实的稳态。关着的话十几秒就攒出
   // 四百多人堵满整屏，那种密度下什么特效都看不见——但那不是玩家会遇到的画面。
@@ -1042,10 +1054,10 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   for (let i = 0; i < Math.round(14 / STEP); i++) b.update(STEP, { facing: 0, moving: false, running: false }, look());
   console.log(`  冲刺前场上 ${b.enemies.filter((e) => e.alive).length} 人（稳态）`);
   b.autoAttack = false;
-  b.setSkill(SkillList.findIndex((s) => s.id === 'lunge'));
+  b.setSkill(SkillList.findIndex((s) => s.id === shot.id));
 
-  const W = Math.round(96 * GRAIN);
-  const H = Math.round(84 * GRAIN * Projection.groundSquash + 16 * GRAIN);
+  const W = Math.round(shot.span * GRAIN);
+  const H = Math.round(shot.span * 0.88 * GRAIN * Projection.groundSquash + 16 * GRAIN);
   const sheet = new Canvas(W * FRAMES, H, [71, 105, 59]);
 
   const shoot = (col: number) => {
@@ -1099,6 +1111,18 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
       b.player.palette,
       b.player.def,
     );
+    // 穿云箭那把剑：摆位由 skyArrowBlade 算，和运行时 Scene 用的是同一份。
+    const arrow = b.skyArrow;
+    if (arrow) {
+      const ground = v2(
+        rootX + (arrow.targetX - px) * GRAIN,
+        rootY + (arrow.targetY - py) * Projection.groundSquash * GRAIN,
+      );
+      const pose = skyArrowBlade(arrow.age, v2(rootX, rootY), ground, H, GRAIN);
+      if (pose) {
+        drawSkyBlade(shapes, pose.tip, pose.butt, pose.side, pose.width, pose.alpha, rgb(255, 236, 190), 1e5);
+      }
+    }
     b.effects.draw(shapes, px, py, rootX, rootY, GRAIN);
     b.debris.draw(shapes, px, py, rootX, rootY, GRAIN, () => 1e4);
 
@@ -1107,15 +1131,21 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   };
 
   b.swingNow();
-  // 先推进到真正开始冲（发招有一段起手）
-  while (!b.dashing) b.update(STEP, { facing: 0, moving: false, running: false }, look());
+  // 先推进到这一招真的开始（发招有一段起手）
+  const started = () => (shot.id === 'lunge' ? b.dashing : b.skyArrow !== null);
+  for (let i = 0; i < Math.round(1.5 / STEP) && !started(); i++) {
+    b.update(STEP, { facing: 0, moving: false, running: false }, look());
+  }
+  let clock = 0;
   for (let col = 0; col < FRAMES; col++) {
-    shoot(col);
-    for (let i = 0; i < Math.round(EVERY / STEP); i++) {
+    while (clock < shot.at[col]) {
       b.update(STEP, { facing: 0, moving: false, running: false }, look());
+      clock += STEP;
     }
+    shoot(col);
   }
 
-  writePng('.preview-dash.png', sheet.upscale(3));
-  console.log(`冲刺连拍：${FRAMES} 格，每格间隔 ${EVERY} 秒，镜头跟着玩家（他永远在正中）`);
+  writePng(shot.file, sheet.upscale(shot.span > 150 ? 1 : 2));
+  console.log(`${shot.label}连拍：取样于 ${shot.at.join(' / ')} 秒，镜头跟着玩家（他永远在正中）`);
+  }
 }
