@@ -4,7 +4,7 @@ import { PALETTE_HERO, PALETTE_PEASANT, PALETTE_RED, type CharacterPalette } fro
 import { type UnitDef, UnitPresets } from '../characters/unitDef';
 import { clamp } from '../core/math';
 import { Debris } from '../effects/debris';
-import { ImpactEffects, frontRadius, weaponImpactPoint } from '../effects/impact';
+import { ImpactEffects, frontRadius, weaponImpactPoint, type ShockwaveOptions } from '../effects/impact';
 import { SKY_BLADE_LENGTH, SKY_BLADE_WIDTH } from '../effects/skyBlade';
 import { Character } from './character';
 import { isFreeSpot, moveWithCollision } from './collision';
@@ -421,6 +421,9 @@ const EnemyTypeWaves: readonly (readonly EnemyKind[])[] = [
 interface SkillWave {
   x: number;
   y: number;
+  /** 施放瞬间从玩家继承的世界速度；判定和画面必须一起平移。 */
+  vx: number;
+  vy: number;
   heading: number;
   age: number;
   life: number;
@@ -552,6 +555,10 @@ export class Battle {
    */
   maxEnemies = 3000;
   autoAttack = true;
+
+  /** 玩家这一帧真正走出的速度；撞墙时会小于 player.speed。 */
+  private playerVelocityX = 0;
+  private playerVelocityY = 0;
 
   /**
    * 玩家当前拥有的技能、互斥槽与每项独立冷却。敌人仍只使用自己的基础攻击。
@@ -1078,6 +1085,8 @@ export class Battle {
 
   private movePlayer(dt: number, input: BattleInput): void {
     const { player, field } = this;
+    const fromX = player.x;
+    const fromY = player.y;
 
     // 突进期间不听输入：方向在起手那一刻就定死了。
     //
@@ -1103,6 +1112,8 @@ export class Battle {
       );
       player.x = to.x;
       player.y = to.y;
+      this.playerVelocityX = dt > 0 ? (to.x - fromX) / dt : 0;
+      this.playerVelocityY = dt > 0 ? (to.y - fromY) / dt : 0;
       return;
     }
 
@@ -1110,6 +1121,8 @@ export class Battle {
 
     if (!input.moving) {
       player.speed = 0;
+      this.playerVelocityX = 0;
+      this.playerVelocityY = 0;
       return;
     }
     const speed = input.running ? PLAYER_RUN_SPEED : PLAYER_SPEED;
@@ -1125,6 +1138,8 @@ export class Battle {
     );
     player.x = to.x;
     player.y = to.y;
+    this.playerVelocityX = dt > 0 ? (to.x - fromX) / dt : 0;
+    this.playerVelocityY = dt > 0 ? (to.y - fromY) / dt : 0;
   }
 
   /**
@@ -1295,21 +1310,47 @@ export class Battle {
         const full = arc >= Math.PI * 1.99;
         if (full) {
           // 回旋：一圈从脚下推开的环，见 castRing（突进的收招用的是同一份）。
-          this.castRing(reach, skill.power);
+          this.castRing(reach, skill.power, player.x, player.y, {
+            velocityX: this.playerVelocityX,
+            velocityY: this.playerVelocityY,
+          });
           return;
         }
         {
-          // 横扫也压在人群之上，但比另外三招轻一档。
-          //
-          // 它是菜单里能选的一招，完全看不见说不过去；但它同时是自动挥的那一下，每隔零点
-          // 几秒就来一次 —— 给足另外三招的份量会让屏幕上一直横着一道白弧，反而把真正按出来
-          // 的技能淹掉。轻一档、短一点，看得见又不抢戏。
-          this.effects.spawn(at.x, at.y, player.facing, {
-            power: player.def.bulk,
-            weight: 1.5,
-            life: 0.34,
-            overhead: true,
-          });
+          // 横扫是外三、内二的两层扇面。五片各自够宽、够粗，但不附带通用余波，避免自动挥击
+          // 每隔零点几秒就在画面里叠出十几道弧。外层画到判定边缘，画面与实际杀伤保持一致。
+          const fanOrigin = player.def.attackRange * 0.12;
+          const fan: { side: number; distance: number; weight: number; tint: ReturnType<typeof rgb> }[] = [
+            // 外层三片：完整横扫距离，负责把整个攻击扇区撑开。
+            { side: -0.36, distance: 1, weight: 2.05, tint: rgb(255, 178, 58) },
+            { side: 0, distance: 1, weight: 2.35, tint: rgb(255, 226, 142) },
+            { side: 0.36, distance: 1, weight: 2.05, tint: rgb(255, 178, 58) },
+            // 内层两片：停在七成距离，和外层错开，形成清楚的第二排扇面。
+            { side: -0.17, distance: 0.68, weight: 1.8, tint: rgb(255, 210, 104) },
+            { side: 0.17, distance: 0.68, weight: 1.8, tint: rgb(255, 210, 104) },
+          ];
+          for (const blade of fan) {
+            const heading = player.facing + blade.side * arc;
+            const originX = player.x + Math.cos(heading) * fanOrigin;
+            const originY = player.y + Math.sin(heading) * fanOrigin;
+            this.effects.spawn(originX, originY, heading, {
+              power: player.def.bulk,
+              // 接近破空单片波的 0.9 弧度，不再是上一版看不清的 0.32 小弧。
+              span: 0.78,
+              from: 1.1,
+              to: (reach * blade.distance - fanOrigin) / player.def.bulk,
+              weight: blade.weight,
+              life: 0.42,
+              overhead: true,
+              style: 'slash',
+              flash: 0.2,
+              sparks: 0.32,
+              trail: 0,
+              tint: blade.tint,
+              velocityX: this.playerVelocityX,
+              velocityY: this.playerVelocityY,
+            });
+          }
         }
         for (const e of this.enemies) {
           if (!e.alive) continue;
@@ -1323,6 +1364,8 @@ export class Battle {
         const wave: SkillWave = {
           x: at.x,
           y: at.y,
+          vx: this.playerVelocityX,
+          vy: this.playerVelocityY,
           heading: player.facing,
           age: 0,
           life: skill.duration,
@@ -1344,6 +1387,9 @@ export class Battle {
           life: wave.life,
           weight: 2.4,
           overhead: true,
+          style: 'surge',
+          velocityX: wave.vx,
+          velocityY: wave.vy,
           // 偏冷的白。破空是唯一一个离开施放者独立飞出去的东西，给它一个和别的招不同的
           // 色温，玩家余光里就能分出"这是我放出去的那道波"还是"我脚下扫了一圈"。
           tint: rgb(214, 236, 255),
@@ -1422,6 +1468,7 @@ export class Battle {
           life: 0.18,
           weight: 1.2,
           overhead: true,
+          style: 'slash',
           tint: rgb(255, 222, 140),
         });
         return;
@@ -1446,6 +1493,7 @@ export class Battle {
           life: 0.42,
           weight: 2.2 * player.def.bulk,
           overhead: true,
+          style: 'surge',
           tint: rgb(255, 232, 190),
         });
         return;
@@ -1459,7 +1507,13 @@ export class Battle {
    * 真的是同一份代码 —— 两处各写一遍的话，改了一处忘了另一处，玩家就会看到两个长得像但
    * 判定不一样的圈。
    */
-  private castRing(reach: number, power: number, x = this.player.x, y = this.player.y): void {
+  private castRing(
+    reach: number,
+    power: number,
+    x = this.player.x,
+    y = this.player.y,
+    options: Pick<ShockwaveOptions, 'style' | 'tint' | 'velocityX' | 'velocityY'> = {},
+  ): void {
     const { player } = this;
     this.effects.spawn(x, y, player.facing, {
       power: 1,
@@ -1469,6 +1523,10 @@ export class Battle {
       life: 0.5,
       weight: 2.1 * player.def.bulk,
       overhead: true,
+      style: options.style ?? 'ring',
+      tint: options.tint ?? rgb(255, 214, 124),
+      velocityX: options.velocityX,
+      velocityY: options.velocityY,
     });
     for (const e of this.enemies) {
       if (!e.alive) continue;
@@ -1493,6 +1551,8 @@ export class Battle {
     for (let i = this.skillWaves.length - 1; i >= 0; i--) {
       const w = this.skillWaves[i];
       w.age += dt;
+      w.x += w.vx * dt;
+      w.y += w.vy * dt;
       const radius = frontRadius(Math.min(w.age / w.life, 1), w.from, w.to);
       for (const e of this.enemies) {
         if (!e.alive) continue;
@@ -1518,7 +1578,10 @@ export class Battle {
       }
       // 0.8 秒呼应用户要求；后续 0.28 秒是可见的俯冲与落地窗口。
       if (arrow.age >= 1.08) {
-        this.castRing(arrow.radius, arrow.power, arrow.targetX, arrow.targetY);
+        this.castRing(arrow.radius, arrow.power, arrow.targetX, arrow.targetY, {
+          style: 'burst',
+          tint: rgb(255, 188, 62),
+        });
         this.skyArrow = null;
       }
     }
@@ -1593,7 +1656,12 @@ export class Battle {
       if (this.lunge.left <= 0) {
         // 冲到头再炸一圈：把走廊两侧漏掉的人一起带走。冲锋该以"撞进人堆里停下"收尾，
         // 而不是穿过去就没事了。
-        if (this.lunge.finishRing > 0) this.castRing(this.lunge.finishRing, this.lunge.power);
+        if (this.lunge.finishRing > 0) {
+          this.castRing(this.lunge.finishRing, this.lunge.power, player.x, player.y, {
+            style: 'burst',
+            tint: rgb(255, 142, 74),
+          });
+        }
         this.lunge = null;
       }
     }

@@ -760,6 +760,9 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
     t: number,
     origin: { x: number; y: number },
     heading: number,
+    headingOffsets: readonly number[] = [0],
+    fanOrigin = 0,
+    distanceScales: readonly number[] = [1],
   ) => {
     const shapes = new ShapeBatch();
     const sink = new ShapeSink();
@@ -772,7 +775,20 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
     }
 
     const fx = new ImpactEffects();
-    fx.spawn(origin.x, origin.y, heading, opts);
+    for (let i = 0; i < headingOffsets.length; i++) {
+      const offset = headingOffsets[i];
+      const waveHeading = heading + offset;
+      const waveOptions = {
+        ...opts,
+        to: (opts.to ?? 18) * (distanceScales[i] ?? 1),
+      };
+      fx.spawn(
+        origin.x + Math.cos(waveHeading) * fanOrigin,
+        origin.y + Math.sin(waveHeading) * fanOrigin,
+        waveHeading,
+        waveOptions,
+      );
+    }
     for (let k = 0; k < Math.round(t / STEP); k++) fx.update(STEP);
     fx.draw(shapes, 0, 0, rootX, rootY, GRAIN);
 
@@ -781,13 +797,13 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   };
 
   // 三招各一列。上排新画法，下排旧画法（贴地、细、掉得快）。
-  const cases: { spawn: Parameters<ImpactEffects['spawn']>[3]; t: number; at: { x: number; y: number }; head: number }[] = [
+  const cases: { spawn: Parameters<ImpactEffects['spawn']>[3]; t: number; at: { x: number; y: number }; head: number; headingOffsets?: readonly number[]; fanOrigin?: number; distanceScales?: readonly number[] }[] = [
     // 横扫：贴地那一档本来就是它，两排一样——它是对照组，说明"看不见"不是错觉。
-    { spawn: { power: 1.34, life: 0.34, weight: 1.5, overhead: true }, t: 0.14, at: { x: -34, y: 0 }, head: 0 },
+    { spawn: { power: 1.34, span: 0.78, from: 1.1, to: 42.6, life: 0.42, weight: 2.1, overhead: true, style: 'slash', flash: 0.2, sparks: 0.32, trail: 0, tint: rgb(255, 204, 104) }, t: 0.16, at: { x: -34, y: 0 }, head: 0, headingOffsets: [-0.684, 0, 0.684, -0.323, 0.323], fanOrigin: 4.1, distanceScales: [1, 1, 1, 0.66, 0.66] },
     // 回旋
-    { spawn: { power: 1.34, span: Math.PI * 2, from: 1.5, to: 27, life: 0.5, weight: 2.1, overhead: true }, t: 0.3, at: { x: 0, y: 0 }, head: 0 },
+    { spawn: { power: 1.34, span: Math.PI * 2, from: 1.5, to: 27, life: 0.5, weight: 2.1, overhead: true, style: 'ring', tint: rgb(255, 214, 124) }, t: 0.3, at: { x: 0, y: 0 }, head: 0 },
     // 破空
-    { spawn: { power: 1, span: 0.9, from: 2, to: 96, life: 0.55, weight: 2.4, overhead: true, tint: rgb(214, 236, 255) }, t: 0.19, at: { x: -46, y: 0 }, head: 0 },
+    { spawn: { power: 1, span: 0.9, from: 2, to: 96, life: 0.55, weight: 2.4, overhead: true, style: 'surge', tint: rgb(214, 236, 255) }, t: 0.19, at: { x: -46, y: 0 }, head: 0 },
   ];
 
   // 多一列给金钟罩：它不是冲击弧而是一段持续状态（罩子跟着人走），走的是 drawAegisDome，
@@ -795,10 +811,10 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   const COLS = cases.length + 1;
   const sheet = new Canvas(W * COLS, H * 2, [71, 105, 59]);
   cases.forEach((c, col) => {
-    panel(sheet, col * W, 0, c.spawn, c.t, c.at, c.head);
+    panel(sheet, col * W, 0, c.spawn, c.t, c.at, c.head, c.headingOffsets, c.fanOrigin, c.distanceScales);
     // 旧画法：同样的形状和尺寸，但贴地、不加粗、掉得快。
     const old = { ...c.spawn, weight: 1, overhead: false, tint: undefined, life: 0.4 };
-    panel(sheet, col * W, H, old, c.t, c.at, c.head);
+    panel(sheet, col * W, H, old, c.t, c.at, c.head, c.headingOffsets, c.fanOrigin, c.distanceScales);
   });
 
   {

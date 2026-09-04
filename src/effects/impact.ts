@@ -43,6 +43,9 @@ interface Shockwave {
   /** 落点，也是弧的圆心。 */
   x: number;
   y: number;
+  /** Velocity inherited from the emitter at cast time, in world units per second. */
+  vx: number;
+  vy: number;
   /** 推进方向，和 actor.facing 用同一套地面角度。 */
   heading: number;
   age: number;
@@ -59,7 +62,19 @@ interface Shockwave {
   /** 画在人群之上还是贴着地。见 DEPTH_OVERHEAD。 */
   overhead: boolean;
   tint: Rgba;
+  /** Multiplier for the impact flash; fan attacks can share one origin without overexposing it. */
+  flash: number;
+  /** Multiplier for detached rays; several mini waves should not each emit a full burst. */
+  sparks: number;
+  /** Multiplier for the delayed inner echo. Set to zero when the move already has authored layers. */
+  trail: number;
+  /** Different moves share one renderer, while keeping distinct silhouettes. */
+  style: ShockwaveStyle;
+  /** Stable variation for the jagged rim and sparks. */
+  seed: number;
 }
+
+export type ShockwaveStyle = 'slash' | 'ring' | 'surge' | 'burst';
 
 export interface ShockwaveOptions {
   life?: number;
@@ -70,6 +85,12 @@ export interface ShockwaveOptions {
   weight?: number;
   overhead?: boolean;
   tint?: Rgba;
+  flash?: number;
+  sparks?: number;
+  trail?: number;
+  velocityX?: number;
+  velocityY?: number;
+  style?: ShockwaveStyle;
 }
 
 /** 贴地那一档：压在地面投影和影子之上，但在人的腿之下。平砍用它。 */
@@ -101,6 +122,7 @@ const arcSegments = (span: number): number => Math.max(8, Math.min(44, Math.roun
 
 export class ImpactEffects {
   private waves: Shockwave[] = [];
+  private serial = 0;
 
   get count(): number {
     return this.waves.length;
@@ -113,6 +135,8 @@ export class ImpactEffects {
     this.waves.push({
       x,
       y,
+      vx: options.velocityX ?? 0,
+      vy: options.velocityY ?? 0,
       heading,
       age: 0,
       life: options.life ?? 0.4,
@@ -128,6 +152,11 @@ export class ImpactEffects {
       weight: options.weight ?? 1,
       overhead: options.overhead ?? false,
       tint: options.tint ?? ARC_TINT,
+      flash: options.flash ?? 1,
+      sparks: options.sparks ?? 1,
+      trail: options.trail ?? 1,
+      style: options.style ?? ((options.span ?? 1.75) >= Math.PI * 1.98 ? 'ring' : 'slash'),
+      seed: ++this.serial,
     });
   }
 
@@ -135,6 +164,10 @@ export class ImpactEffects {
     for (let i = this.waves.length - 1; i >= 0; i--) {
       const w = this.waves[i];
       w.age += dt;
+      // A projectile inherits the caster's velocity once, then flies independently along that vector.
+      // It is deliberately not attached to the caster: turning after release must not bend the wave.
+      w.x += w.vx * dt;
+      w.y += w.vy * dt;
       // 交换删除。冲击波之间没有先后关系，不需要保持顺序，深度排序在 ShapeBatch 里做。
       if (w.age >= w.life) {
         this.waves[i] = this.waves[this.waves.length - 1];
@@ -181,54 +214,193 @@ export class ImpactEffects {
         : Math.round(240 * Math.pow(fade, 1.3));
       if (alpha <= 2) continue;
 
-      // 弧一边跑一边变薄。宽度不用管：张角固定，弧长随半径自己长出去，这正是"越跑越宽"。
-      const thickness = lerp(3.4, 1.0, t) * w.power * w.weight * scale;
+      // 主波不再是一根单色线：暗边托住轮廓，彩色能量带负责识别，白热核心负责重量。
+      const styleWeight = w.style === 'burst' ? 1.18 : w.style === 'surge' ? 0.94 : 1;
+      const thickness = lerp(3.8, 1.05, t) * w.power * w.weight * styleWeight * scale;
 
       const tint = w.tint;
-      const bright = rgba(tint.r, tint.g, tint.b, alpha);
-      const dark = rgba(58, 46, 32, Math.round(alpha * 0.7));
+      const hotMix = w.style === 'surge' ? 0.78 : 0.66;
+      const hot = rgba(
+        Math.round(lerp(tint.r, 255, hotMix)),
+        Math.round(lerp(tint.g, 255, hotMix)),
+        Math.round(lerp(tint.b, 255, hotMix)),
+        Math.round(alpha * clamp(1.25 - t * 0.45, 0, 1)),
+      );
+      const energy = rgba(tint.r, tint.g, tint.b, Math.round(alpha * 0.96));
+      const glow = rgba(tint.r, tint.g, tint.b, Math.round(alpha * 0.22));
+      const dark = rgba(46, 34, 28, Math.round(alpha * 0.72));
       const bias = w.overhead ? DEPTH_OVERHEAD : DEPTH_GROUND_FX;
 
       // 整圈的弧没有"两端"，收细只会在接缝处切出一道细缝。
       const closed = w.span >= Math.PI * 1.98;
       const segments = arcSegments(w.span);
 
-      let prev = this.arcPoint(w, radius, 0, toScreen);
-      for (let i = 1; i <= segments; i++) {
-        const next = this.arcPoint(w, radius, i / segments, toScreen);
+      // 外晕、墨色壳、能量色、白热刃依次叠起来；外沿带稳定锯齿，避免读成规整 UI 圆环。
+      const jagged = (w.style === 'burst' ? 0.9 : w.style === 'surge' ? 0.55 : 0.35) * w.power;
+      this.drawArcLayer(shapes, w, radius, segments, closed, thickness * 2.7, glow, bias, toScreen, jagged, 0);
+      this.drawArcLayer(shapes, w, radius, segments, closed, thickness * 1.85, dark, bias, toScreen, jagged * 0.72, 0.01);
+      this.drawArcLayer(shapes, w, radius, segments, closed, thickness * 1.22, energy, bias, toScreen, jagged * 0.35, 0.02);
+      this.drawArcLayer(shapes, w, radius, segments, closed, thickness * 0.42, hot, bias, toScreen, 0, 0.03);
 
-        // 两端收细。粗细均匀的弧两头是两个突兀的方头，读作一段管子；收细之后它才是一道
-        // 中间最强、往两侧耗散的波前。
-        const mid = (i - 0.5) / segments;
-        const taper = closed ? 1 : Math.pow(Math.sin(Math.PI * mid), 0.7);
-        const segWidth = thickness * taper;
-
-        if (segWidth > 0.35) {
-          // 每一段按自己的屏幕行取深度：弧横跨好几行，站在弧中间的人应该压住身后那半段、
-          // 被身前那半段压住。整条弧共用一个深度的话，人要么整个浮在弧上，要么整个沉下去。
-          const rowDepth = (prev.y + next.y) * 0.5 * Projector.DEPTH_PER_ROW + bias;
-          shapes.bar(prev, next, segWidth * 1.7, dark, rowDepth);
-          shapes.bar(prev, next, segWidth, bright, rowDepth + 0.01);
+      // 慢半拍的内层余波制造厚度；远射波再多留一道细残影，读起来像撕开空气。
+      if (t > 0.055 && w.trail > 0) {
+        const trailFade = clamp((t - 0.055) * 5.5, 0, 1) * fade * w.trail;
+        const gap = lerp(1.2, w.style === 'burst' ? 7.5 : 5.2, ease) * w.power;
+        const trailRadius = Math.max(w.from * w.power * 0.35, radius - gap);
+        this.drawArcLayer(
+          shapes,
+          w,
+          trailRadius,
+          segments,
+          closed,
+          thickness * 0.52,
+          rgba(tint.r, tint.g, tint.b, Math.round(150 * trailFade)),
+          bias,
+          toScreen,
+          jagged * 0.5,
+          -0.01,
+          w.style !== 'ring',
+        );
+        if (w.style === 'surge') {
+          this.drawArcLayer(
+            shapes,
+            w,
+            Math.max(w.from * w.power * 0.2, trailRadius - gap * 0.62),
+            segments,
+            closed,
+            thickness * 0.27,
+            rgba(hot.r, hot.g, hot.b, Math.round(105 * trailFade)),
+            bias,
+            toScreen,
+            0,
+            -0.02,
+            true,
+          );
         }
-        prev = next;
       }
+
+      this.drawEnergySpikes(shapes, w, radius, thickness, alpha, bias, toScreen);
 
       // 落点那一下的白闪，只活最初的五分之一段。它和向外跑的弧是两件事：弧说的是能量
       // 去了哪儿，闪说的是它从哪儿出来的。
-      const flash = clamp(1 - t / (w.overhead ? 0.34 : 0.2), 0, 1);
+      const flash = clamp(1 - t / (w.overhead ? 0.34 : 0.2), 0, 1) * w.flash;
       if (flash > 0.01) {
         const center = toScreen(w.x, w.y);
         const fr = lerp(2.2, 5.5, ease) * w.power * w.weight * scale;
         shapes.ellipse(
           center,
+          fr * 1.9,
+          fr * Projection.groundSquash * 1.9,
+          0,
+          rgba(tint.r, tint.g, tint.b, Math.round(90 * flash * flash)),
+          center.y * Projector.DEPTH_PER_ROW + bias - 0.01,
+        );
+        shapes.ellipse(
+          center,
           fr,
           fr * Projection.groundSquash,
           0,
-          rgba(255, 250, 232, Math.round(210 * flash * flash)),
-          center.y * Projector.DEPTH_PER_ROW + bias - 0.01,
+          rgba(255, 252, 238, Math.round(235 * flash * flash)),
+          center.y * Projector.DEPTH_PER_ROW + bias,
         );
       }
     }
+  }
+
+  /** 一层弧；broken 用稳定缺口把余波切成能量碎片，而不是另一条完整圆线。 */
+  private drawArcLayer(
+    shapes: ShapeBatch,
+    w: Shockwave,
+    radius: number,
+    segments: number,
+    closed: boolean,
+    thickness: number,
+    color: Rgba,
+    bias: number,
+    toScreen: (wx: number, wy: number) => { x: number; y: number },
+    jagged: number,
+    depthOffset: number,
+    broken = false,
+  ): void {
+    let prev = this.arcPoint(w, radius + this.edgeNoise(w, 0) * jagged, 0, toScreen);
+    for (let i = 1; i <= segments; i++) {
+      const u = i / segments;
+      const next = this.arcPoint(w, radius + this.edgeNoise(w, u) * jagged, u, toScreen);
+      const mid = (i - 0.5) / segments;
+      const taper = closed ? 1 : Math.pow(Math.sin(Math.PI * mid), 0.62);
+      const pulse = 0.88 + 0.12 * Math.sin(i * 2.73 + w.seed * 1.91);
+      const segWidth = thickness * taper * pulse;
+      const gap = broken && ((i + w.seed * 3) % 9 === 0 || (i + w.seed) % 13 === 0);
+      if (!gap && segWidth > 0.3) {
+        const rowDepth = (prev.y + next.y) * 0.5 * Projector.DEPTH_PER_ROW + bias + depthOffset;
+        shapes.bar(prev, next, segWidth, color, rowDepth);
+      }
+      prev = next;
+    }
+  }
+
+  /** 波前刺出的短芒与脱离火花，是“震”与“碎”的来源。 */
+  private drawEnergySpikes(
+    shapes: ShapeBatch,
+    w: Shockwave,
+    radius: number,
+    thickness: number,
+    alpha: number,
+    bias: number,
+    toScreen: (wx: number, wy: number) => { x: number; y: number },
+  ): void {
+    const t = clamp(w.age / w.life, 0, 1);
+    if (t < 0.035 || t > 0.82) return;
+    const baseCount = w.style === 'burst' ? 16 : w.style === 'ring' ? 10 : w.style === 'surge' ? 8 : 6;
+    const count = Math.round(baseCount * w.sparks);
+    if (count <= 0) return;
+    const sparkAlpha = Math.round(alpha * clamp((0.82 - t) * 1.8, 0, 1));
+    const tint = w.tint;
+    const closed = w.span >= Math.PI * 1.98;
+    for (let i = 0; i < count; i++) {
+      const h = this.hash(w.seed * 37 + i * 101);
+      const distributed = (i + 0.24 + h * 0.52) / count;
+      const u = closed ? distributed - Math.floor(distributed) : clamp(distributed, 0.04, 0.96);
+      const angle = w.heading + (u - 0.5) * w.span;
+      const inner = radius - (1.1 + h * 1.7) * w.power;
+      const reach = (w.style === 'burst' ? 6.8 : 4.1) * (0.55 + h * 0.8) * w.power * (1 - t * 0.35);
+      const outer = radius + reach;
+      const a = toScreen(w.x + Math.cos(angle) * inner, w.y + Math.sin(angle) * inner);
+      const b = toScreen(w.x + Math.cos(angle) * outer, w.y + Math.sin(angle) * outer);
+      const depth = (a.y + b.y) * 0.5 * Projector.DEPTH_PER_ROW + bias + 0.04;
+      shapes.bar(
+        a,
+        b,
+        Math.max(0.7, thickness * (0.1 + h * 0.08)),
+        rgba(tint.r, tint.g, tint.b, sparkAlpha),
+        depth,
+      );
+
+      if ((i + w.seed) % 3 === 0) {
+        const sparkR = outer + (2.2 + h * 3.5) * w.power;
+        const center = toScreen(w.x + Math.cos(angle) * sparkR, w.y + Math.sin(angle) * sparkR);
+        const tangent = angle + Math.PI * 0.5;
+        const half = (0.7 + h * 1.3) * Math.max(1, thickness * 0.13);
+        const p0 = v2(
+          center.x - Math.cos(tangent) * half,
+          center.y - Math.sin(tangent) * half * Projection.groundSquash,
+        );
+        const p1 = v2(
+          center.x + Math.cos(tangent) * half,
+          center.y + Math.sin(tangent) * half * Projection.groundSquash,
+        );
+        shapes.bar(p0, p1, Math.max(0.75, thickness * 0.1), rgba(255, 248, 220, sparkAlpha), depth + 0.01);
+      }
+    }
+  }
+
+  private edgeNoise(w: Shockwave, u: number): number {
+    return Math.sin(u * Math.PI * 18 + w.seed * 2.17) * 0.58 + Math.sin(u * Math.PI * 31 - w.seed * 0.73) * 0.42;
+  }
+
+  private hash(n: number): number {
+    const x = Math.sin(n * 12.9898) * 43758.5453;
+    return x - Math.floor(x);
   }
 
   /** 弧上参数 u（0..1，从一端扫到另一端）处的屏幕点。 */

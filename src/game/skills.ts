@@ -106,7 +106,8 @@ export const Skills: SkillDef[] = [
     note: '前方扇形，一次算清',
     category: 'attack',
     kind: 'instant',
-    reach: 1,
+    // 横扫要明显越过回旋（1.25），把外三内二的扇面充分展开；仍远短于破空（4.5）。
+    reach: 1.8,
     arc: null,
     duration: 0,
     // 横扫就是基础那一下，不该有"打碎了"的表现。
