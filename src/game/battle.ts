@@ -528,6 +528,15 @@ export class Battle {
    */
   aegis: { left: number; total: number; radius: number; power: number } | null = null;
 
+  /** 穿云箭：升空后在第 0.8 秒选定当前视口内的落点，再从天而降。Scene 只读这个状态来画箭。 */
+  skyArrow: {
+    age: number;
+    targetX: number;
+    targetY: number;
+    radius: number;
+    power: number;
+  } | null = null;
+
   /** 生命上限顶到了"无敌"那一档没有。面板要显示成文字，不是一串九。 */
   get invincible(): boolean {
     return this.player.maxHp >= INVINCIBLE_HP;
@@ -668,6 +677,7 @@ export class Battle {
     this.skillWaves.length = 0;
     this.lunge = null;
     this.aegis = null;
+    this.skyArrow = null;
     this.debris.clear();
     this.player.death = -1;
     this.player.hurt = 0;
@@ -916,7 +926,7 @@ export class Battle {
     this.spawnWave(dt, view);
     this.swing();
     this.advancePlayerAttack(dt, view);
-    this.advanceSkills(dt);
+    this.advanceSkills(dt, view);
     // 先建一次表：敌人要先查"前面有没有人占着位子"。分离那边会按挪完的位置再建一次。
     this.grid.build(enemies);
     // 恢复排在建表之后：判"那个位置有没有人"要用这张表。见 restoreReserved。
@@ -1182,6 +1192,22 @@ export class Battle {
         return;
       }
 
+      case 'skyArrow': {
+        // 落点不是起手时锁死：等待期间镜头跟着玩家移动，0.8 秒一到才在“此刻”的视口里抽取位置。
+        this.skyArrow = { age: 0, targetX: 0, targetY: 0, radius: reach, power: skill.power };
+        this.effects.spawn(at.x, at.y, player.facing, {
+          power: 0.8,
+          span: 0.48,
+          from: 1,
+          to: player.def.attackRange * 1.5,
+          life: 0.18,
+          weight: 1.2,
+          overhead: true,
+          tint: rgb(255, 222, 140),
+        });
+        return;
+      }
+
       case 'lunge':
         this.lunge = {
           left: skill.duration,
@@ -1214,9 +1240,9 @@ export class Battle {
    * 真的是同一份代码 —— 两处各写一遍的话，改了一处忘了另一处，玩家就会看到两个长得像但
    * 判定不一样的圈。
    */
-  private castRing(reach: number, power: number): void {
+  private castRing(reach: number, power: number, x = this.player.x, y = this.player.y): void {
     const { player } = this;
-    this.effects.spawn(player.x, player.y, player.facing, {
+    this.effects.spawn(x, y, player.facing, {
       power: 1,
       span: Math.PI * 2,
       from: 1.5,
@@ -1227,7 +1253,9 @@ export class Battle {
     });
     for (const e of this.enemies) {
       if (!e.alive) continue;
-      if (inSector(player, e, reach, Math.PI * 2)) this.slay(e, player.x, player.y, power);
+      const dx = e.x - x;
+      const dy = e.y - y;
+      if (dx * dx + dy * dy <= (reach + e.radius) * (reach + e.radius)) this.slay(e, x, y, power);
     }
   }
 
@@ -1240,7 +1268,7 @@ export class Battle {
    * 字面意思。基础攻击和 instant 类技能仍然走老路：它们的范围只有十几个单位，一帧之内到达，
    * 分不分帧看不出来。
    */
-  private advanceSkills(dt: number): void {
+  private advanceSkills(dt: number, view: BattleView): void {
     const { player } = this;
 
     for (let i = this.skillWaves.length - 1; i >= 0; i--) {
@@ -1256,6 +1284,23 @@ export class Battle {
       if (w.age >= w.life) {
         this.skillWaves[i] = this.skillWaves[this.skillWaves.length - 1];
         this.skillWaves.pop();
+      }
+    }
+
+    if (this.skyArrow) {
+      const arrow = this.skyArrow;
+      const before = arrow.age;
+      arrow.age += dt;
+      if (before < 0.8 && arrow.age >= 0.8) {
+        // 稍留边距，避免箭头与回旋环被屏幕边缘截断。
+        const box = view.spawn;
+        arrow.targetX = box.x + (Math.random() * 2 - 1) * box.halfW * 0.78;
+        arrow.targetY = box.y + (Math.random() * 2 - 1) * box.halfH * 0.72;
+      }
+      // 0.8 秒呼应用户要求；后续 0.28 秒是可见的俯冲与落地窗口。
+      if (arrow.age >= 1.08) {
+        this.castRing(arrow.radius, arrow.power, arrow.targetX, arrow.targetY);
+        this.skyArrow = null;
       }
     }
 

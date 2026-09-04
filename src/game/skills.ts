@@ -13,7 +13,7 @@
  * 碰到就死，和基础攻击的规则完全一致。先把四种形状摆出来看手感，数值等形状定了再谈。
  */
 
-export type SkillId = 'sweep' | 'spin' | 'wave' | 'lunge' | 'aegis';
+export type SkillId = 'sweep' | 'spin' | 'wave' | 'lunge' | 'aegis' | 'skyArrow';
 
 /**
  * 判定怎么结算。这是三条不同的代码路径，不是三个参数。
@@ -23,7 +23,7 @@ export type SkillId = 'sweep' | 'spin' | 'wave' | 'lunge' | 'aegis';
  *   lunge    人跨帧向前冲，每帧结算身体**这一帧碰到**的人。
  *   aura     一个罩子跟着人走，持续若干秒，每帧结算**碰到罩子**的人。
  */
-export type SkillKind = 'instant' | 'wave' | 'lunge' | 'aura';
+export type SkillKind = 'instant' | 'wave' | 'lunge' | 'aura' | 'skyArrow';
 
 export interface SkillDef {
   id: SkillId;
@@ -140,6 +140,18 @@ export const Skills: SkillDef[] = [
     duration: 2,
     power: 2,
     gap: 2.6,
+    finishRing: 0,
+  },
+  {
+    id: 'skyArrow',
+    name: '穿云箭',
+    note: '冲天后随机落下，落地回旋',
+    kind: 'skyArrow',
+    reach: 1.5,
+    arc: null,
+    duration: 0,
+    power: 2,
+    gap: 1.1,
     finishRing: 0,
   },
 ];

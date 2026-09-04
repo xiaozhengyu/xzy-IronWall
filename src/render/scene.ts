@@ -220,6 +220,7 @@ export class Scene {
 
     // 金钟罩画在人之后：它罩在玩家身上，不是垫在他底下。
     this.drawAegis(battle, camX, camY, rootX, rootY, grain);
+    this.drawSkyArrow(battle, camX, camY, rootX, rootY, grain);
 
     // 击飞的轨迹线画在人之后：它是从身体拖出来的，压在别人身上比断在别人身后好读。
     for (const e of battle.enemies) {
@@ -340,6 +341,60 @@ export class Scene {
    * 快到期时闪一下（见 blink）：这是玩家唯一能知道"还剩多久"的地方，而一个没有预告就消失的
    * 护盾会让人觉得是被偷走的。
    */
+  /** 穿云箭的两个可见段：起手迅速冲出屏幕，0.8 秒后在随机落点从天而降。 */
+  private drawSkyArrow(
+    battle: Battle,
+    camX: number,
+    camY: number,
+    rootX: number,
+    rootY: number,
+    grain: number,
+  ): void {
+    const arrow = battle.skyArrow;
+    if (!arrow) return;
+
+    const rising = arrow.age < 0.18;
+    const falling = arrow.age >= 0.8;
+    if (!rising && !falling) return; // 箭已经穿出视口，留出“人在等天外一箭”的空拍。
+
+    let x: number;
+    let y: number;
+    let shadow: Vec2 | null = null;
+    if (rising) {
+      const at = this.camera.worldToScreen(battle.player.x, battle.player.y);
+      x = at.x;
+      y = at.y - (arrow.age / 0.18) * (this.surface.height + 24);
+    } else {
+      const t = Math.min((arrow.age - 0.8) / 0.28, 1);
+      const ground = v2(
+        rootX + (arrow.targetX - camX) * grain,
+        rootY + (arrow.targetY - camY) * Projection.groundSquash * grain,
+      );
+      x = ground.x;
+      y = -18 + (ground.y + 18) * t;
+      shadow = ground;
+      // 地上的细环提前告诉玩家落点，箭本身仍从屏幕外开始，保留“天降”的纵深。
+      const pulse = 1 - t;
+      this.shapes.ellipseRing(
+        ground,
+        (5 + pulse * 8) * grain,
+        (2.5 + pulse * 4) * grain,
+        0,
+        Math.max(1, grain * 0.45),
+        rgba(255, 198, 92, Math.round(120 + 100 * pulse)),
+        ground.y * Projector.DEPTH_PER_ROW + 18,
+        16,
+      );
+    }
+
+    const depth = (shadow?.y ?? y) * Projector.DEPTH_PER_ROW + 30;
+    const tail = v2(x, y + 8 * grain);
+    const tip = v2(x, y - 8 * grain);
+    this.shapes.capsule(tail, tip, Math.max(1, grain * 0.9), rgba(97, 57, 28, 255), depth);
+    this.shapes.bar(v2(x - 3 * grain, y - 3 * grain), tip, Math.max(1, grain * 1.2), rgba(255, 231, 154, 255), depth + 0.1);
+    this.shapes.bar(v2(x + 3 * grain, y - 3 * grain), tip, Math.max(1, grain * 1.2), rgba(255, 231, 154, 255), depth + 0.1);
+  }
+
   private drawAegis(
     battle: Battle,
     camX: number,
