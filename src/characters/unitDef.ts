@@ -152,16 +152,14 @@ export const isTwoHanded = (def: UnitDef): boolean => def.weapon === 'spear' || 
 
 export const UnitPresets = {
   /**
-   * 玩家操控的武将：胖子，双持圆锤。
+   * 玩家操控的武将：精悍体型，双持圆锤。
    *
    * 轮廓是这里唯一真正的设计目标 —— 屏幕上几百个人的时候，玩家要能在半秒内找到自己。
-   * 三个特征各自负责一件事：
-   *   肚子   —— 中间鼓出来的轮廓，和所有杂兵的直筒身形都不一样，远看也认得出。
+   * 两个特征各自负责一件事：
    *   双持   —— 两侧各多出一块金属，是身体两边对称的"耳朵"，杂兵谁也没有。
    *   盔缨   —— 头顶那三个像素，人堆里唯一高过所有人的东西。
    *
-   * 矮而宽，不是等比例放大：bulk 单独调大只会得到一个"大只"的人。stature 压到 0.94
-   * 才让他真的矮下去，于是同样的宽度读作胖而不是高大。
+   * 身形保持略高于杂兵，但腰腹明显收窄；辨识度交给双锤与盔缨，不再依赖肥胖轮廓。
    */
   warlord: (): UnitDef =>
     makeUnitDef({
@@ -172,9 +170,9 @@ export const UnitPresets = {
       plume: true,
       pauldrons: true,
       skirt: true,
-      bulk: 1.34,
-      stature: 0.94,
-      paunch: 1,
+      bulk: 1.16,
+      stature: 0.98,
+      paunch: 0.28,
       reach: 1,
       helmetTone: 1.2,
       // 武将扫得又远又宽，这是他能割草而杂兵不能的全部原因。
@@ -222,13 +220,13 @@ export const UnitPresets = {
       helmet: 'kettle',
       armor: 'leather',
       tassel: true,
-      reach: 0.9,
+      // 杆长 15 × 2.6 = 39 个世界单位；角色连头盔约 18.3，高度超过两个完整角色。
+      reach: 2.6,
       attackRange: 20,
       attackArc: 0.9,
     }),
 
   /** 弓手：远程。 */
-  // 弓手目前也是近战：还没有抛射物，让他站远了空拉弓只会看着像卡住了。
   archer: (): UnitDef =>
     makeUnitDef({
       weapon: 'bow',
@@ -236,7 +234,8 @@ export const UnitPresets = {
       armor: 'cloth',
       quiver: true,
       bulk: 0.92,
-      attackRange: 13,
+      // 停在约 77 单位外放箭，给箭留下足够飞行时间，让玩家能靠移动躲开固定落点。
+      attackRange: 96,
       attackArc: 1.4,
     }),
 
@@ -292,10 +291,10 @@ export const UnitPresets = {
       attackArc: 1.7,
     }),
 
-  /** 精英：重甲、大盾、戟。 */
+  /** 精英：重甲、大盾、刀。 */
   elite: (): UnitDef =>
     makeUnitDef({
-      weapon: 'halberd',
+      weapon: 'sword',
       shield: 'tower',
       helmet: 'great',
       armor: 'plate',

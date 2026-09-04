@@ -187,6 +187,9 @@ const SPAWN_INTERVAL = 0.18;
  */
 const SEED_COUNT = 30;
 
+/** 每种兵连续出生多少个再换下一种；和开局人数一致，第一屏天然就是完整的一波。 */
+const ENEMIES_PER_TYPE_WAVE = SEED_COUNT;
+
 /**
  * 开局那一批往视口外再多撒多远。
  *
@@ -340,6 +343,17 @@ const CHASE_BOOST = 1.8;
 /** 敌人两次出手之间的间隙，秒。给一段随机量，免得一圈人整齐划一地同时挥。 */
 const ENEMY_SWING_GAP = 1.15;
 const ENEMY_SWING_JITTER = 0.7;
+/** 弓手单独放慢到约每 2.8～3.8 秒一箭，避免落地箭很快铺满画面。 */
+const ENEMY_ARCHER_SHOT_GAP = 2.8;
+const ENEMY_ARCHER_SHOT_JITTER = 1;
+
+/** 敌军箭矢：速度决定玩家看见箭后有多少反应时间；落点半径只比玩家身体略宽。 */
+const ENEMY_ARROW_SPEED = 105;
+const ENEMY_ARROW_MIN_TIME = 0.35;
+const ENEMY_ARROW_MAX_TIME = 1.1;
+const ENEMY_ARROW_HIT_MARGIN = 1.2;
+const ENEMY_ARROW_GROUND_TIME = 3.5;
+const ENEMY_ARROW_FADE_TIME = 0.9;
 
 /**
  * 停步之前多长一段距离用来减速，世界单位。
@@ -370,6 +384,7 @@ export const PlayerPresets: { name: string; make: () => UnitDef }[] = [
   { name: 'spearman 长枪兵', make: UnitPresets.spearman },
   { name: 'archer 弓手', make: UnitPresets.archer },
   { name: 'elite 精英', make: UnitPresets.elite },
+  { name: 'knight 骑士', make: UnitPresets.knight },
 ];
 
 /**
@@ -383,12 +398,25 @@ export const PlayerPresets: { name: string; make: () => UnitDef }[] = [
  * 才 19 单位高），照真人步速走进来要半分钟 —— 开局一整分钟画面上什么都不会发生。割草游戏里
  * 的杂兵本来也是小跑着扑过来的。
  */
-const EnemyKinds: { def: UnitDef; palette: CharacterPalette; speed: number }[] = [
+type EnemyKind = { def: UnitDef; palette: CharacterPalette; speed: number };
+
+const EnemyKinds: EnemyKind[] = [
   { def: UnitPresets.thug(), palette: PALETTE_RED, speed: 26 },
   { def: UnitPresets.thug(), palette: PALETTE_PEASANT, speed: 30 },
   { def: UnitPresets.spearman(), palette: PALETTE_RED, speed: 23 },
   { def: UnitPresets.shieldman(), palette: PALETTE_RED, speed: 20 },
   { def: UnitPresets.archer(), palette: PALETTE_PEASANT, speed: 33 },
+];
+
+/**
+ * 同类兵种按波进入；两种杂兵只是配色不同，仍放在同一波里。
+ * 顺序固定，观察角色时不会被随机混兵打断。
+ */
+const EnemyTypeWaves: readonly (readonly EnemyKind[])[] = [
+  [EnemyKinds[0], EnemyKinds[1]],
+  [EnemyKinds[2]],
+  [EnemyKinds[3]],
+  [EnemyKinds[4]],
 ];
 
 /**
@@ -409,6 +437,40 @@ interface SkillWave {
   arc: number;
   /** 打中时溅多少碎片，见 SkillDef.power。 */
   power: number;
+}
+
+/**
+ * 一支已经离弦的敌军箭。targetX/Y 在撒放瞬间写死，之后绝不读取玩家位置来修正弹道。
+ * current/previous 给渲染器画出有长度的箭体，判定只在抵达固定落点时发生。
+ */
+export interface EnemyArrow {
+  fromX: number;
+  fromY: number;
+  targetX: number;
+  targetY: number;
+  x: number;
+  y: number;
+  z: number;
+  previousX: number;
+  previousY: number;
+  previousZ: number;
+  startZ: number;
+  arcHeight: number;
+  age: number;
+  total: number;
+  landed: boolean;
+  groundLeft: number;
+  opacity: number;
+}
+
+/** 取敌军箭在固定弹道某一时刻的位置；逻辑推进和渲染尾迹共用，避免两条弧线错位。 */
+export function enemyArrowPosition(arrow: EnemyArrow, age = arrow.age): { x: number; y: number; z: number } {
+  const t = clamp(age / arrow.total, 0, 1);
+  return {
+    x: arrow.fromX + (arrow.targetX - arrow.fromX) * t,
+    y: arrow.fromY + (arrow.targetY - arrow.fromY) * t,
+    z: arrow.startZ * (1 - t) + 0.7 * t + Math.sin(Math.PI * t) * arrow.arcHeight,
+  };
 }
 
 /** 这一帧玩家想干什么。由输入层翻译好再交进来，Battle 不认识鼠标和键盘。 */
@@ -471,6 +533,8 @@ export class Battle {
   readonly effects = new ImpactEffects();
   /** 打碎溅出来的血珠和甲片。同上：谁放出来的归战斗管，画它的是 Scene。 */
   readonly debris = new Debris();
+  /** 弓箭手已经射出的箭。公开只供 Scene 读取并绘制。 */
+  readonly enemyArrows: EnemyArrow[] = [];
 
   kills = 0;
   deaths = 0;
@@ -653,6 +717,8 @@ export class Battle {
 
   private readonly field: Field;
   private spawnTimer = 0;
+  private enemyWaveIndex = 0;
+  private enemiesLeftInWave = ENEMIES_PER_TYPE_WAVE;
 
   /**
    * 邻居查表。每帧重建一次，分离和"把人推出玩家身体"都走它。
@@ -701,6 +767,7 @@ export class Battle {
     this.dharma = null;
     this.heavenSplit = null;
     this.skyArrow = null;
+    this.enemyArrows.length = 0;
     this.debris.clear();
     this.player.death = -1;
     this.player.hurt = 0;
@@ -715,6 +782,9 @@ export class Battle {
    * 几秒。铺一批之后一进画面就有活干，后面靠持续出怪接上。
    */
   seed(view: BattleView): void {
+    this.spawnTimer = 0;
+    this.enemyWaveIndex = 0;
+    this.enemiesLeftInWave = ENEMIES_PER_TYPE_WAVE;
     // 全部生在视口外，和之后每一个走同一条路：方向均匀一整圈，距离按"沿这个方向走多远才
     // 出画面"算，再往外多撒一段随机纵深（见 SEED_DEPTH）让他们分批到达。
     for (let i = 0; i < SEED_COUNT; i++) {
@@ -722,8 +792,10 @@ export class Battle {
       const cos = Math.cos(angle);
       const sin = Math.sin(angle);
       const r = this.exitDistance(cos, sin, view) + SPAWN_MARGIN + Math.random() * SEED_DEPTH;
-      this.place(this.player.x + cos * r, this.player.y + sin * r);
+      this.place(this.player.x + cos * r, this.player.y + sin * r, EnemyTypeWaves[this.enemyWaveIndex]);
+      this.enemiesLeftInWave--;
     }
+    if (this.enemiesLeftInWave <= 0) this.advanceEnemyWave();
   }
 
   /**
@@ -732,12 +804,12 @@ export class Battle {
    * 方向是均匀的一整圈，不做任何"这边在图外就换一边"的挑拣 —— 那正是包围感的来源。距离按
    * **沿这个方向走多远才出画面**算，所以每个方向都恰好在看不见的地方生成，不多走一步。
    */
-  spawn(view: BattleView): void {
+  spawn(view: BattleView, kinds: readonly EnemyKind[] = EnemyKinds): void {
     const angle = this.spawnAngle();
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
     const r = this.exitDistance(cos, sin, view) + SPAWN_MARGIN + Math.random() * SPAWN_JITTER;
-    this.place(this.player.x + cos * r, this.player.y + sin * r);
+    this.place(this.player.x + cos * r, this.player.y + sin * r, kinds);
   }
 
   /**
@@ -909,9 +981,9 @@ export class Battle {
    * 只夹到"图外一圈"这个大框里，**不**夹回场内 —— 图外生成是有意的，见 SPAWN_OUTSIDE。
    * 落点和树重叠就沿着原方向往外挪一点重试；图外没有树，所以那边一次就成。
    */
-  private place(x: number, y: number): void {
+  private place(x: number, y: number, kinds: readonly EnemyKind[] = EnemyKinds): void {
     const field = this.field;
-    const kind = EnemyKinds[Math.floor(Math.random() * EnemyKinds.length)];
+    const kind = kinds[Math.floor(Math.random() * kinds.length)];
     const e = new Character(kind.def, kind.palette, kind.speed);
 
     const px = this.player.x;
@@ -934,7 +1006,8 @@ export class Battle {
     e.y = fy;
     e.facing = Math.atan2(py - fy, px - fx);
     // 随机的初始冷却，免得同一批出生的人到了跟前整齐划一地同时出手。
-    e.attackCooldown = Math.random() * ENEMY_SWING_GAP;
+    const initialGap = e.def.weapon === 'bow' ? ENEMY_ARCHER_SHOT_GAP : ENEMY_SWING_GAP;
+    e.attackCooldown = Math.random() * initialGap;
     this.enemies.push(e);
   }
 
@@ -945,6 +1018,7 @@ export class Battle {
 
     this.clock += dt;
     this.movePlayer(dt, input);
+    this.advanceEnemyArrows(dt);
     this.recycle(view);
     this.spawnWave(dt, view);
     this.swing();
@@ -971,6 +1045,7 @@ export class Battle {
       this.reserved.length = 0;
       this.skillWaves.length = 0;
       this.lunge = null;
+      this.enemyArrows.length = 0;
       this.seed(view);
     }
 
@@ -1489,6 +1564,84 @@ export class Battle {
 
   // ---------------------------------------------------------------- 敌人
 
+  /** 在弓弦撒放的那一帧，记录玩家此刻的位置并生成一支不追踪的箭。 */
+  private fireEnemyArrow(archer: Character): void {
+    const local = archer.pose.weaponGrip;
+    const sin = Math.sin(archer.facing);
+    const cos = Math.cos(archer.facing);
+    const fromX = archer.x + local.x * sin + local.y * cos;
+    const fromY = archer.y - local.x * cos + local.y * sin;
+    const targetX = this.player.x;
+    const targetY = this.player.y;
+    const distance = Math.hypot(targetX - fromX, targetY - fromY);
+    const total = clamp(distance / ENEMY_ARROW_SPEED, ENEMY_ARROW_MIN_TIME, ENEMY_ARROW_MAX_TIME);
+    const startZ = Math.max(6, local.z);
+
+    this.enemyArrows.push({
+      fromX,
+      fromY,
+      targetX,
+      targetY,
+      x: fromX,
+      y: fromY,
+      z: startZ,
+      previousX: fromX,
+      previousY: fromY,
+      previousZ: startZ,
+      startZ,
+      arcHeight: clamp(distance * 0.24, 14, 24),
+      age: 0,
+      total,
+      landed: false,
+      groundLeft: 0,
+      opacity: 1,
+    });
+  }
+
+  /** 推进固定弹道；命中玩家便消失，落空则保持入射角插在旧落点，数秒后渐隐。 */
+  private advanceEnemyArrows(dt: number): void {
+    const arrows = this.enemyArrows;
+    const player = this.player;
+    for (let i = arrows.length - 1; i >= 0; i--) {
+      const arrow = arrows[i];
+      if (arrow.landed) {
+        arrow.groundLeft -= dt;
+        arrow.opacity = clamp(arrow.groundLeft / ENEMY_ARROW_FADE_TIME, 0, 1);
+        if (arrow.groundLeft > 0) continue;
+        arrows[i] = arrows[arrows.length - 1];
+        arrows.pop();
+        continue;
+      }
+
+      arrow.previousX = arrow.x;
+      arrow.previousY = arrow.y;
+      arrow.previousZ = arrow.z;
+      arrow.age += dt;
+      const t = clamp(arrow.age / arrow.total, 0, 1);
+      const position = enemyArrowPosition(arrow);
+      arrow.x = position.x;
+      arrow.y = position.y;
+      arrow.z = position.z;
+
+      if (t < 1) continue;
+
+      const dx = player.x - arrow.targetX;
+      const dy = player.y - arrow.targetY;
+      const hit = player.radius + ENEMY_ARROW_HIT_MARGIN;
+      if (player.alive && dx * dx + dy * dy <= hit * hit) {
+        if (player.takeHit(arrow.fromX, arrow.fromY)) this.deaths++;
+        arrows[i] = arrows[arrows.length - 1];
+        arrows.pop();
+        continue;
+      }
+
+      arrow.age = arrow.total;
+      arrow.landed = true;
+      arrow.groundLeft = ENEMY_ARROW_GROUND_TIME;
+      arrow.opacity = 1;
+    }
+  }
+
   private driveEnemies(dt: number, view: BattleView): void {
     const { player, field } = this;
 
@@ -1584,12 +1737,17 @@ export class Battle {
           // 到位了：站定出手。crowdPace 也归零，免得下次起步带着旧值窜一下。
           e.crowdPace = 0;
           e.speed = 0;
-          e.swing(ENEMY_SWING_GAP + Math.random() * ENEMY_SWING_JITTER);
+          const cooldown =
+            e.def.weapon === 'bow'
+              ? ENEMY_ARCHER_SHOT_GAP + Math.random() * ENEMY_ARCHER_SHOT_JITTER
+              : ENEMY_SWING_GAP + Math.random() * ENEMY_SWING_JITTER;
+          e.swing(cooldown);
         }
       }
 
-      if (e.update(dt, onScreen) && player.alive && inAttackArc(e, player)) {
-        if (player.takeHit(e.x, e.y)) this.deaths++;
+      if (e.update(dt, onScreen) && player.alive) {
+        if (e.def.weapon === 'bow') this.fireEnemyArrow(e);
+        else if (inAttackArc(e, player) && player.takeHit(e.x, e.y)) this.deaths++;
       }
     }
   }
@@ -1769,8 +1927,18 @@ export class Battle {
       this.spawnTimer -= SPAWN_INTERVAL;
       // 一次放一批。批量调大了就是一小群一小群涌上来，不再是一个一个挪进画面。
       const room = this.maxEnemies - this.enemies.length;
-      const batch = Math.min(this.spawnBatch, room);
-      for (let i = 0; i < batch; i++) this.spawn(view);
+      // 一个批次不跨兵种波：即使菜单把批量调成 7，也不会在最后一批里混入下一种兵。
+      const batch = Math.min(this.spawnBatch, room, this.enemiesLeftInWave);
+      const kinds = EnemyTypeWaves[this.enemyWaveIndex];
+      for (let i = 0; i < batch; i++) this.spawn(view, kinds);
+      this.enemiesLeftInWave -= batch;
+      if (this.enemiesLeftInWave <= 0) this.advanceEnemyWave();
     }
+  }
+
+  /** 当前兵种的一整波出完后，切到下一种并重新计数。 */
+  private advanceEnemyWave(): void {
+    this.enemyWaveIndex = (this.enemyWaveIndex + 1) % EnemyTypeWaves.length;
+    this.enemiesLeftInWave = ENEMIES_PER_TYPE_WAVE;
   }
 }

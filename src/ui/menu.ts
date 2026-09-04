@@ -60,7 +60,7 @@ export interface MenuState {
 }
 
 export interface MenuBridge {
-  /** 七个角色预设的名字。面板搭起来的时候就要，所以不走 read()。 */
+  /** 八个角色预设的名字。面板搭起来的时候就要，所以不走 read()。 */
   readonly presets: string[];
   /** 攻击技能的名字和小字说明。和 presets 一样，搭面板时就要，不走 read()。 */
   readonly skills: { id: SkillId; name: string; note: string }[];

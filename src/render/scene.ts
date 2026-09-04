@@ -6,7 +6,7 @@ import { SKY_BLADE_LENGTH, drawSkyBlade, heavenSplitBlade, skyArrowBlade } from 
 import { drawCharacter, drawSkeleton } from '../characters/renderer';
 import { flatPalette } from '../characters/palette';
 import type { Character } from '../game/character';
-import type { Battle } from '../game/battle';
+import { enemyArrowPosition, type Battle } from '../game/battle';
 import type { Field } from '../game/field';
 import type { ItemDef } from '../items/itemDef';
 import type { ItemSheet } from '../items/renderer';
@@ -94,6 +94,12 @@ const DEPTH_AEGIS = 16;
  * 波用的是偏冷的白，两招在余光里就分得开。
  */
 const SKY_ARROW_TINT = rgb(255, 236, 190);
+const ENEMY_ARROW_WOOD = rgb(104, 68, 38);
+const ENEMY_ARROW_STEEL = rgb(214, 222, 222);
+const ENEMY_ARROW_FLETCHING = rgb(154, 42, 34);
+const ENEMY_ARROW_LENGTH = 5.2;
+const ENEMY_ARROW_TRAIL_SPAN = 0.24;
+const ENEMY_ARROW_TRAIL_SAMPLES = 7;
 /** 还剩多少秒开始闪。 */
 const AEGIS_WARN = 1;
 
@@ -232,6 +238,8 @@ export class Scene {
       drawDharmaAspect(shapes, battle.player, playerAt, grain, dharma.left, dharma.total);
     }
     this.drawCharacterAt(battle.player, true, battle.dashing);
+
+    this.drawEnemyArrows(battle, camX, camY, rootX, rootY, grain);
 
     // 金钟罩画在人之后：它罩在玩家身上，不是垫在他底下。
     this.drawAegis(battle, camX, camY, rootX, rootY, grain);
@@ -483,6 +491,97 @@ export class Scene {
       blink,
       sy * Projector.DEPTH_PER_ROW + DEPTH_AEGIS,
     );
+  }
+
+  /**
+   * 敌军箭矢。箭头取当前点，箭尾沿上一帧的飞行方向反推固定长度，所以帧率变化不会让箭
+   * 忽长忽短；尾迹从固定弹道回采，既显出高弧线，也不会改变箭的落点。
+   */
+  private drawEnemyArrows(
+    battle: Battle,
+    camX: number,
+    camY: number,
+    rootX: number,
+    rootY: number,
+    grain: number,
+  ): void {
+    const toScreen = (x: number, y: number, z: number): Vec2 =>
+      v2(
+        rootX + (x - camX) * grain,
+        rootY + ((y - camY) * Projection.groundSquash - z * Projection.heightSquash) * grain,
+      );
+
+    for (const arrow of battle.enemyArrows) {
+      const tip = toScreen(arrow.x, arrow.y, arrow.z);
+      const previous = toScreen(arrow.previousX, arrow.previousY, arrow.previousZ);
+      let dx = tip.x - previous.x;
+      let dy = tip.y - previous.y;
+      let len = Math.hypot(dx, dy);
+      if (len < 1e-4) {
+        const target = toScreen(arrow.targetX, arrow.targetY, 0.7);
+        dx = target.x - tip.x;
+        dy = target.y - tip.y;
+        len = Math.hypot(dx, dy) || 1;
+      }
+      const ux = dx / len;
+      const uy = dy / len;
+      // 落地后箭头和前半截已经钻进土里，只留下半截箭杆与尾羽。
+      const visibleLength = ENEMY_ARROW_LENGTH * (arrow.landed ? 0.5 : 1);
+      const tail = v2(tip.x - ux * visibleLength * grain, tip.y - uy * visibleLength * grain);
+      const depth = this.camera.worldToScreen(arrow.x, arrow.y).y * Projector.DEPTH_PER_ROW + 10;
+      const shaft = Math.max(1, grain * 0.42);
+
+      const trailHistory = Math.min(ENEMY_ARROW_TRAIL_SPAN, arrow.age);
+      if (!arrow.landed && trailHistory > 1e-4) {
+        let trailHead = tip;
+        for (let i = 1; i <= ENEMY_ARROW_TRAIL_SAMPLES; i++) {
+          const progress = i / ENEMY_ARROW_TRAIL_SAMPLES;
+          const sample = enemyArrowPosition(arrow, arrow.age - trailHistory * progress);
+          const trailTail = toScreen(sample.x, sample.y, sample.z);
+          const fade = 1 - progress;
+          const alpha = Math.round(150 * fade);
+          if (alpha > 3) {
+            this.shapes.capsule(
+              trailHead,
+              trailTail,
+              Math.max(1, grain * (0.48 + fade * 0.34)),
+              rgba(236, 220, 174, alpha),
+              depth - 0.03,
+            );
+          }
+          trailHead = trailTail;
+        }
+      }
+
+      const bodyAlpha = Math.round(255 * arrow.opacity);
+      const wood = rgba(ENEMY_ARROW_WOOD.r, ENEMY_ARROW_WOOD.g, ENEMY_ARROW_WOOD.b, bodyAlpha);
+      const steel = rgba(ENEMY_ARROW_STEEL.r, ENEMY_ARROW_STEEL.g, ENEMY_ARROW_STEEL.b, bodyAlpha);
+      const fletching = rgba(
+        ENEMY_ARROW_FLETCHING.r,
+        ENEMY_ARROW_FLETCHING.g,
+        ENEMY_ARROW_FLETCHING.b,
+        bodyAlpha,
+      );
+      this.shapes.bar(tail, tip, shaft, wood, depth);
+      if (!arrow.landed) {
+        this.shapes.capsule(
+          v2(tip.x - ux * grain * 0.8, tip.y - uy * grain * 0.8),
+          tip,
+          Math.max(1, grain * 0.72),
+          steel,
+          depth + 0.01,
+        );
+      }
+      const px = -uy * grain * 0.75;
+      const py = ux * grain * 0.75;
+      this.shapes.bar(
+        v2(tail.x - px, tail.y - py),
+        v2(tail.x + px, tail.y + py),
+        Math.max(1, grain * 0.34),
+        fletching,
+        depth + 0.01,
+      );
+    }
   }
 
   /**

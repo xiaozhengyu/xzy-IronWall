@@ -599,7 +599,12 @@ function drawArm(
   const elbow = side === 0 ? pose.elbowL : pose.elbowR;
   const hand = side === 0 ? pose.handL : pose.handR;
 
-  const depth = p.depth(hand) + DEPTH_ARM;
+  // 玩家斜向屏幕上方移动时，远侧手臂应当被躯干挡住。之前所有手臂都固定叠在躯干前，
+  // 所以左上、右上两个朝向会同时露出两只手，身体看起来像透明的。
+  const behindTorso = def.dualWield && backFacingFarArm(p, pose) === side;
+  const depth = behindTorso
+    ? Math.min(p.depth(hand) + DEPTH_ARM, p.depth(pose.chest) + DEPTH_TORSO - 0.05)
+    : p.depth(hand) + DEPTH_ARM;
   const thick = RigSpec.armThickness * def.bulk;
   const plated = def.armor === 'plate';
   // 皮袖优先于甲：默认的袖子是罩袍色压暗一档，于是这个人从肩到脚是同一个色相的一团，
@@ -637,10 +642,20 @@ function drawHands(shapes: ShapeBatch, p: Projector, pose: Pose, palette: Charac
   const dark = def.leatherKit ? palette.leatherDark : plated ? palette.steelDark : palette.skinShade;
   const mid = def.leatherKit ? shade(palette.leather, 1.2) : plated ? palette.steel : palette.skin;
   const r = RigSpec.handRadius * def.bulk * (def.leatherKit ? 1.2 : 1);
+  const farArm = def.dualWield ? backFacingFarArm(p, pose) : null;
+  const torsoDepth = p.depth(pose.chest) + DEPTH_TORSO;
+  const handDepth = (side: number, hand: Vec3): number =>
+    side === farArm ? Math.min(p.depth(hand) + DEPTH_HAND, torsoDepth - 0.04) : p.depth(hand) + DEPTH_HAND;
 
   // 持盾那只手是例外：它从盾牌后面握着，一直待在那儿。
-  if (def.shield === 'none') fist(shapes, p.screen(pose.handL), p.s(r), mid, dark, p.depth(pose.handL) + DEPTH_HAND);
-  fist(shapes, p.screen(pose.handR), p.s(r), mid, dark, p.depth(pose.handR) + DEPTH_HAND);
+  if (def.shield === 'none') fist(shapes, p.screen(pose.handL), p.s(r), mid, dark, handDepth(0, pose.handL));
+  fist(shapes, p.screen(pose.handR), p.s(r), mid, dark, handDepth(1, pose.handR));
+}
+
+/** 斜背向镜头时落在躯干远侧的手臂；正背面仍保留对称轮廓。 */
+function backFacingFarArm(p: Projector, pose: Pose): number | null {
+  if (p.facingCamera > -0.35 || Math.abs(p.rightAxis.y) < 0.28) return null;
+  return p.depth(pose.handL) < p.depth(pose.handR) ? 0 : 1;
 }
 
 function drawHead(
@@ -941,20 +956,35 @@ function drawShield(shapes: ShapeBatch, p: Projector, pose: Pose, palette: Chara
     // 一个立在"右/上"平面内的圆盘；正确投影那个平面，它才会随着人转向而变成一条边。
     const { sx, sy, rot } = projectUprightDisc(p);
     const radius = 4.4;
-    shapes.ellipse(screen, p.s(radius * sx), Math.max(p.s(radius * sy), p.s(0.5)), rot, palette.shieldRim, depth);
+    const rx = p.s(radius * sx);
+    const ry = Math.max(p.s(radius * sy), p.s(0.5));
+
+    // 圆盾不是一张椭圆纸片，而是一块沿身体前轴有厚度的圆盘。近面随人物朝向切换，背层与
+    // 中间厚边留在它后方；正面时露出一圈暗月牙，侧面时则展开成清楚的盾沿。
+    const halfThickness = 0.65;
+    const nearSign = p.facingCamera >= 0 ? 1 : -1;
+    const farCenter = v3(center.x, center.y - nearSign * halfThickness, center.z);
+    const nearCenter = v3(center.x, center.y + nearSign * halfThickness, center.z);
+    const farScreen = p.screen(farCenter);
+    const faceScreen = p.screen(nearCenter);
+    const middleScreen = p.screen(center);
+
+    shapes.ellipse(farScreen, rx, ry, rot, shade(palette.shieldRim, 0.48), depth);
+    shapes.ellipse(middleScreen, rx, ry, rot, shade(palette.shieldRim, 0.7), depth + 0.004);
+    shapes.ellipse(faceScreen, rx, ry, rot, palette.shieldRim, depth + 0.008);
 
     // 接近正侧面时没有地方放盾面和盾心 —— 层层嵌套的细条只会读作噪点，所以那时盾就是
     // 一圈素边。
     if (sy > 0.4) {
-      shapes.ellipse(screen, p.s((radius - 0.75) * sx), p.s((radius - 0.75) * sy), rot, palette.shieldFace, depth + 0.01);
+      shapes.ellipse(faceScreen, p.s((radius - 0.75) * sx), p.s((radius - 0.75) * sy), rot, palette.shieldFace, depth + 0.01);
 
       // 盾心：一枚鼓出来的钢碗，占盾面直径的三分之一。原来是个半径 1 的小圆点，在盾面
       // 中央读作一处污渍；参考图上这块金属大得多，而它是整面盾上唯一的高光 —— 圆盾在
       // 人堆里能被认出来靠的就是"红面上一点亮"这个组合。
       const boss = radius * 0.36;
-      shapes.ellipse(screen, p.s(boss * sx), p.s(boss * sy), rot, palette.steelShade, depth + 0.02);
+      shapes.ellipse(faceScreen, p.s(boss * sx), p.s(boss * sy), rot, palette.steelShade, depth + 0.02);
       shapes.ellipse(
-        v2(screen.x + p.s(boss * sx * 0.2) * ShapeBatch.LIGHT_DIR.x, screen.y + p.s(boss * sy * 0.24) * ShapeBatch.LIGHT_DIR.y),
+        v2(faceScreen.x + p.s(boss * sx * 0.2) * ShapeBatch.LIGHT_DIR.x, faceScreen.y + p.s(boss * sy * 0.24) * ShapeBatch.LIGHT_DIR.y),
         p.s(boss * 0.66 * sx),
         p.s(boss * 0.66 * sy),
         rot,
@@ -965,7 +995,7 @@ function drawShield(shapes: ShapeBatch, p: Projector, pose: Pose, palette: Chara
         // 盾心上的高光走矩形：它躺在一枚已经是圆的盾心里面，边缘轮廓由盾心负责，
         // 这一块只负责"这儿反光"。圆盘要二十个顶点，矩形四个。
         shapes.rect(
-          v2(screen.x + p.s(boss * sx * 0.36) * ShapeBatch.LIGHT_DIR.x, screen.y + p.s(boss * sy * 0.42) * ShapeBatch.LIGHT_DIR.y),
+          v2(faceScreen.x + p.s(boss * sx * 0.36) * ShapeBatch.LIGHT_DIR.x, faceScreen.y + p.s(boss * sy * 0.42) * ShapeBatch.LIGHT_DIR.y),
           p.s(boss * 0.6 * sx),
           p.s(boss * 0.6 * sy),
           rot,
@@ -982,7 +1012,7 @@ function drawShield(shapes: ShapeBatch, p: Projector, pose: Pose, palette: Chara
           const a = rot + (i * Math.PI) / 2 + Math.PI / 4;
           const rr = radius * 0.66;
           shapes.rect(
-            v2(screen.x + Math.cos(a) * p.s(rr * sx), screen.y + Math.sin(a) * p.s(rr * sy)),
+            v2(faceScreen.x + Math.cos(a) * p.s(rr * sx), faceScreen.y + Math.sin(a) * p.s(rr * sy)),
             p.s(1.1 * sx),
             p.s(1.1 * sy),
             rot,
@@ -1001,11 +1031,19 @@ function drawShield(shapes: ShapeBatch, p: Projector, pose: Pose, palette: Chara
   const w = Math.max(p.s(2 * halfW * p.sideOn), p.s(1.1));
   const h = p.s(2 * halfHeight * Projection.heightSquash);
 
-  shapes.rect(screen, w, h, 0, palette.shieldRim, depth);
+  // 精英塔盾同样是一块有厚度的实体。沿身体前轴把背面、中层、正面错开：正面朝镜头时露出
+  // 上下厚边，转到侧面时三层横向展开，原本的一条纸片边就变成完整盾沿。
+  const halfThickness = 0.9;
+  const nearSign = p.facingCamera >= 0 ? 1 : -1;
+  const farScreen = p.screen(v3(center.x, center.y - nearSign * halfThickness, center.z));
+  const faceScreen = p.screen(v3(center.x, center.y + nearSign * halfThickness, center.z));
+  shapes.rect(farScreen, w, h, 0, shade(palette.shieldRim, 0.46), depth);
+  shapes.rect(screen, w, h, 0, shade(palette.shieldRim, 0.68), depth + 0.004);
+  shapes.rect(faceScreen, w, h, 0, palette.shieldRim, depth + 0.008);
   if (w > p.s(2.2)) {
-    shapes.rect(screen, w - p.s(1.2), h - p.s(1.2), 0, palette.shieldFace, depth + 0.01);
-    shapes.disc(screen, p.s(1.0), palette.steel, depth + 0.02);
-    if (p.detailed) shapes.rect(screen, p.s(0.6), h - p.s(1.8), 0, shade(palette.shieldFace, 0.8), depth + 0.015);
+    shapes.rect(faceScreen, w - p.s(1.2), h - p.s(1.2), 0, palette.shieldFace, depth + 0.01);
+    shapes.disc(faceScreen, p.s(1.0), palette.steel, depth + 0.02);
+    if (p.detailed) shapes.rect(faceScreen, p.s(0.6), h - p.s(1.8), 0, shade(palette.shieldFace, 0.8), depth + 0.015);
   }
 }
 
@@ -1019,12 +1057,16 @@ function drawWeapon(shapes: ShapeBatch, p: Projector, pose: Pose, palette: Chara
     case 'sword':
       drawSword(shapes, p, pose, palette, def);
       return;
-    case 'hammer':
-      // 副手那把先画。两把锤各自按自己那只手的深度排序，所以近侧的一把自然压在身体前面、
-      // 远侧的一把落到身体后面 —— 这是双持能读出"一前一后"而不是"贴在胸口"的全部原因。
-      if (def.dualWield) drawHammer(shapes, p, pose.offhandGrip, pose.offhandDir, palette, def);
-      drawHammer(shapes, p, pose.weaponGrip, pose.weaponDir, palette, def);
+    case 'hammer': {
+      // 斜向屏幕上方时，远侧锤仍然完整绘制，但整把压到躯干后层：穿过身体的那段被遮住，
+      // 伸出轮廓的锤头继续可见。直接跳过整把锤会让双持在这两个朝向凭空变成单持。
+      const farArm = def.dualWield ? backFacingFarArm(p, pose) : null;
+      const behindTorso = p.depth(pose.chest) + DEPTH_TORSO - 0.08;
+      if (def.dualWield)
+        drawHammer(shapes, p, pose.offhandGrip, pose.offhandDir, palette, def, farArm === 0 ? behindTorso : undefined);
+      drawHammer(shapes, p, pose.weaponGrip, pose.weaponDir, palette, def, farArm === 1 ? behindTorso : undefined);
       return;
+    }
     default:
       drawPolearm(shapes, p, pose, palette, def);
       return;
@@ -1045,8 +1087,10 @@ function drawHammer(
   dir: Vec3,
   palette: CharacterPalette,
   def: UnitDef,
+  depthCeiling?: number,
 ): void {
-  const depth = p.depth(grip) + DEPTH_WEAPON;
+  const naturalDepth = p.depth(grip) + DEPTH_WEAPON;
+  const depth = depthCeiling === undefined ? naturalDepth : Math.min(naturalDepth, depthCeiling);
   const length = hammerLength(def);
   const r = HAMMER_HEAD_RADIUS * def.bulk;
 
@@ -1086,7 +1130,6 @@ function drawSword(shapes: ShapeBatch, p: Projector, pose: Pose, palette: Charac
   const length = bladeLength(def);
   const pommel = addScaled(hand, dir, -1.4);
   const guard = addScaled(hand, dir, 0.9);
-  const waist = addScaled(guard, dir, (length - 0.9) * 0.6);
   const tip = addScaled(hand, dir, length);
 
   // 好装备配金件。杂兵的刀留在钢色上 —— 满场人手一把金护手的话，金就不再是"这人不一样"
@@ -1095,6 +1138,17 @@ function drawSword(shapes: ShapeBatch, p: Projector, pose: Pose, palette: Charac
   const fitting = fine ? palette.trim : palette.steelShade;
 
   shapes.capsule(p.screen(pommel), p.screen(guard), p.s(1.1), palette.leather, depth);
+
+  // 普通敌兵恢复 2364867 之前的剑：一体式剑身、短护手、没有尾锤。精制的分段剑只留给
+  // 有肩甲或重甲的英雄单位，避免所有杂兵手里都拿着同一把华丽武器。
+  if (!fine) {
+    shapes.shadedCapsule(p.screen(guard), p.screen(tip), p.s(1.5), palette.steelShade, palette.steel, palette.steelLight, depth + 0.01);
+    const side = sideAxis(dir);
+    shapes.bar(p.screen(addScaled(guard, side, -1.5)), p.screen(addScaled(guard, side, 1.5)), p.s(1.0), palette.steelShade, depth + 0.02);
+    return;
+  }
+
+  const waist = addScaled(guard, dir, (length - 0.9) * 0.6);
 
   // 剑身根部走方头板，只有剑尖那段用圆头胶囊。
   //
