@@ -360,8 +360,7 @@ export class Menu {
     // ---- 角色
 
     const roles = row(parent, '角色');
-    // 预设名里的英文只是内部代号，菜单上留中文那半截就够了。
-    const names = this.bridge.presets.map((n) => n.replace(/^[a-z]+\s*/, ''));
+    const names = this.bridge.presets;
     for (let i = 0; i < names.length; i++) {
       const b = this.button(`${i + 1} ${names[i]}`, '', `Digit${i + 1}`);
       this.presetButtons.push(b);

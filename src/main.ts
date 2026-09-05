@@ -1,6 +1,6 @@
 import { Application } from 'pixi.js';
 import { RigSpec } from './characters/rig';
-import { Battle, PlayerPresets } from './game/battle';
+import { Battle, PlayerPresets, playerPresetDisplayName } from './game/battle';
 import { Skills } from './game/skills';
 import { ACTIVE_SKILL_CODES, type ActiveSkillSlot } from './game/skillLoadout';
 import { Field } from './game/field';
@@ -73,7 +73,7 @@ const camera = new Camera();
  * 一个功能是自己实现的，全部转回 onKeyPressed，所以鼠标和键盘不会分岔。
  */
 const menu = new Menu({
-  presets: PlayerPresets.map((p) => p.name),
+  presets: PlayerPresets.map((_, index) => playerPresetDisplayName(index)),
   skills: Skills.map((s) => ({
     id: s.id,
     name: s.name,
@@ -307,7 +307,11 @@ function onKeyPressed(code: string): void {
   if (code === 'BracketRight') camera.nudgeMagnify(1);
 
   const digit = code.startsWith('Digit') ? Number(code.slice(5)) : NaN;
-  if (digit >= 1 && digit <= PlayerPresets.length) battle.setPreset(digit - 1);
+  if (digit >= 1 && digit <= PlayerPresets.length) {
+    battle.setPreset(digit - 1);
+    // 暂停时主循环不跑；菜单换角色后主动补一帧，让名称和头像当场同步。
+    draw();
+  }
 }
 
 // ---------------------------------------------------------------- 主循环

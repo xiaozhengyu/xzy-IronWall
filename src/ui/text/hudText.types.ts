@@ -1,5 +1,11 @@
 export interface HudMessages {
   playerInfo: string;
+  playerName: string;
+  playerLevel: string;
+  health: string;
+  mana: string;
+  experience: string;
+  experienceValue: string;
   wavePanel: string;
   waveTitle: string;
   nextWaveCountdown: string;

@@ -364,6 +364,11 @@ export const PlayerPresets: { name: string; make: () => UnitDef }[] = [
   { name: 'knight 骑士', make: UnitPresets.knight },
 ];
 
+/** 菜单和 HUD 共用的角色显示名，英文部分只是内部预设代号。 */
+export function playerPresetDisplayName(index: number): string {
+  return PlayerPresets[index]?.name.replace(/^[a-z]+\s*/, '') ?? '';
+}
+
 /**
  * 敌人的种类。def 和调色板是共享的只读数据，一百个杂兵指向同一份就够了。
  *

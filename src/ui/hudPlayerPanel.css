@@ -1,0 +1,138 @@
+.hud-player-panel-content {
+  display: grid;
+  grid-template-columns: 29% 1fr;
+  grid-template-rows: 24% 26% 26% 15%;
+  gap: 2% 3%;
+  align-content: center;
+  padding: 12px 16px 13px;
+}
+
+.hud-player-avatar {
+  position: relative;
+  grid-column: 1;
+  grid-row: 1 / 4;
+  align-self: stretch;
+  justify-self: start;
+  width: auto;
+  height: 100%;
+  aspect-ratio: 607 / 563;
+  min-width: 0;
+  min-height: 0;
+}
+
+.hud-player-avatar-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.hud-player-avatar-frame,
+.hud-player-status-frame,
+.hud-player-experience-frame {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.hud-player-header {
+  display: flex;
+  grid-column: 2;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 8px;
+  padding: 0 2%;
+}
+
+.hud-player-name {
+  overflow: hidden;
+  min-width: 0;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hud-player-level {
+  flex: none;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.hud-player-status-bar {
+  position: relative;
+  grid-column: 2;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.hud-player-status-fill {
+  position: absolute;
+  top: 8%;
+  bottom: 0;
+  left: 2%;
+  z-index: 1;
+  max-width: 96%;
+  border-radius: 7px;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.16), inset 0 -2px 0 rgba(0, 0, 0, 0.42);
+}
+
+.hud-player-status-bar--health .hud-player-status-fill {
+  background: linear-gradient(#e14e45, #9d1819 58%, #5d0e11);
+}
+
+.hud-player-status-bar--mana .hud-player-status-fill {
+  background: linear-gradient(#278bf2, #1257b6 58%, #092b72);
+}
+
+.hud-player-status-value {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.hud-player-experience-bar {
+  position: relative;
+  grid-column: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.hud-player-experience-fill {
+  position: absolute;
+  top: 16%;
+  bottom: 16%;
+  left: 4%;
+  z-index: 1;
+  width: var(--hud-player-experience, 0%);
+  max-width: 92%;
+  background: linear-gradient(#ffd35a, #c68418 65%, #6f3e09);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  clip-path: polygon(0 50%, 2% 0, 100% 0, 100% 100%, 2% 100%);
+}
+
+.hud-player-experience-value {
+  display: flex;
+  grid-column: 2;
+  align-items: center;
+  min-width: 0;
+  padding-left: 5%;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}

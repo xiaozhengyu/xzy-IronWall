@@ -1,5 +1,5 @@
 import minimapFrameUrl from '../../assets/hud/minimap-frame.png';
-import type { Battle } from '../game/battle';
+import { playerPresetDisplayName, type Battle } from '../game/battle';
 import type { Field } from '../game/field';
 import type { Camera } from '../render/camera';
 import './hud.css';
@@ -10,12 +10,14 @@ import { createHudButton } from './hudButton';
 import { createHudIcon } from './hudIcons';
 import { swordCursorImage } from './cursorImage';
 import { HudWavePanel } from './hudWavePanel';
+import { HudPlayerPanel } from './hudPlayerPanel';
 import { HudText, type HudLocale } from './text/hudText';
 export { createHudButton, type HudButtonOptions, type HudButtonSkin } from './hudButton';
 export { HudProgressBar, type HudProgressBarOptions } from './hudProgressBar';
 export { HudFrame, type HudFrameOptions, type HudFrameSkin } from './hudFrame';
 export { createHudIcon, HUD_ICON_URLS, type HudIconName } from './hudIcons';
 export { HudWavePanel, type HudWavePanelOptions } from './hudWavePanel';
+export { HudPlayerPanel, type HudPlayerPanelOptions } from './hudPlayerPanel';
 export { HudText, type HudLocale, type HudTextKey, type HudTextParams } from './text/hudText';
 
 /**
@@ -54,7 +56,7 @@ export class Hud {
   readonly minimapLayer = document.createElement('div');
   readonly minimap: Minimap;
   readonly gemProgress: HudProgressBar;
-  readonly playerInfo: HudFrame;
+  readonly playerInfo: HudPlayerPanel;
   readonly waveInfo: HudWavePanel;
   readonly currencyInfo: HudFrame;
   readonly text: HudText;
@@ -67,12 +69,13 @@ export class Hud {
   private readonly hudPointer = document.createElement('div');
   private readonly gemsPerCycle: number;
   private lastCollectedGems = 0;
+  private lastPlayerPreset = -1;
 
   constructor(host: HTMLElement, options: HudOptions = {}) {
     this.root.className = 'hud';
     this.text = new HudText(options.locale ?? 'zh-CN');
 
-    this.playerInfo = this.createInfoFrame('hud-player-info');
+    this.playerInfo = new HudPlayerPanel(this.text, { className: 'hud-player-info' });
     this.waveInfo = new HudWavePanel(this.text, { className: 'hud-wave-info' });
     this.currencyInfo = this.createCurrencyFrame();
     this.topInfoRow.className = 'hud-top-info-row';
@@ -145,16 +148,6 @@ export class Hud {
     }
     this.root.appendChild(this.hudPointer);
     host.appendChild(this.root);
-  }
-
-  private createInfoFrame(className: string): HudFrame {
-    const frame = new HudFrame({ skin: 'frame1', className, label: this.text.value('playerInfo') });
-    const placeholder = document.createElement('span');
-    placeholder.className = 'hud-text hud-text--pixel hud-info-placeholder';
-    this.text.bindText(placeholder, 'playerInfo');
-    this.text.bindAttribute(frame.root, 'aria-label', 'playerInfo');
-    frame.content.appendChild(placeholder);
-    return frame;
   }
 
   private createCurrencyFrame(): HudFrame {
@@ -231,6 +224,12 @@ export class Hud {
   }
 
   draw(field: Field, battle: Battle, camera: Camera): void {
+    if (battle.presetIndex !== this.lastPlayerPreset) {
+      this.lastPlayerPreset = battle.presetIndex;
+      this.playerInfo.setName(playerPresetDisplayName(battle.presetIndex));
+      this.playerInfo.setAvatar(battle.player);
+    }
+    this.playerInfo.setHealth(Math.max(0, Math.ceil(battle.player.hp)), battle.player.maxHp);
     this.minimap.draw(field, battle, camera);
     const total = battle.collectedGems;
     if (total !== this.lastCollectedGems) {
