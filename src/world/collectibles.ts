@@ -52,7 +52,7 @@ const BURST_LIFE = 0.24;
  * 地图可收集物池。
  *
  * 它不知道经验、金钱或技能，只管理“东西落到地上、靠近玩家后被吸走”这段公共行为。
- * update 的返回值是这一帧收走的数量；当前 Battle 暂时忽略它，以后接数值逻辑时直接消费即可。
+ * update 的返回值是这一帧收走的数量；Battle 累计后交给 HUD 显示收集进度。
  */
 export class Collectibles {
   private readonly drops: CollectibleDrop[] = [];

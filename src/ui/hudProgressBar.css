@@ -1,0 +1,61 @@
+.hud-progress-bar {
+  --hud-progress-height: 34px;
+
+  position: relative;
+  height: var(--hud-progress-height);
+  min-width: calc(var(--hud-progress-height) * 2 + 24px);
+  pointer-events: none;
+  user-select: none;
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.7));
+}
+
+/**
+ * process-bk.png: 560×68。只沿 x 切成 68 / 424 / 68 三段。
+ * 顶底切片为 0，fill 保留中段原图；两端宽度等于显示高度，装饰始终等比。
+ * 不必生成切图文件，也不需要在 resize 时重算几何。
+ */
+.hud-progress-frame {
+  position: absolute;
+  inset: 0;
+  border-style: solid;
+  border-width: 0 var(--hud-progress-height);
+  border-color: transparent;
+  border-image-source: url('../../assets/hud/process-bk.png');
+  border-image-slice: 0 68 fill;
+  border-image-width: 0 var(--hud-progress-height);
+  border-image-repeat: stretch;
+}
+
+/** 延伸到金框内缘下方；两端凹口贴合菱形装饰，消除原来矩形槽位留下的空隙。 */
+.hud-progress-track {
+  position: absolute;
+  left: calc(var(--hud-progress-height) * 50 / 68);
+  right: calc(var(--hud-progress-height) * 50 / 68);
+  top: 32.3529%;
+  bottom: 35.2941%;
+  clip-path: polygon(
+    0 0, 100% 0,
+    calc(100% - var(--hud-progress-height) * 10 / 68) 50%,
+    100% 100%, 0 100%,
+    calc(var(--hud-progress-height) * 10 / 68) 50%
+  );
+  overflow: hidden;
+  background: linear-gradient(180deg, #071722, #041017 65%, #092432);
+  box-shadow: inset 0 1px 2px #000;
+}
+
+.hud-progress-fill {
+  position: absolute;
+  inset: 0;
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 140ms ease-out;
+  background: linear-gradient(180deg, #8bfaff 0%, #22cdec 38%, #099abd 62%, #08516f 100%);
+  box-shadow: inset 0 1px rgba(241, 255, 255, 0.9), inset 0 -1px rgba(3, 33, 54, 0.7);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-progress-fill {
+    transition: none;
+  }
+}

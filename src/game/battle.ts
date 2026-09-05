@@ -517,6 +517,8 @@ export class Battle {
   readonly debris = new Debris();
   /** 地图上的掉落物。数值结算尚未接入，目前只负责生成、落地和吸附。 */
   readonly collectibles = new Collectibles();
+  /** 当前一局实际拾取的宝石数，HUD 用于循环进度；暂不参与升级或奖励。 */
+  collectedGems = 0;
   /** 弓箭手已经射出的箭。公开只供 Scene 读取并绘制。 */
   readonly enemyArrows: EnemyArrow[] = [];
 
@@ -772,6 +774,7 @@ export class Battle {
     this.enemyArrows.length = 0;
     this.debris.clear();
     this.collectibles.clear();
+    this.collectedGems = 0;
     this.player.death = -1;
     this.player.hurt = 0;
     this.player.hp = this.player.maxHp;
@@ -1165,7 +1168,7 @@ export class Battle {
 
     this.effects.update(dt);
     this.debris.update(dt);
-    this.collectibles.update(dt, player);
+    this.collectedGems += this.collectibles.update(dt, player);
     field.update(dt, this.actors());
 
     // 玩家倒下了就重开：清场、回血、重新铺一批。
@@ -1179,6 +1182,7 @@ export class Battle {
       this.resetSkillRuntime();
       this.enemyArrows.length = 0;
       this.collectibles.clear();
+      this.collectedGems = 0;
       this.seed(view);
     }
 

@@ -49,3 +49,10 @@
   width: 100%;
   height: 100%;
 }
+
+.hud > .hud-gem-progress {
+  position: absolute;
+  left: 50%;
+  bottom: 2.6%;
+  transform: translateX(-50%);
+}
