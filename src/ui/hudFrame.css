@@ -1,0 +1,51 @@
+.hud-frame,
+.hud-button {
+  --hud-frame-border: 26px;
+  --hud-frame-fill-inset: 1px;
+  --hud-frame-content-inset: 12px;
+  --hud-frame-face: linear-gradient(180deg, rgba(31, 32, 31, 0.97), rgba(8, 10, 10, 0.97));
+
+  position: relative;
+  box-sizing: border-box;
+  isolation: isolate;
+}
+
+.hud-frame {
+  --hud-frame-image: url('../../assets/hud/frame/frame-base1.png');
+  --hud-frame-slice: 112;
+}
+
+.hud-frame::before,
+.hud-button::before {
+  content: '';
+  position: absolute;
+  inset: var(--hud-frame-fill-inset);
+  z-index: -2;
+  background: var(--hud-frame-face);
+  border-radius: calc(var(--hud-frame-border) * 0.72);
+  pointer-events: none;
+}
+
+.hud-frame::after,
+.hud-button::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  box-sizing: border-box;
+  border: var(--hud-frame-border) solid transparent;
+  border-image-source: var(--hud-frame-image);
+  border-image-slice: var(--hud-frame-slice) fill;
+  border-image-width: var(--hud-frame-border);
+  border-image-repeat: stretch;
+  pointer-events: none;
+}
+
+.hud-frame-content {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: var(--hud-frame-content-inset);
+}

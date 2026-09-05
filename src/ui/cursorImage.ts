@@ -19,10 +19,18 @@ const PIXEL = 2;
 /** 烤失败时用什么。默认箭头总比没有光标强。 */
 const FALLBACK = 'auto';
 
-let cached: string | null = null;
+export interface SwordCursorImage {
+  url: string;
+  width: number;
+  height: number;
+  hotX: number;
+  hotY: number;
+}
 
-export function swordCursorCss(): string {
-  if (cached) return cached;
+let cached: SwordCursorImage | null | undefined;
+
+export function swordCursorImage(): SwordCursorImage | null {
+  if (cached !== undefined) return cached;
 
   const w = SWORD_CURSOR.width * PIXEL;
   const h = SWORD_CURSOR.height * PIXEL;
@@ -31,7 +39,10 @@ export function swordCursorCss(): string {
   canvas.height = h;
 
   const ctx = canvas.getContext('2d');
-  if (!ctx) return FALLBACK;
+  if (!ctx) {
+    cached = null;
+    return cached;
+  }
 
   const hotX = SWORD_CURSOR.hotX * PIXEL;
   const hotY = SWORD_CURSOR.hotY * PIXEL;
@@ -42,9 +53,14 @@ export function swordCursorCss(): string {
   });
 
   try {
-    cached = `url(${canvas.toDataURL('image/png')}) ${hotX} ${hotY}, ${FALLBACK}`;
+    cached = { url: canvas.toDataURL('image/png'), width: w, height: h, hotX, hotY };
   } catch {
-    cached = FALLBACK;
+    cached = null;
   }
   return cached;
+}
+
+export function swordCursorCss(): string {
+  const image = swordCursorImage();
+  return image ? `url(${image.url}) ${image.hotX} ${image.hotY}, ${FALLBACK}` : FALLBACK;
 }

@@ -166,7 +166,17 @@ await app.init({
   autoDensity: false,
 });
 gameViewport.appendChild(app.canvas);
-const hud = new Hud(gameViewport);
+const hud = new Hud(gameViewport, {
+  requestPause: () => {
+    if (state !== 'playing') return;
+    if (document.pointerLockElement) {
+      document.exitPointerLock();
+      return;
+    }
+    state = 'paused';
+    menu.showPause();
+  },
+});
 
 const scene = new Scene(app.renderer, camera);
 app.stage.addChild(scene.view);
@@ -211,6 +221,17 @@ const controls = new Controls(app.canvas as HTMLCanvasElement, camera, {
   },
   canLock: () => state !== 'loading',
 });
+
+// 指针锁定时 DOM 按钮不会直接收到鼠标事件；准星命中 HUD 控件时，先于移动输入消费左键。
+(app.canvas as HTMLCanvasElement).addEventListener('mousedown', (event) => {
+  if (!controls.pointerLocked || event.button !== 0) return;
+  const rect = app.canvas.getBoundingClientRect();
+  const clientX = rect.left + controls.cursor.x / camera.viewWidth * rect.width;
+  const clientY = rect.top + controls.cursor.y / camera.viewHeight * rect.height;
+  if (!hud.activateControlAt(clientX, clientY)) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+}, { capture: true });
 
 // ---------------------------------------------------------------- 命令表
 
@@ -358,6 +379,7 @@ function galleryCount(): number {
 function draw(): void {
   if (state !== 'playing') battle.syncEnemyVisibility(viewOf());
   hud.draw(field, battle, camera);
+  hud.updatePointer(controls.cursor.x, controls.cursor.y, camera.viewWidth, camera.viewHeight, controls.pointerLocked);
   if (showItems) {
     scene.drawItems(ItemCatalog, itemSheet);
     return;
