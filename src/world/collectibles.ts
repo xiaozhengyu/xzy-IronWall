@@ -56,6 +56,9 @@ const BURST_LIFE = 0.24;
  */
 export class Collectibles {
   private readonly drops: CollectibleDrop[] = [];
+  private readonly visibleDrops: CollectibleDrop[] = [];
+  /** 最近一帧可见的掉落物数量，便于性能检查。 */
+  drawn = 0;
   private readonly bursts: PickupBurst[] = [];
   private replaceAt = 0;
 
@@ -65,6 +68,8 @@ export class Collectibles {
 
   clear(): void {
     this.drops.length = 0;
+    this.visibleDrops.length = 0;
+    this.drawn = 0;
     this.bursts.length = 0;
     this.replaceAt = 0;
   }
@@ -216,6 +221,7 @@ export class Collectibles {
     rootY: number,
     scale: number,
     depthOf: (worldY: number) => number,
+    viewport?: { width: number; height: number },
   ): void {
     const toScreen = (x: number, y: number, z: number) =>
       v2(
@@ -223,7 +229,24 @@ export class Collectibles {
         rootY + ((y - camY) * Projection.groundSquash - z * Projection.heightSquash) * scale,
       );
 
+    const inView = (x: number, y: number, z: number): boolean => {
+      if (!viewport) return true;
+      const sx = rootX + (x - camX) * scale;
+      const sy = rootY + ((y - camY) * Projection.groundSquash - z * Projection.heightSquash) * scale;
+      const margin = 9 * scale;
+      return sx >= -margin && sx <= viewport.width + margin && sy >= -margin && sy <= viewport.height + margin;
+    };
+    const visible = this.visibleDrops;
+    visible.length = 0;
     for (const d of this.drops) {
+      if (inView(d.x, d.y, d.z + 2) || inView(d.x, d.y, 0) ||
+          (d.pulling && inView(d.trailX, d.trailY, Math.max(1.4, d.z)))) visible.push(d);
+    }
+    this.drawn = visible.length;
+
+    for (const d of visible) {
+      // 大量静止宝石保留四层宝石轮廓；落地/吸附中的宝石继续完整发光。
+      const detailed = visible.length <= 160 || !d.resting || d.pulling || d.age < 2;
       const depth = depthOf(d.y) + 0.25;
       const bob = d.resting ? 1.65 + Math.sin(d.age * 5.4 + d.phase) * 0.38 : 0;
       const displayZ = d.z + bob;
@@ -232,8 +255,8 @@ export class Collectibles {
       const pulse = 0.88 + Math.sin(d.age * 7 + d.phase) * 0.12;
       const r = 1.55 * scale * pulse;
 
-      shapes.ellipse(ground, 2.6 * scale, 1.1 * scale, 0, rgba(12, 31, 34, 105), depth - 0.4);
-      if (d.resting) {
+      if (detailed) shapes.ellipse(ground, 2.6 * scale, 1.1 * scale, 0, rgba(12, 31, 34, 105), depth - 0.4);
+      if (d.resting && detailed) {
         shapes.ellipseRing(
           ground,
           (3.2 + pulse * 0.6) * scale,
@@ -250,7 +273,7 @@ export class Collectibles {
         const tail = toScreen(d.trailX, d.trailY, Math.max(1.4, displayZ * 0.72));
         shapes.capsule(tail, at, Math.max(1.2, scale * 0.75), rgba(83, 239, 255, 112), depth - 0.15);
         shapes.disc(at, r * 2.35, rgba(68, 229, 255, 50), depth - 0.1);
-      } else {
+      } else if (detailed) {
         shapes.disc(at, r * 1.9, rgba(68, 229, 255, 32), depth - 0.1);
       }
 
@@ -264,6 +287,7 @@ export class Collectibles {
     }
 
     for (const burst of this.bursts) {
+      if (!inView(burst.x, burst.y, COLLECT_HEIGHT)) continue;
       const t = burst.age / BURST_LIFE;
       const fade = 1 - t;
       const at = toScreen(burst.x, burst.y, COLLECT_HEIGHT);

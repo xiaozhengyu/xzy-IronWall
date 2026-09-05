@@ -201,6 +201,7 @@ const DETAIL_SPACING = 14;
  * 里面站着的人。
  */
 const TREE_SPACING = 38;
+type TreePlacement = Readonly<{ x: number; y: number; roll: number; species: TreeSpecies }>;
 
 /**
  * 其余散布物的间距，全部按 overlord 的取值。
@@ -277,6 +278,10 @@ export class Terrain {
   private readonly water: Float32Array;
   private readonly forest: Float32Array;
   private readonly shade: Float32Array;
+  /** 静态地形每格只计算一次树木（空格也缓存），绘制和碰撞共用。 */
+  private readonly treeCells: (TreePlacement | null | undefined)[] = [];
+  private readonly treeCols: number;
+  private readonly treeRows: number;
 
   private readonly scratch: Material = { dirt: 0, water: 0, forest: 0, shade: 0 };
 
@@ -295,6 +300,8 @@ export class Terrain {
     this.cols = Math.ceil(width / cellSize);
     this.rows = Math.ceil(height / cellSize);
     this.seed = seed;
+    this.treeCols = Math.ceil(width / TREE_SPACING);
+    this.treeRows = Math.ceil(height / TREE_SPACING);
 
     const n = (this.cols + 1) * (this.rows + 1);
     this.dirt = new Float32Array(n);
@@ -749,10 +756,20 @@ export class Terrain {
   /**
    * 一个散布格子里有没有树，有的话在哪。
    *
-   * 绘制和碰撞共用这一个函数。树的位置完全由哈希决定、不存表，所以"画在哪"和"撞在哪"
-   * 只要走同一条路就永远一致 —— 两边各算一遍是最容易出现"看得见撞不到"的地方。
+   * 绘制和碰撞共用这一个函数。位置仍由原来的哈希和地形决定，首次查询后缓存；地形在
+   * 构造后不再改变，因此无需每只怪物、每个碰撞子步都重新采样同一片森林。
    */
-  treeAt(cellX: number, cellY: number): { x: number; y: number; roll: number; species: TreeSpecies } | null {
+  treeAt(cellX: number, cellY: number): TreePlacement | null {
+    if (cellX < 0 || cellY < 0 || cellX >= this.treeCols || cellY >= this.treeRows) return null;
+    const index = cellY * this.treeCols + cellX;
+    const cached = this.treeCells[index];
+    if (cached !== undefined) return cached;
+    const tree = this.computeTreeAt(cellX, cellY);
+    this.treeCells[index] = tree;
+    return tree;
+  }
+
+  private computeTreeAt(cellX: number, cellY: number): TreePlacement | null {
     const cell = TREE_SPACING;
     const x = (cellX + 0.15 + this.hash01(cellX + 5501, cellY) * 0.7) * cell;
     const y = (cellY + 0.15 + this.hash01(cellX, cellY + 5501) * 0.7) * cell;

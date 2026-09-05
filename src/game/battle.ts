@@ -12,6 +12,8 @@ import { inAttackArc, inSector, sweptBy } from './combat';
 import type { Field } from './field';
 import { rgb } from '../render/color';
 import { SpatialGrid } from './grid';
+import { WorldPopulation } from './worldPopulation';
+import { DistantMotion } from './distantMotion';
 import { SkillLoadout, type ActiveSkillSlot } from './skillLoadout';
 import { Collectibles } from '../world/collectibles';
 import {
@@ -225,33 +227,15 @@ const SPAWN_JITTER = 24;
  */
 const DESPAWN_MARGIN = 0.3;
 
-/**
- * 回收之后，那个**位置**还替原主留多久，秒。
- *
- * 修的是跑步机最容易穿帮的一处：左边聚起几百人，玩家往右跑几步再回头，人海没了 —— 那一坨
- * 人明明只是走出了回收框，回来时却要从视野外重新走进来，中间有好几秒的空场。真实世界里
- * 转身回头看到的应该是同一群人站在同一个地方。
- *
- * 所以回收只丢**模型**，位置进一张预留表；视线回来时照着表把人放回去（见 restoreReserved）。
- *
- * 12 秒是按"跑开再回头"这件事本身的时长定的：玩家冲刺 60、回收框边缘离镜头中心约 156 个
- * 单位（出货视口半宽 120 × 1.3），也就是跑 2.6 秒才刚把最外圈甩掉；往返再加上转身，一次
- * "去看看那边再回来"大约就是十秒出头。给到 12 秒，正常的回头都还认得出原来那片人海；再长
- * 就开始不像回事了 —— 离开半分钟回来还是原封不动的一群人，反而假。
- *
- * 想让人海"记得更久"就往上调，想让它更快忘掉就往下调。这个值只影响观感，不影响人数稳态
- * （稳态还是回收框定的）。
- */
-const RESERVE_TIME = 12;
-
-/**
- * 预留表的条数上限。纯粹是内存兜底。
- *
- * 稳态下用不到：冲刺时每秒回收一百多个，12 秒也就一千五百条上下，而一条只是几个数加两个
- * 共享引用。留 6000 是给"缩放拉远 + 出兵拉满"那种调试情形的余量。顶到上限就不再记新的 ——
- * 丢掉的是最新回收的那些，它们离视线最远，最不可能被立刻看回来。
- */
-const MAX_RESERVATIONS = 6000;
+/** 全图初始散布及持续补怪的目标间距（世界单位），调小会增加远处怪物密度。 */
+export const WORLD_ENEMY_SPACING = 28;
+/** 完整怪物和移动数据共享的 CPU/内存兜底；常规新增及远处名额调配优先遵守更低的日常预算。 */
+export const MAX_WORLD_ENEMIES = 4000;
+/** 日常总量预算。远处预留名额不能把玩家附近的跑步机刷怪永久关掉。 */
+export const TARGET_WORLD_ENEMIES = 2400;
+const WORLD_REFILL_RESERVE = 600;
+/** 总量拥挤时仍保障这批附近进攻者；并非额外增加全图上限。 */
+export const LOCAL_ENEMY_TARGET = 600;
 
 /**
  * "重新获得视线"的判定框，同样按出货视口半宽/半高的倍数。
@@ -494,6 +478,8 @@ export interface BattleView {
   y: number;
   /** 当前视口对角线的一半。只用来判断谁远到不必搭姿势。 */
   radius: number;
+  /** 实际可见矩形。省略时使用 spawn，兼容离线战斗模拟。 */
+  visible?: { x: number; y: number; halfW: number; halfH: number };
   /** 出怪框：出货那一档缩放下的视口，中心也按那一档夹过。 */
   spawn: { x: number; y: number; halfW: number; halfH: number };
 }
@@ -506,20 +492,20 @@ const smooth = (prev: number, now: number): number => prev * 0.9 + now * 0.1;
  * 存的是重建一个一模一样的人所需的全部东西。def 和 palette 是 EnemyKinds 里那份共享的只读
  * 数据，直接引用即可，不用记下标 —— 一千条预留指向同五份 def。
  *
- * 不记血量和倒地进度：只有活人进这张表（见 recycle）。尸体在画面外躺满两秒多就沉掉了，把
- * 一具尸体"恢复"回来没有意义，反而会让人看见一片凭空长出来的尸体。
+ * 只存活人；远处照常移动、避障和推进冷却，但不创建骨架或动画器。
  */
-interface Reservation {
-  x: number;
-  y: number;
-  facing: number;
-  def: UnitDef;
+type EnemyMover = Pick<Character,
+  'x' | 'y' | 'facing' | 'def' | 'speed' | 'walkSpeed' | 'crowdPace' |
+  'sideBias' | 'radius' | 'spacing' | 'alive'
+>;
+
+interface Reservation extends EnemyMover {
+  motion: DistantMotion;
   palette: CharacterPalette;
-  speed: number;
   /** 出手冷却。连这个也带上，回来的那一群才不会整齐划一地同时挥。 */
   cooldown: number;
-  /** clock 走到这个值就作废。 */
-  expires: number;
+  hp: number;
+  maxHp: number;
 }
 
 export class Battle {
@@ -539,24 +525,11 @@ export class Battle {
   presetIndex = 0;
 
   /**
-   * 同屏上限，运行时可调（逗号/句号）。
-   *
-   * 一开始定在 90 是出于对渲染开销的担心：每个人六十多个图元，每帧全部重新灌进一个 Graphics
-   * 重新三角化并重传顶点缓冲。那件事确实在发生，但 Pixi 的批处理器远比预期快，几千个图元不是
-   * 问题 —— 这个上限是猜的，不是量出来的。所以做成可调的，顶到帧时间开始涨为止。
+   * 完整 Character 的性能上限，含尚未清理的尸体，运行时用逗号/句号调整。
+   * 只约束近处激活和近处补兵；远处按区域密度补充轻量数据，不消耗这些槽位。
+   * 全图移动/碰撞开销另由 MAX_WORLD_ENEMIES 兜底，区域补怪也必须遵守它。
    */
-  /**
-   * 人数硬上限，运行时可调（逗号/句号）。
-   *
-   * 这**不是**同屏上限，也不是玩法旋钮 —— 它是性能兜底。场上有多少人由跑步机自己定：出怪
-   * 往前补、回收往后抹，population 会稳在"回收框装得下多少"上（见 DESPAWN_MARGIN）。这个数
-   * 只负责在某种没预料到的情形下别让人数跑飞。
-   *
-   * 三千是照着回收框反推的：出货视口 240×245（grain 4），放大到 1.3 倍是 312×319，按每人 122
-   * 平方单位算能装约八百人 —— 实测站桩稳在 700 上下，所以正常永远顶不到三千。留这么大的余量是
-   * 因为它跟着 DEFAULT_GRAIN 变：颗粒度调细一档，视口变大，稳态人数也会跟着涨。
-   */
-  maxEnemies = 3000;
+  maxEnemies = 1500;
   autoAttack = true;
 
   /** 玩家这一帧真正走出的速度；撞墙时会小于 player.speed。 */
@@ -704,15 +677,39 @@ export class Battle {
   /** 这一局按预留位置放回去多少人。和 recycled 一起看就知道"回头"这件事有没有生效。 */
   restored = 0;
 
-  /**
-   * 回收掉的位置，等着视线回来。见 RESERVE_TIME。
-   *
-   * 用普通数组加"末位换补"删除：这张表每帧要整个扫一遍判过期，顺序没有意义，而每帧的增删
-   * 都是几十上百条，链表或者堆在这个量级上只会更慢。
-   */
+  /** 全图无骨架怪物：继续推进移动的数据，以及离开可见范围的怪物。 */
   private readonly reserved: Reservation[] = [];
+  private distantRegionCounts = new Uint32Array(0);
 
-  /** 这一局跑了多久，秒。目前只有预留位置的过期判定用它。 */
+  /** 两种表示共享同一张移动邻居表，视口边界两侧的怪物也能互相避让。每帧复用数组。 */
+  private readonly movers: EnemyMover[] = [];
+  private readonly movementGrid = new SpatialGrid(cellSizeFor(CROWD_SPACING));
+  /** 0 本帧跳过，1 近处逐帧，2 远处本帧轮到（只做一轮分离）。 */
+  private movementDue = new Uint8Array(0);
+  private farGroup = 0;
+
+  /** 小地图读取实时位置，不需要访问无骨架怪物的战斗内部状态。 */
+  *enemyPositions(): Generator<Readonly<{ x: number; y: number }>> {
+    for (const enemy of this.enemies) if (enemy.alive) yield enemy;
+    yield* this.reserved;
+  }
+
+  /** 小地图用平滑坐标；刷怪密度、激活与碰撞始终使用真实模拟坐标。 */
+  *minimapEnemyPositions(): Generator<Readonly<{ x: number; y: number }>> {
+    for (const enemy of this.enemies) if (enemy.alive) yield enemy;
+    for (const enemy of this.reserved) yield enemy.motion.map;
+  }
+
+  get dormantEnemyCount(): number {
+    return this.reserved.length;
+  }
+
+  /** 包含尸体占用的活跃槽位，确保生成和休眠转换共用同一个硬上限。 */
+  get worldEnemyCount(): number {
+    return this.enemies.length + this.reserved.length;
+  }
+
+  /** 这一局跑了多久，秒。 */
   private clock = 0;
 
   /** 只读的战斗时间，供不改变战斗状态的呼吸光等连续视觉使用。 */
@@ -724,6 +721,7 @@ export class Battle {
   simMs = 0;
 
   private readonly field: Field;
+  private readonly worldPopulation: WorldPopulation;
   private spawnTimer = 0;
   private enemyWaveIndex = 0;
   private enemiesLeftInWave = ENEMIES_PER_TYPE_WAVE;
@@ -737,6 +735,7 @@ export class Battle {
 
   constructor(field: Field) {
     this.field = field;
+    this.worldPopulation = new WorldPopulation(field.width, field.height, WORLD_ENEMY_SPACING);
     this.grid = new SpatialGrid(cellSizeFor(CROWD_SPACING));
     this.player = new Character(PlayerPresets[0].make(), PALETTE_HERO, HUMAN_PACE);
     this.player.facing = Math.PI * 0.5; // 面朝镜头
@@ -792,13 +791,11 @@ export class Battle {
   }
 
   /**
-   * 开局先在场上铺一批，从很近到视野边缘都有。
-   *
-   * 不铺的话，第一个敌人得从视野外走进来，前几秒是一片空地 —— 而这几秒恰恰是要给人看的那
-   * 几秒。铺一批之后一进画面就有活干，后面靠持续出怪接上。
+   * 开局在视口外放一批进攻者，并在全图空地散布会移动的轻量怪物数据。
    */
   seed(view: BattleView): void {
     this.spawnTimer = 0;
+    this.farGroup = 0;
     this.enemyWaveIndex = 0;
     this.enemiesLeftInWave = ENEMIES_PER_TYPE_WAVE;
     // 全部生在视口外，和之后每一个走同一条路：方向均匀一整圈，距离按"沿这个方向走多远才
@@ -808,10 +805,76 @@ export class Battle {
       const cos = Math.cos(angle);
       const sin = Math.sin(angle);
       const r = this.exitDistance(cos, sin, view) + SPAWN_MARGIN + Math.random() * SEED_DEPTH;
-      this.place(this.player.x + cos * r, this.player.y + sin * r, EnemyTypeWaves[this.enemyWaveIndex]);
-      this.enemiesLeftInWave--;
+      if (this.place(this.player.x + cos * r, this.player.y + sin * r, view, EnemyTypeWaves[this.enemyWaveIndex])) {
+        this.enemiesLeftInWave--;
+      }
     }
     if (this.enemiesLeftInWave <= 0) this.advanceEnemyWave();
+    this.seedWorld(view);
+    this.worldPopulation.reset();
+  }
+
+  /** 分格散布全图。每格随机一点，避免扎堆；避开开局视口和实际障碍。 */
+  private seedWorld(view: BattleView): void {
+    const field = this.field;
+    const cols = Math.max(1, Math.floor(field.width / WORLD_ENEMY_SPACING));
+    const rows = Math.max(1, Math.floor(field.height / WORLD_ENEMY_SPACING));
+    const cellW = field.width / cols;
+    const cellH = field.height / rows;
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        if (this.worldEnemyCount >= MAX_WORLD_ENEMIES) return;
+        const kind = EnemyKinds[Math.floor(Math.random() * EnemyKinds.length)];
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const x = (col + 0.25 + Math.random() * 0.5) * cellW;
+          const y = (row + 0.25 + Math.random() * 0.5) * cellH;
+          if (this.placeWorldEnemy(x, y, view, kind)) break;
+        }
+      }
+    }
+  }
+
+  /** 开局和持续补怪共用：不占完整怪物槽位，不在可见区生成，不创建 Character。 */
+  private placeWorldEnemy(
+    x: number, y: number, view: BattleView,
+    kind: EnemyKind = EnemyKinds[Math.floor(Math.random() * EnemyKinds.length)],
+  ): Reservation | null {
+    if (this.worldEnemyCount >= MAX_WORLD_ENEMIES || this.inActiveArea(x, y, view, DESPAWN_MARGIN)) return null;
+    const radius = RigSpec.hipHalfWidth * kind.def.bulk * 1.15;
+    if (!isFreeSpot(this.field.terrain, this.field.props, x, y, radius)) return null;
+    const enemy: Reservation = {
+      motion: new DistantMotion(x, y, this.clock, this.farGroup++),
+      x, y, def: kind.def, palette: kind.palette,
+      walkSpeed: kind.speed, speed: 0, crowdPace: 0,
+      sideBias: Math.random() < 0.5 ? -1 : 1,
+      radius, spacing: RigSpec.torsoHalfWidth * kind.def.bulk, alive: true,
+      facing: Math.atan2(this.player.y - y, this.player.x - x),
+      cooldown: Math.random() * (kind.def.weapon === 'bow' ? ENEMY_ARCHER_SHOT_GAP : ENEMY_SWING_GAP),
+      hp: 1, maxHp: 1,
+    };
+    this.reserved.push(enemy);
+    return enemy;
+  }
+
+  /** 实际镜头与出怪框的并集；恢复区小于回收区，避免边缘反复装卸。 */
+  private inActiveArea(x: number, y: number, view: BattleView, margin: number): boolean {
+    const box = view.spawn;
+    if (Math.abs(x - box.x) <= box.halfW * (1 + margin) &&
+        Math.abs(y - box.y) <= box.halfH * (1 + margin)) return true;
+    const visible = view.visible;
+    const slack = SCREEN_SLACK * margin / RESTORE_MARGIN;
+    return visible !== undefined &&
+      Math.abs(x - visible.x) <= visible.halfW + slack &&
+      Math.abs(y - visible.y) <= visible.halfH + slack;
+  }
+
+  /** 更新完整怪物与轻量数据的归属，也可在暂停后调整镜头时调用。此方法不推进移动。 */
+  syncEnemyVisibility(view: BattleView): void {
+    // 释放上一帧移动数组对已卸载 Character 的引用。
+    this.movers.length = 0;
+    this.recycle(view);
+    this.grid.build(this.enemies);
+    this.restoreReserved(view);
   }
 
   /**
@@ -820,12 +883,12 @@ export class Battle {
    * 方向是均匀的一整圈，不做任何"这边在图外就换一边"的挑拣 —— 那正是包围感的来源。距离按
    * **沿这个方向走多远才出画面**算，所以每个方向都恰好在看不见的地方生成，不多走一步。
    */
-  spawn(view: BattleView, kinds: readonly EnemyKind[] = EnemyKinds): void {
+  spawn(view: BattleView, kinds: readonly EnemyKind[] = EnemyKinds): boolean {
     const angle = this.spawnAngle();
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
     const r = this.exitDistance(cos, sin, view) + SPAWN_MARGIN + Math.random() * SPAWN_JITTER;
-    this.place(this.player.x + cos * r, this.player.y + sin * r, kinds);
+    return this.place(this.player.x + cos * r, this.player.y + sin * r, view, kinds);
   }
 
   /**
@@ -849,35 +912,38 @@ export class Battle {
   }
 
   /**
-   * 把跟不上的人抹掉。
-   *
-   * 判的是**出货那一档**的视口再放大 1 + DESPAWN_MARGIN 倍。用出货视口而不是当前视口，是为了
-   * 和出怪保持同一把尺子 —— 否则调试时拉远镜头，出怪按出货框算、回收按当前框算，两边打架。
+   * 把远处的人转为无骨架数据。出怪框和实际可见框之外都留缓冲带；调试拉远镜头时，仍然保留
+   * 画面中可见的怪物。出怪节奏继续按出货框计算。
    *
    * 尸体也一起回收：它们已经在画面外，没人看得见，留着只是占着数组。
    *
    * 抹掉的是**模型**，不是那个人站过的地方：活人在离场时把位置记进预留表，视线回来时照着
-   * 放回去（见 RESERVE_TIME / restoreReserved）。
+   * 放回去。数据不按时间过期；仅在总量满且附近缺兵时，允许从远处密集区调配刷怪名额。
    */
   private recycle(view: BattleView): void {
-    const box = view.spawn;
-    const keepX = box.halfW * (1 + DESPAWN_MARGIN);
-    const keepY = box.halfH * (1 + DESPAWN_MARGIN);
     const enemies = this.enemies;
     const reserved = this.reserved;
     for (let i = enemies.length - 1; i >= 0; i--) {
       const e = enemies[i];
-      if (Math.abs(e.x - box.x) <= keepX && Math.abs(e.y - box.y) <= keepY) continue;
-      if (e.alive && reserved.length < MAX_RESERVATIONS) {
+      if (this.inActiveArea(e.x, e.y, view, DESPAWN_MARGIN)) continue;
+      if (e.alive) {
         reserved.push({
+          motion: new DistantMotion(e.x, e.y, this.clock, this.farGroup++),
           x: e.x,
           y: e.y,
           facing: e.facing,
           def: e.def,
           palette: e.palette,
-          speed: e.walkSpeed,
+          walkSpeed: e.walkSpeed,
+          speed: e.speed,
+          crowdPace: e.crowdPace,
+          sideBias: e.sideBias,
+          radius: e.radius,
+          spacing: e.spacing,
+          alive: true,
           cooldown: e.attackCooldown,
-          expires: this.clock + RESERVE_TIME,
+          hp: e.hp,
+          maxHp: e.maxHp,
         });
       }
       enemies[i] = enemies[enemies.length - 1];
@@ -889,39 +955,35 @@ export class Battle {
   /**
    * 视线回到哪儿，就把那儿预留的人放回去。
    *
-   * 一条预留只要进了恢复框就**用掉**，不管放没放成 —— 放不下（那儿已经站了人、或者压着树）
-   * 就丢掉。留着等下一帧看是错的：那时它已经在框里、再往里就是画面上，成功了也是当着面
-   * 凭空长出一个人来。宁可少一个，不能穿帮。
+   * 只有成功激活才消费记录；容量不足或落点被占时保留数据，不能让小地图上的怪物凭空消失。
    *
-   * 必须在 grid.build 之后调：判"那儿有没有人"走的是同一张邻居表。这一帧刚放回去的人不在
-   * 表里，所以两条预留之间的重叠查不出来 —— 但同一批预留本来就是从同一个瞬间的人群里记
-   * 下来的，彼此天然不重叠；万一有残留，separate() 紧接着就收拾掉了。
+   * 必须在 grid.build 之后调。邻居表覆盖原来的活跃怪物，本批新增者单独检查，避免不同时间
+   * 留下的记录激活到同一位置。正常 update 在推进敌人之前再统一建表。
    */
   private restoreReserved(view: BattleView): void {
-    const box = view.spawn;
-    const seeX = box.halfW * (1 + RESTORE_MARGIN);
-    const seeY = box.halfH * (1 + RESTORE_MARGIN);
     const reserved = this.reserved;
     const enemies = this.enemies;
+    const initialCount = enemies.length;
 
     for (let i = reserved.length - 1; i >= 0; i--) {
       const r = reserved[i];
-      const expired = this.clock >= r.expires;
-      // 还没看见、也还没过期：留着。
-      if (!expired && (Math.abs(r.x - box.x) > seeX || Math.abs(r.y - box.y) > seeY)) continue;
+      if (enemies.length >= this.maxEnemies) break;
+      if (!this.inActiveArea(r.x, r.y, view, RESTORE_MARGIN)) continue;
+      if (!this.spotFree(r.x, r.y, r.def, initialCount)) continue;
 
-      reserved[i] = reserved[reserved.length - 1];
-      reserved.pop();
-      if (expired || enemies.length >= this.maxEnemies) continue;
-
-      if (!this.spotFree(r.x, r.y, r.def)) continue;
-
-      const e = new Character(r.def, r.palette, r.speed);
+      const e = new Character(r.def, r.palette, r.walkSpeed, r.sideBias);
       e.x = r.x;
       e.y = r.y;
       e.facing = r.facing;
+      e.speed = r.speed;
+      e.crowdPace = r.crowdPace;
       e.attackCooldown = r.cooldown;
+      e.hp = r.hp;
+      e.maxHp = r.maxHp;
+      e.update(0); // 暂停/缩放时也要有已构建的姿势。
       enemies.push(e);
+      reserved[i] = reserved[reserved.length - 1];
+      reserved.pop();
       this.restored++;
     }
   }
@@ -932,7 +994,7 @@ export class Battle {
    * 只给恢复用。出怪那条路不查这个 —— 出怪点在视野外的空地上，撞上了由分离顺手推开就行；
    * 而恢复是往**人堆里**放，放错了就是两个人叠在一起从画面外走出来。
    */
-  private spotFree(x: number, y: number, def: UnitDef): boolean {
+  private spotFree(x: number, y: number, def: UnitDef, initialCount: number): boolean {
     const { field, grid, enemies, player, crowdSpacing } = this;
     // 尺寸只由 def 推出来（见 Character 的 radius / spacing），所以不必先造一个人再来问。
     // 这条路每帧会为每个还没放回去的预留走一次，白造的 Character 会连带 Pose 和 Animator。
@@ -942,6 +1004,12 @@ export class Battle {
 
     const toPlayer = (player.spacing + spacing) * crowdSpacing;
     if ((x - player.x) ** 2 + (y - player.y) ** 2 < toPlayer * toPlayer) return false;
+
+    for (let i = initialCount; i < enemies.length; i++) {
+      const other = enemies[i];
+      const min = (spacing + other.spacing) * crowdSpacing;
+      if ((other.x - x) ** 2 + (other.y - y) ** 2 < min * min) return false;
+    }
 
     // 最坏情况下够得着的距离：对面是场上最胖的那位。按它开查询窗口，格子数才与间距无关。
     const reach = (spacing + MAX_SPACING) * crowdSpacing;
@@ -997,7 +1065,10 @@ export class Battle {
    * 只夹到"图外一圈"这个大框里，**不**夹回场内 —— 图外生成是有意的，见 SPAWN_OUTSIDE。
    * 落点和树重叠就沿着原方向往外挪一点重试；图外没有树，所以那边一次就成。
    */
-  private place(x: number, y: number, kinds: readonly EnemyKind[] = EnemyKinds): void {
+  private place(x: number, y: number, view: BattleView, kinds: readonly EnemyKind[] = EnemyKinds): boolean {
+    if (this.localSpawnRoom() <= 0) return false;
+    // 总量满时只置换远离玩家、也不在实际镜头里的数据。可见怪物和即将进场者不动。
+    if (this.worldEnemyCount >= TARGET_WORLD_ENEMIES && !this.releaseDistantSpawnSlot(view)) return false;
     const field = this.field;
     const kind = kinds[Math.floor(Math.random() * kinds.length)];
     const e = new Character(kind.def, kind.palette, kind.speed);
@@ -1025,6 +1096,49 @@ export class Battle {
     const initialGap = e.def.weapon === 'bow' ? ENEMY_ARCHER_SHOT_GAP : ENEMY_SWING_GAP;
     e.attackCooldown = Math.random() * initialGap;
     this.enemies.push(e);
+    return true;
+  }
+
+  /** 远处占满预算时，附近不足目标数量仍可以按原批次补兵。 */
+  private localSpawnRoom(): number {
+    return Math.max(0, Math.min(this.maxEnemies - this.enemies.length, Math.max(
+      TARGET_WORLD_ENEMIES - WORLD_REFILL_RESERVE - this.worldEnemyCount,
+      LOCAL_ENEMY_TARGET - this.enemies.length,
+    )));
+  }
+
+  private releaseDistantSpawnSlot(view: BattleView): boolean {
+    const cell = 112;
+    const cols = Math.ceil(this.field.width / cell);
+    const rows = Math.ceil(this.field.height / cell);
+    if (this.distantRegionCounts.length !== cols * rows) this.distantRegionCounts = new Uint32Array(cols * rows);
+    const counts = this.distantRegionCounts;
+    counts.fill(0);
+    const region = (r: Reservation) =>
+      clamp(Math.floor(r.y / cell), 0, rows - 1) * cols + clamp(Math.floor(r.x / cell), 0, cols - 1);
+    for (const r of this.reserved) {
+      if (!this.inActiveArea(r.x, r.y, view, 1)) counts[region(r)]++;
+    }
+    let selected = -1;
+    let densest = 1;
+    let farthest = 0;
+    for (let i = 0; i < this.reserved.length; i++) {
+      const r = this.reserved[i];
+      // 两倍出货框之外才允许调配，避免镜头边缘红点消失或进攻队列突然断层。
+      if (this.inActiveArea(r.x, r.y, view, 1)) continue;
+      const density = counts[region(r)];
+      // 优先从密集区调配，不把最远的边缘区域一只只抽空。
+      if (density < densest || density <= 1) continue;
+      const distance = (r.x - this.player.x) ** 2 + (r.y - this.player.y) ** 2;
+      if (density === densest && distance <= farthest) continue;
+      densest = density;
+      farthest = distance;
+      selected = i;
+    }
+    if (selected < 0) return false;
+    this.reserved[selected] = this.reserved[this.reserved.length - 1];
+    this.reserved.pop();
+    return true;
   }
 
   /** 推进一帧。暂停时唯一被停下的就是它。 */
@@ -1035,18 +1149,19 @@ export class Battle {
     this.clock += dt;
     this.movePlayer(dt, input);
     this.advanceEnemyArrows(dt);
-    this.recycle(view);
+    this.syncEnemyVisibility(view);
+    this.worldPopulation.update(dt, () => this.enemyPositions(), TARGET_WORLD_ENEMIES - this.worldEnemyCount,
+      (x, y) => this.placeWorldEnemy(x, y, view));
     this.spawnWave(dt, view);
     this.advanceSkillSchedule(dt, view);
     this.swing();
     this.advancePlayerAttack(dt, view);
     this.advanceSkills(dt, view);
-    // 先建一次表：敌人要先查"前面有没有人占着位子"。分离那边会按挪完的位置再建一次。
-    this.grid.build(enemies);
-    // 恢复排在建表之后：判"那个位置有没有人"要用这张表。见 restoreReserved。
-    this.restoreReserved(view);
+    // 完整怪物和无骨架数据一起移动，并共享避让与分离。
     this.driveEnemies(dt, view);
     this.separate();
+    const mapBlend = DistantMotion.mapBlend(dt);
+    for (const enemy of this.reserved) enemy.motion.smoothMap(enemy.x, enemy.y, mapBlend);
 
     this.effects.update(dt);
     this.debris.update(dt);
@@ -1798,11 +1913,25 @@ export class Battle {
   private driveEnemies(dt: number, view: BattleView): void {
     const { player, field } = this;
 
-    const enemies = this.enemies;
-    const box = view.spawn;
+    const enemies = this.movers;
+    enemies.length = 0;
+    for (const enemy of this.enemies) enemies.push(enemy);
+    for (const enemy of this.reserved) enemies.push(enemy);
+    this.movementGrid.setMinCellSize(cellSizeFor(this.crowdSpacing));
+    this.movementGrid.build(enemies);
+    const activeCount = this.enemies.length;
+    if (this.movementDue.length < enemies.length) this.movementDue = new Uint8Array(enemies.length);
+    this.movementDue.fill(0, 0, enemies.length);
+    const box = view.visible ?? view.spawn;
     for (let i = 0; i < enemies.length; i++) {
       const e = enemies[i];
-      // 在不在画面里。找空位和搭姿势都只给画面里的人做。
+      const data = i >= activeCount ? this.reserved[i - activeCount] : null;
+      const near = data === null || this.inActiveArea(e.x, e.y, view, RESTORE_MARGIN);
+      if (data) data.cooldown = Math.max(0, data.cooldown - dt);
+      const moveDt = data ? data.motion.step(this.clock, dt, near) : dt;
+      if (data && moveDt <= 0) continue;
+      this.movementDue[i] = near ? 1 : 2;
+      // 是否计算骨架只看真实镜头，移动规则对所有怪物一致。
       const onScreen =
         Math.abs(e.x - box.x) <= box.halfW + SCREEN_SLACK &&
         Math.abs(e.y - box.y) <= box.halfH + SCREEN_SLACK;
@@ -1839,10 +1968,7 @@ export class Battle {
 
           // 找空位：正前方被占了就沿切线绕过去。room 是"还能直着走多少"，0 表示完全被堵。
           //
-          // 只给**画面里**的人算。跑步机模型下场上能有一两千人，而其中只有一半在屏幕上；
-          // 外面那一半处在人堆的稀疏外围，本来也没人挡路，算了也是白算 —— 而这一步是每帧
-          // 最贵的一块（要按探测半径查好几圈格子）。他们走进画面的那一刻自然就开始找位置，
-          // 中间的重叠由分离一直在收拾，看不出接缝。
+          // 包括远处无骨架的数据；共用邻居表才能在进入视口前就排好队、绕开前方的人。
           const room = this.slotAhead(i, dx / dist, dy / dist, dist);
 
           // 越是被堵住越慢，而且越靠后越慢。直行那一份按 room 走全速；绕行那一份先打个折，
@@ -1852,7 +1978,7 @@ export class Battle {
           const approach = clamp((dist - stop) / APPROACH_BAND, 0, 1);
           // 目标速度不直接用，先滑过去 —— 见 PACE_TAU。
           const wantPace = (room + (1 - room) * shuffle) * approach;
-          e.crowdPace += (wantPace - e.crowdPace) * (1 - Math.exp(-dt / PACE_TAU));
+          e.crowdPace += (wantPace - e.crowdPace) * (1 - Math.exp(-moveDt / PACE_TAU));
           const pace = e.crowdPace;
 
           const side = this.slotSide;
@@ -1868,39 +1994,43 @@ export class Battle {
           }
           // 没有寻路：撞上障碍就被推开，沿着它蹭过去。绕不过去的死角会卡住，但这张图上没有
           // 能围死人的东西 —— 真需要寻路的时候再说。
-          const to = moveWithCollision(
-            field.terrain,
-            field.props,
-            e.radius,
-            e.x,
-            e.y,
-            e.x + mx * want * pace * dt,
-            e.y + my * want * pace * dt,
-          );
+          // 远处较大的时间步拆成短碰撞步，避免高速越过树干；昂贵的邻居决策仍只做一次。
+          const collisionSteps = Math.max(1, Math.ceil(moveDt / (1 / 30)));
+          const stepX = mx * want * pace * moveDt / collisionSteps;
+          const stepY = my * want * pace * moveDt / collisionSteps;
+          let to = { x: e.x, y: e.y };
+          for (let step = 0; step < collisionSteps; step++) {
+            to = moveWithCollision(field.terrain, field.props, e.radius, to.x, to.y, to.x + stepX, to.y + stepY);
+          }
           // 交给动画器的是**实际走了多远**，不是想走多快。
           //
           // 这两者在人堆里差得很远：挤在最里圈的人每帧只能蹭出零点几个单位，而按意图报速度
           // 的话他会以全速播走路循环 —— 一排原地大步流星的人，看着比穿模还假。蹭着树走的
           // 那种半速也是同一回事。动画器本来就是按 speed 混合步态的，喂给它真值即可。
           const moved = Math.hypot(to.x - e.x, to.y - e.y);
-          e.speed = dt > 0 ? moved / dt : 0;
+          e.speed = moveDt > 0 ? moved / moveDt : 0;
           e.x = to.x;
           e.y = to.y;
         } else {
           // 到位了：站定出手。crowdPace 也归零，免得下次起步带着旧值窜一下。
           e.crowdPace = 0;
           e.speed = 0;
-          const cooldown =
-            e.def.weapon === 'bow'
-              ? ENEMY_ARCHER_SHOT_GAP + Math.random() * ENEMY_ARCHER_SHOT_JITTER
-              : ENEMY_SWING_GAP + Math.random() * ENEMY_SWING_JITTER;
-          e.swing(cooldown);
+          if (i < activeCount) {
+            const cooldown =
+              e.def.weapon === 'bow'
+                ? ENEMY_ARCHER_SHOT_GAP + Math.random() * ENEMY_ARCHER_SHOT_JITTER
+                : ENEMY_SWING_GAP + Math.random() * ENEMY_SWING_JITTER;
+            this.enemies[i].swing(cooldown);
+          }
         }
       }
 
-      if (e.update(dt, onScreen) && player.alive) {
-        if (e.def.weapon === 'bow') this.fireEnemyArrow(e);
-        else if (inAttackArc(e, player) && player.takeHit(e.x, e.y)) this.deaths++;
+      if (i < activeCount) {
+        const actor = this.enemies[i];
+        if (actor.update(dt, onScreen) && player.alive) {
+          if (actor.def.weapon === 'bow') this.fireEnemyArrow(actor);
+          else if (inAttackArc(actor, player) && player.takeHit(actor.x, actor.y)) this.deaths++;
+        }
       }
     }
   }
@@ -1920,7 +2050,7 @@ export class Battle {
    * 围成一圈之后前排互相刹车，谁都够不到玩家。
    */
   private slotAhead(i: number, dirX: number, dirY: number, distToPlayer: number): number {
-    const { grid, enemies, crowdSpacing, player } = this;
+    const { movementGrid: grid, movers: enemies, crowdSpacing, player } = this;
     const self = enemies[i];
     const items = grid.indices;
     const maxLook = (self.spacing + MAX_SPACING) * crowdSpacing * SLOT_LOOKAHEAD;
@@ -1973,11 +2103,11 @@ export class Battle {
 
   /**
    * 互相推开。不是寻路，只是不让一群人叠在同一个像素上 —— 少了这一步，一百个杂兵会精确地
-   * 重合成一个人，人群完全读不出数量。O(n²)，一百多个单位每帧一万次比较，可以忽略。
+   * 重合成一个人，人群完全读不出数量。用全图移动网格查邻居，完整怪物和数据怪物共享此规则。
    */
   private separate(): void {
-    const enemies = this.enemies;
-    const grid = this.grid;
+    const enemies = this.movers;
+    const grid = this.movementGrid;
     grid.build(enemies);
     // 必须在 build **之后**取：人数涨过上次容量时 build 会重开这个数组，先取就拿到旧的那根了。
     const items = grid.indices;
@@ -1985,7 +2115,8 @@ export class Battle {
     for (let pass = 0; pass < this.separationPasses; pass++) {
     for (let i = 0; i < enemies.length; i++) {
       const a = enemies[i];
-      if (!a.alive) continue;
+      const due = this.movementDue[i];
+      if (!a.alive || due === 0 || (due === 2 && pass > 0)) continue;
       const cx = grid.colOf(a.x);
       const cy = grid.rowOf(a.y);
       const x0 = cx > 0 ? cx - 1 : 0;
@@ -1997,13 +2128,14 @@ export class Battle {
         for (let gx = x0; gx <= x1; gx++) {
           const end = grid.end(gx, gy);
           for (let k = grid.begin(gx, gy); k < end; k++) {
-            // 只处理 j > i：每对人恰好推一次，和原来两层循环的语义一模一样。
+            // 两者本轮都更新时只处理 j > i；另一只没轮到，也要允许当前这只与它分离。
             //
             // 试过按"到玩家的距离从近到远"排序再扫，指望修正一趟就从里圈推到外圈。实测在
             // 一千人时间距只从 9.2 变成 9.3（噪声），却多花 0.4 毫秒排序 —— 因为瓶颈根本不
             // 是修正传得快不快，是那么多人**真的没地方站**（见 separationPasses 上那段）。
             const j = items[k];
-            if (j <= i) continue;
+            const otherDue = this.movementDue[j] === 1 || (pass === 0 && this.movementDue[j] === 2);
+            if (j === i || (j < i && otherDue)) continue;
             const b = enemies[j];
             if (!b.alive) continue;
             const dx = b.x - a.x;
@@ -2037,9 +2169,9 @@ export class Battle {
    * 只查玩家所在的 3x3 格，所以这一步和场上有多少人无关。
    */
   private clearPlayerBody(): void {
-    const { player, grid } = this;
+    const { player, movementGrid: grid } = this;
     const items = grid.indices;
-    const enemies = this.enemies;
+    const enemies = this.movers;
     const cx = grid.colOf(player.x);
     const cy = grid.rowOf(player.y);
     const x0 = cx > 0 ? cx - 1 : 0;
@@ -2079,12 +2211,14 @@ export class Battle {
     while (this.spawnTimer >= SPAWN_INTERVAL) {
       this.spawnTimer -= SPAWN_INTERVAL;
       // 一次放一批。批量调大了就是一小群一小群涌上来，不再是一个一个挪进画面。
-      const room = this.maxEnemies - this.enemies.length;
+      const room = this.localSpawnRoom();
       // 一个批次不跨兵种波：即使菜单把批量调成 7，也不会在最后一批里混入下一种兵。
       const batch = Math.min(this.spawnBatch, room, this.enemiesLeftInWave);
       const kinds = EnemyTypeWaves[this.enemyWaveIndex];
-      for (let i = 0; i < batch; i++) this.spawn(view, kinds);
-      this.enemiesLeftInWave -= batch;
+      for (let i = 0; i < batch; i++) {
+        if (!this.spawn(view, kinds)) break;
+        this.enemiesLeftInWave--;
+      }
       if (this.enemiesLeftInWave <= 0) this.advanceEnemyWave();
     }
   }

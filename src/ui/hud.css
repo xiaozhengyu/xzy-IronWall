@@ -1,0 +1,51 @@
+/**
+ * 正式 HUD 始终以固定 16:9 游戏画框为参照。这里用百分比而不是窗口单位，所以无论外面留的是
+ * 上下边还是左右边，小地图相对战场的位置与占屏比例都不变。
+ */
+.hud {
+  /**
+   * 位置仍在 CSS 中调整；尺寸与内部视野倍率集中在 hud.ts 的 MINIMAP_SETTINGS。
+   */
+  --hud-minimap-top: 2.8%;
+  --hud-minimap-right: 2.2%;
+
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+.hud-minimap {
+  position: absolute;
+  top: var(--hud-minimap-top);
+  right: var(--hud-minimap-right);
+  aspect-ratio: 1;
+  filter: drop-shadow(0 8px 10px rgba(0, 0, 0, 0.72));
+}
+
+.hud-minimap-frame {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/** 可绘制区域收在金色内圈以内，后续标记不会压到边框和四个方向节点。 */
+.hud-minimap-layer {
+  position: absolute;
+  inset: 7.2%;
+  z-index: 3;
+  overflow: hidden;
+  border-radius: 50%;
+}
+
+.hud-minimap-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}

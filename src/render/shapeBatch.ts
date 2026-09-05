@@ -21,8 +21,8 @@ export interface PrimitiveSink {
  * 排序键的打包参数：深度量化到 1/8，低 17 位放原始下标。
  *
  * 深度最大约"屏幕行 × 32"，一千行也就三万出头，乘 8 再乘 2^17 是 3.4e10 —— 离 float64 能
- * 精确表示的 2^53 还差得远，所以打包不会丢位。下标上限 131072 意味着一帧最多十三万个图元，
- * 目前满屏一千人是六万，留了一倍。
+ * 精确表示的 2^53 还差得远，所以打包不会丢位。异常大跨度回退排序时使用这个最小下标跨度，
+ * 超过十三万个图元会自动扩大；常规路径只排下标，不需要打包。
  */
 const DEPTH_QUANT = 8;
 const INDEX_SPAN = 1 << 17;
@@ -67,12 +67,13 @@ export class ShapeBatch {
   /**
    * 排序用的键，(量化深度, 下标) 打包成一个数。
    *
-   * 用 Float64Array 的原生 sort 而不是 Array.sort(比较函数)：后者每比较一次都要过一次 JS
-   * 回调，六万个图元就是几十万次调用；定型数组不带比较函数时走的是原生数值排序，实测快
-   * 一倍多。打包是为了在一次排序里同时带上稳定性 —— 低位放原始下标，同深度就按提交顺序，
-   * 和原来 `|| a - b` 的效果一样（ToneStep = 0 的同深度色阶就靠这一点叠上去）。
+   * 常规深度范围用稳定基数排序，图元再多也不做逐对比较；跨度异常大时回退到定型数组
+   * 原生数值排序。两条路径都保留原始提交顺序，保证同深度的色阶叠放不变。
    */
   private keys = new Float64Array(0);
+  private sortScratch = new Float64Array(0);
+  private quantizedDepth = new Float64Array(0);
+  private readonly depthCounts = new Uint32Array(2048);
 
   get primitiveCount(): number {
     return this.count;
@@ -188,22 +189,63 @@ export class ShapeBatch {
   }
 
   /**
-   * 按深度排好序的下标。打包排序，见 keys 上那段。
+   * 按深度排好序的下标。稳定基数排序，见 keys 上那段。
    *
    * 深度量化到 1/8，比一个图元的尺度细得多，不会改变可见顺序。
    */
   private sortedOrder(n: number): Float64Array {
-    if (this.keys.length < n) this.keys = new Float64Array(Math.max(n, 4096));
-    const depth = this.depth;
-    let lo = depth[0];
-    for (let i = 1; i < n; i++) if (depth[i] < lo) lo = depth[i];
-    const bias = Math.ceil(-lo * DEPTH_QUANT) + 1; // 键必须非负，取下标时才能用取模
-    const keys = this.keys;
-    for (let i = 0; i < n; i++) {
-      keys[i] = (Math.round(depth[i] * DEPTH_QUANT) + bias) * INDEX_SPAN + i;
+    if (this.keys.length < n) {
+      const capacity = Math.max(n, 4096, Math.ceil(this.keys.length * 1.5));
+      this.keys = new Float64Array(capacity);
+      this.sortScratch = new Float64Array(capacity);
+      this.quantizedDepth = new Float64Array(capacity);
     }
+    const depth = this.depth;
+    const quantized = this.quantizedDepth;
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = 0; i < n; i++) {
+      const q = Math.round(depth[i] * DEPTH_QUANT);
+      quantized[i] = q;
+      if (q < lo) lo = q;
+      if (q > hi) hi = q;
+    }
+    const keys = this.keys;
     const order = keys.subarray(0, n);
+    const span = hi - lo + 1;
+    // 每轮只处理 11 位，用 2048 个桶；正常画幅两轮即可，不受远处特效的深度跨度影响。
+    if (span <= 0x100000000) {
+      const counts = this.depthCounts;
+      let source = keys;
+      let target = this.sortScratch;
+      for (let i = 0; i < n; i++) source[i] = i;
+      for (let shift = 0; shift < 32 && 2 ** shift < span; shift += 11) {
+        counts.fill(0);
+        for (let i = 0; i < n; i++) counts[((quantized[source[i]] - lo) >>> shift) & 2047]++;
+        let offset = 0;
+        for (let bucket = 0; bucket < counts.length; bucket++) {
+          const count = counts[bucket];
+          counts[bucket] = offset;
+          offset += count;
+        }
+        // 从前往后放，保证等深图元仍按提交顺序。
+        for (let i = 0; i < n; i++) {
+          const index = source[i];
+          target[counts[((quantized[index] - lo) >>> shift) & 2047]++] = index;
+        }
+        const previous = source;
+        source = target;
+        target = previous;
+      }
+      return source.subarray(0, n);
+    }
+    const bias = 1 - lo; // 键必须非负，取下标时才能用取模
+    const indexSpan = Math.max(INDEX_SPAN, n);
+    for (let i = 0; i < n; i++) {
+      keys[i] = (quantized[i] + bias) * indexSpan + i;
+    }
     order.sort();
+    for (let i = 0; i < n; i++) order[i] %= indexSpan;
     return order;
   }
 
@@ -222,7 +264,7 @@ export class ShapeBatch {
     const order = this.sortedOrder(n);
 
     for (let k = 0; k < n; k++) {
-      const i = order[k] % INDEX_SPAN;
+      const i = order[k];
       const x = this.cx[i];
       const y = this.cy[i];
       const ex = this.ex[i];

@@ -270,7 +270,7 @@ export class Menu {
     this.spins.magnify.textContent = `放大 ${s.magnify}x · 屏幕 ${s.figureScreen} px`;
     this.spins.hp.textContent = s.invincible ? '生命 无敌' : `生命 ${s.maxHp}`;
     this.spins.spawn.textContent = `出兵 x${s.spawnBatch}`;
-    this.spins.enemies.textContent = `人数上限 ${s.maxEnemies}`;
+    this.spins.enemies.textContent = `完整怪物上限 ${s.maxEnemies}`;
 
     const equipped = this.bridge.skills
       .filter((skill) => s.skillLoadout.equipped.includes(skill.id))

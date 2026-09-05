@@ -11,6 +11,7 @@ import { Projection } from './render/projection';
 import { Scene } from './render/scene';
 import type { WeatherKind } from './world/weather';
 import { Controls } from './ui/controls';
+import { Hud } from './ui/hud';
 import { Menu } from './ui/menu';
 import './style.css';
 
@@ -165,6 +166,7 @@ await app.init({
   autoDensity: false,
 });
 gameViewport.appendChild(app.canvas);
+const hud = new Hud(gameViewport);
 
 const scene = new Scene(app.renderer, camera);
 app.stage.addChild(scene.view);
@@ -342,6 +344,7 @@ function viewOf() {
     x: camera.x,
     y: camera.y,
     radius: camera.viewRadius,
+    visible: { x: camera.x, y: camera.y, halfW: camera.halfW, halfH: camera.halfH },
     spawn: camera.shipViewport(player.x, player.y, field.width, field.height),
   };
 }
@@ -353,6 +356,8 @@ function galleryCount(): number {
 }
 
 function draw(): void {
+  if (state !== 'playing') battle.syncEnemyVisibility(viewOf());
+  hud.draw(field, battle, camera);
   if (showItems) {
     scene.drawItems(ItemCatalog, itemSheet);
     return;

@@ -219,6 +219,7 @@ export class Scene {
     // 掉落物和角色、树木共用深度排序：人在宝石前面时会挡住它，走到后面时宝石也能盖住鞋面。
     battle.collectibles.draw(shapes, camX, camY, rootX, rootY, grain, (worldY) =>
       Math.round(cam.worldToScreen(camX, worldY).y) * Projector.DEPTH_PER_ROW,
+      { width: this.surface.width, height: this.surface.height },
     );
 
     // 按**矩形**剔除，不是圆。

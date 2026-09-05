@@ -1,0 +1,65 @@
+/**
+ * The source is 138x141 and sliced 28 px from every side. Four corners keep
+ * their aspect ratio, horizontal edges stretch only horizontally, vertical
+ * edges only vertically, and the transparent centre is painted independently.
+ */
+.hud-button {
+  --hud-button-corner-size: 24px;
+  --hud-button-face: linear-gradient(180deg, #272724 0%, #111210 48%, #090a09 100%);
+
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  min-width: calc(var(--hud-button-corner-size) * 2 + 32px);
+  min-height: calc(var(--hud-button-corner-size) * 2);
+  padding: 0 16px;
+  border: var(--hud-button-corner-size) solid transparent;
+  border-image-source: url('../../assets/hud/button-frame.png');
+  border-image-slice: 28;
+  border-image-width: var(--hud-button-corner-size);
+  border-image-repeat: stretch;
+  background: var(--hud-button-face) padding-box;
+  color: #e9dfc6;
+  font: 700 14px/1 Georgia, 'Times New Roman', serif;
+  letter-spacing: 0.08em;
+  text-shadow: 0 1px 2px #000;
+  cursor: pointer;
+  pointer-events: auto;
+  user-select: none;
+  isolation: isolate;
+}
+
+.hud-button::before {
+  content: '';
+  position: absolute;
+  inset: calc(var(--hud-button-corner-size) * -0.62);
+  z-index: -1;
+  box-shadow: 0 5px 9px rgba(0, 0, 0, 0.58);
+  pointer-events: none;
+}
+
+.hud-button-label {
+  white-space: nowrap;
+  transform: translateY(-1px);
+}
+
+.hud-button:hover:not(:disabled) {
+  --hud-button-face: linear-gradient(180deg, #39362e 0%, #1c1b17 48%, #0d0e0c 100%);
+  color: #fff5d7;
+  filter: brightness(1.12);
+}
+
+.hud-button:active:not(:disabled) .hud-button-label {
+  transform: translateY(1px);
+}
+
+.hud-button:focus-visible {
+  outline: 2px solid #e7bd66;
+  outline-offset: 3px;
+}
+
+.hud-button:disabled {
+  cursor: default;
+  filter: grayscale(0.72) brightness(0.62);
+  opacity: 0.78;
+}

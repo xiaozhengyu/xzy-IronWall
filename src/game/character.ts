@@ -146,7 +146,7 @@ export class Character {
    * 横向偏移在零附近抖，方向就一帧一个样，人在原地左右抽搐。给每个人一个固定的习惯，
    * 正面撞上时照着它走，看着也更像人：有人爱往左让，有人爱往右。
    */
-  readonly sideBias: 1 | -1 = Math.random() < 0.5 ? -1 : 1;
+  readonly sideBias: 1 | -1;
 
   /**
    * 人群里"想走多快"的平滑值，0..1。由 Battle 每帧推进。
@@ -167,10 +167,11 @@ export class Character {
   /** 这个单位的标准步行速度，用来把 speed 归一化成步态。 */
   walkSpeed: number;
 
-  constructor(def: UnitDef, palette: CharacterPalette, walkSpeed = 16) {
+  constructor(def: UnitDef, palette: CharacterPalette, walkSpeed = 16, sideBias: 1 | -1 = Math.random() < 0.5 ? -1 : 1) {
     this.def = def;
     this.palette = palette;
     this.walkSpeed = walkSpeed;
+    this.sideBias = sideBias;
   }
 
   get alive(): boolean {
