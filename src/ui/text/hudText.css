@@ -1,0 +1,21 @@
+.hud-text {
+  color: #ece7da;
+  text-shadow: 0 2px 0 #000, 1px 0 0 rgba(0, 0, 0, 0.9);
+}
+
+/**
+ * 不依赖下载字体：英数优先使用系统等宽字形，中文回退到系统 UI 字体。
+ * 整数字号、禁用平滑和硬边阴影让两种文字在像素画面里保持一致的硬朗感。
+ */
+.hud-text--pixel {
+  font-family: Consolas, 'Courier New', 'Microsoft YaHei UI', 'Microsoft YaHei', monospace;
+  font-weight: 700;
+  font-synthesis: none;
+  text-rendering: optimizeSpeed;
+  -webkit-font-smoothing: none;
+}
+
+.hud-text--gold {
+  color: #ffc431;
+  text-shadow: 0 2px 0 #5c2e00, 1px 0 0 #000, -1px 0 0 #000;
+}

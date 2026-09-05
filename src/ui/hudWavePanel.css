@@ -1,0 +1,83 @@
+.hud-wave-panel-content {
+  display: grid;
+  grid-template-rows: 26px 30px 22px;
+  align-content: center;
+  padding: 8px 18px;
+}
+
+.hud-wave-header {
+  display: grid;
+  grid-template-columns: 30px 1fr 30px;
+  align-items: center;
+  justify-self: center;
+  width: 68%;
+  gap: 8px;
+}
+
+.hud-wave-skull {
+  display: block;
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  filter: grayscale(0.65) sepia(0.18) brightness(1.15);
+}
+
+.hud-wave-title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 19px;
+  line-height: 26px;
+  letter-spacing: 0.1em;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.hud-wave-timer {
+  font-size: 25px;
+  line-height: 30px;
+  letter-spacing: 0.08em;
+  text-align: center;
+}
+
+.hud-wave-boss-track {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  min-width: 0;
+}
+
+.hud-wave-boss-connector {
+  flex: 0 0 18px;
+  height: 2px;
+  margin: 0 -2px;
+  box-shadow: 0 1px 0 #000;
+}
+
+.hud-wave-boss-connector--complete {
+  background: linear-gradient(#f1ce72, #9c7226);
+}
+
+.hud-wave-boss-connector--pending {
+  background: linear-gradient(#d5d2c9, #716f6b);
+}
+
+.hud-wave-diamond {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 21px;
+  height: 21px;
+  object-fit: contain;
+  filter: drop-shadow(0 1px 1px #000);
+}
+
+.hud-wave-boss-skull {
+  display: block;
+  width: 30px;
+  height: 30px;
+  margin-left: -1px;
+  object-fit: contain;
+  filter: grayscale(0.35) sepia(0.2) brightness(1.18) drop-shadow(0 1px 1px #000);
+}

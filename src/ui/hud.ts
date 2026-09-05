@@ -9,10 +9,14 @@ import { HudFrame } from './hudFrame';
 import { createHudButton } from './hudButton';
 import { createHudIcon } from './hudIcons';
 import { swordCursorImage } from './cursorImage';
+import { HudWavePanel } from './hudWavePanel';
+import { HudText, type HudLocale } from './text/hudText';
 export { createHudButton, type HudButtonOptions, type HudButtonSkin } from './hudButton';
 export { HudProgressBar, type HudProgressBarOptions } from './hudProgressBar';
 export { HudFrame, type HudFrameOptions, type HudFrameSkin } from './hudFrame';
 export { createHudIcon, HUD_ICON_URLS, type HudIconName } from './hudIcons';
+export { HudWavePanel, type HudWavePanelOptions } from './hudWavePanel';
+export { HudText, type HudLocale, type HudTextKey, type HudTextParams } from './text/hudText';
 
 /**
  * 小地图调节集中在这里：size 改整个 HUD 尺寸，zoom 改内部地图视野（1 = 整张地图）。
@@ -37,6 +41,7 @@ export interface HudOptions {
   gemProgressHeight?: string;
   gemsPerCycle?: number;
   requestPause?: () => void;
+  locale?: HudLocale;
 }
 
 /**
@@ -50,8 +55,9 @@ export class Hud {
   readonly minimap: Minimap;
   readonly gemProgress: HudProgressBar;
   readonly playerInfo: HudFrame;
-  readonly waveInfo: HudFrame;
+  readonly waveInfo: HudWavePanel;
   readonly currencyInfo: HudFrame;
+  readonly text: HudText;
 
   private readonly topInfoRow = document.createElement('div');
   private readonly minimapDock = document.createElement('div');
@@ -64,9 +70,10 @@ export class Hud {
 
   constructor(host: HTMLElement, options: HudOptions = {}) {
     this.root.className = 'hud';
+    this.text = new HudText(options.locale ?? 'zh-CN');
 
-    this.playerInfo = this.createInfoFrame('玩家信息', 'hud-player-info');
-    this.waveInfo = this.createInfoFrame('怪物波次', 'hud-wave-info');
+    this.playerInfo = this.createInfoFrame('hud-player-info');
+    this.waveInfo = new HudWavePanel(this.text, { className: 'hud-wave-info' });
     this.currencyInfo = this.createCurrencyFrame();
     this.topInfoRow.className = 'hud-top-info-row';
     this.topInfoRow.append(this.playerInfo.root, this.waveInfo.root, this.currencyInfo.root);
@@ -78,19 +85,21 @@ export class Hud {
     minimapControls.className = 'hud-minimap-controls';
     const requestPause = () => options.requestPause?.();
     const pauseButton = createHudButton({
-      label: '暂停',
+      label: this.text.value('pause'),
       icon: 'pause',
       skin: 'button4',
       className: 'hud-minimap-button',
     });
     const settingsButton = createHudButton({
-      label: '设置',
+      label: this.text.value('settings'),
       icon: 'settings',
       skin: 'button4',
       className: 'hud-minimap-button',
     });
     pauseButton.addEventListener('click', requestPause);
     settingsButton.addEventListener('click', requestPause);
+    this.text.bindAttribute(pauseButton, 'aria-label', 'pause');
+    this.text.bindAttribute(settingsButton, 'aria-label', 'settings');
     this.actionButtons.push(pauseButton, settingsButton);
     minimapControls.append(pauseButton, settingsButton);
 
@@ -115,11 +124,12 @@ export class Hud {
     const cycle = options.gemsPerCycle ?? GEM_PROGRESS_SETTINGS.gemsPerCycle;
     this.gemsPerCycle = Number.isFinite(cycle) ? Math.max(1, Math.floor(cycle)) : GEM_PROGRESS_SETTINGS.gemsPerCycle;
     this.gemProgress = new HudProgressBar({
-      label: '蓝色宝石收集进度',
+      label: this.text.value('gemProgress'),
       className: 'hud-gem-progress',
       width: options.gemProgressWidth ?? GEM_PROGRESS_SETTINGS.width,
       height: options.gemProgressHeight ?? GEM_PROGRESS_SETTINGS.height,
     });
+    this.text.bindAttribute(this.gemProgress.root, 'aria-label', 'gemProgress');
     this.gemProgress.setValue(0, this.gemsPerCycle, false);
     this.root.appendChild(this.gemProgress.root);
     this.pointerSurfaces.push(this.gemProgress.root);
@@ -137,29 +147,43 @@ export class Hud {
     host.appendChild(this.root);
   }
 
-  private createInfoFrame(label: string, className: string): HudFrame {
-    const frame = new HudFrame({ skin: 'frame1', className, label });
+  private createInfoFrame(className: string): HudFrame {
+    const frame = new HudFrame({ skin: 'frame1', className, label: this.text.value('playerInfo') });
     const placeholder = document.createElement('span');
-    placeholder.className = 'hud-info-placeholder';
-    placeholder.textContent = label;
+    placeholder.className = 'hud-text hud-text--pixel hud-info-placeholder';
+    this.text.bindText(placeholder, 'playerInfo');
+    this.text.bindAttribute(frame.root, 'aria-label', 'playerInfo');
     frame.content.appendChild(placeholder);
     return frame;
   }
 
   private createCurrencyFrame(): HudFrame {
-    const frame = new HudFrame({ skin: 'frame1', className: 'hud-currency-info', label: '货币信息' });
-    const values: Array<['coin' | 'gem', string]> = [['coin', '0'], ['gem', '0']];
-    for (const [icon, value] of values) {
+    const frame = new HudFrame({
+      skin: 'frame1',
+      className: 'hud-currency-info',
+      label: this.text.value('currencyInfo'),
+    });
+    this.text.bindAttribute(frame.root, 'aria-label', 'currencyInfo');
+    const values: Array<['coin' | 'gem', 'gold' | 'energy', string]> = [
+      ['coin', 'gold', '0'],
+      ['gem', 'energy', '0'],
+    ];
+    for (const [icon, label, value] of values) {
       const item = document.createElement('div');
       item.className = 'hud-currency-item';
+      this.text.bindAttribute(item, 'aria-label', label);
       item.append(createHudIcon(icon, `hud-currency-icon hud-currency-icon--${icon}`));
       const count = document.createElement('span');
-      count.className = 'hud-currency-value';
+      count.className = 'hud-text hud-text--pixel hud-currency-value';
       count.textContent = value;
       item.appendChild(count);
       frame.content.appendChild(item);
     }
     return frame;
+  }
+
+  setLocale(locale: HudLocale): void {
+    this.text.setLocale(locale);
   }
 
   /** CSS 长度或百分比，例如 '22.5%'、'240px'。 */
