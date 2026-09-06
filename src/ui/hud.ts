@@ -79,6 +79,7 @@ export class Hud {
   private readonly minimapElement = document.createElement('div');
   private readonly actionButtons: HTMLButtonElement[] = [];
   private readonly pointerSurfaces: HTMLElement[] = [];
+  private readonly currencyValues = new Map<'gold' | 'energy', HTMLSpanElement>();
   private readonly hudPointer = document.createElement('div');
   private readonly quickbarResizeObserver: ResizeObserver;
   private readonly gemsPerCycle: number;
@@ -206,6 +207,7 @@ export class Hud {
       const count = document.createElement('span');
       count.className = 'hud-text hud-text--pixel hud-currency-value';
       count.textContent = value;
+      this.currencyValues.set(label, count);
       item.appendChild(count);
       frame.content.appendChild(item);
     }
@@ -280,6 +282,7 @@ export class Hud {
     this.playerInfo.setHealth(Math.max(0, Math.ceil(battle.player.hp)), battle.player.maxHp);
     for (let index = 0; index < battle.skillLoadout.activeSkillSlots.length; index++) {
       const skillId = battle.skillLoadout.activeSkillSlots[index];
+      this.quickbar.setSkill(index, skillId);
       this.quickbar.setSkillCooldown(index,
         skillId ? battle.skillCooldown(skillId) : 0,
         skillId ? battle.skillCooldownDuration(skillId) : 0);
@@ -292,6 +295,8 @@ export class Hud {
     this.minimap.draw(field, battle, camera);
     const total = battle.collectedGems;
     if (total !== this.lastCollectedGems) {
+      const energyValue = this.currencyValues.get('energy');
+      if (energyValue) energyValue.textContent = String(total);
       const sameCycle = Math.floor(total / this.gemsPerCycle) === Math.floor(this.lastCollectedGems / this.gemsPerCycle);
       this.gemProgress.setValue(total % this.gemsPerCycle, this.gemsPerCycle,
         total > this.lastCollectedGems && sameCycle);

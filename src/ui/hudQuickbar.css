@@ -25,18 +25,24 @@
 
 .hud-quick-slot--left {
   --hud-quick-slot-key-center: 52.4%;
+  --hud-quick-slot-mask-left: 13%;
+  --hud-quick-slot-mask-right: 8%;
 
   aspect-ratio: 319 / 388;
 }
 
 .hud-quick-slot--middle {
   --hud-quick-slot-key-center: 50%;
+  --hud-quick-slot-mask-left: 8%;
+  --hud-quick-slot-mask-right: 8%;
 
   aspect-ratio: 300 / 388;
 }
 
 .hud-quick-slot--right {
   --hud-quick-slot-key-center: 46.9%;
+  --hud-quick-slot-mask-left: 8%;
+  --hud-quick-slot-mask-right: 13%;
 
   aspect-ratio: 320 / 388;
 }
@@ -70,6 +76,15 @@
   filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.72));
 }
 
+.hud-quick-slot-icon[hidden] {
+  display: none;
+}
+
+.hud-quickbar-group--skills .hud-quick-slot-icon {
+  bottom: 23%;
+  height: 52%;
+}
+
 .hud-quick-slot-frame {
   position: absolute;
   inset: 0;
@@ -97,10 +112,10 @@
 
 .hud-quick-slot-cooldown {
   position: absolute;
-  top: 24%;
-  right: 13%;
-  bottom: 12%;
-  left: 13%;
+  top: 26%;
+  right: var(--hud-quick-slot-mask-right, 8%);
+  bottom: 21%;
+  left: var(--hud-quick-slot-mask-left, 8%);
   z-index: 3;
   background: rgba(1, 4, 9, 0.68);
   clip-path: polygon(4% 0, 96% 0, 100% 4%, 100% 96%, 96% 100%, 4% 100%, 0 96%, 0 4%);
@@ -111,16 +126,50 @@
 
 .hud-quick-slot-cooldown-value {
   position: absolute;
-  top: 24%;
-  right: 13%;
-  bottom: 12%;
-  left: 13%;
+  top: 26%;
+  right: var(--hud-quick-slot-mask-right, 8%);
+  bottom: 21%;
+  left: var(--hud-quick-slot-mask-left, 8%);
   z-index: 4;
   display: none;
   place-items: center;
   color: #fff;
   font-size: 15px;
   text-shadow: 0 2px 2px #000, 1px 0 1px #000, -1px 0 1px #000;
+}
+
+.hud-quick-slot-name {
+  position: absolute;
+  right: calc(var(--hud-quick-slot-mask-right, 8%) + 4px);
+  bottom: calc(13% + 7px);
+  left: calc(var(--hud-quick-slot-mask-left, 8%) + 4px);
+  z-index: 5;
+  overflow: hidden;
+  padding: 2px 3px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.58);
+  color: #f7f5ee;
+  font-size: 10px;
+  line-height: 1;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px #000, 1px 0 1px #000, -1px 0 1px #000;
+}
+
+.hud-quick-slot-levels {
+  --hud-skill-level-size: clamp(6px, 0.62vw, 10px);
+
+  position: absolute;
+  right: 11%;
+  bottom: calc(5% + 1px);
+  left: 11%;
+  z-index: 5;
+  gap: 0;
+}
+
+.hud-quick-slot-levels .hud-skill-level-marker + .hud-skill-level-marker {
+  margin-left: 0;
 }
 
 .hud-quick-slot--cooling .hud-quick-slot-cooldown {

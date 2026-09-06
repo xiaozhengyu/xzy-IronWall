@@ -16,7 +16,7 @@ export const HUD_TEXT_EN: HudMessages = {
   settings: 'SETTINGS',
   currencyInfo: 'CURRENCY',
   gold: 'GOLD',
-  energy: 'COLLECTED ENERGY',
+  energy: 'SPIRIT STONES',
   gemProgress: 'BLUE GEM COLLECTION PROGRESS',
   activeSkills: 'ACTIVE SKILLS',
   activeSkillSlot: 'ACTIVE SKILL {key}',
@@ -30,4 +30,7 @@ export const HUD_TEXT_EN: HudMessages = {
   skillWave: 'WAVE',
   skillHeavenSplit: 'HEAVEN SPLIT',
   skillSkyArrow: 'SKY ARROW',
+  skillLunge: 'LUNGE',
+  skillAegis: 'GOLDEN BELL',
+  skillDharma: 'DHARMA FORM',
 };

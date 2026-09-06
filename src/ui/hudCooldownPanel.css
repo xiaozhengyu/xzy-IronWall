@@ -59,6 +59,36 @@
   display: none;
 }
 
+.hud-cooldown-entry--skill {
+  height: calc(var(--hud-cooldown-entry-size) + 13px);
+  aspect-ratio: auto;
+}
+
+.hud-cooldown-entry--skill .hud-cooldown-entry-icon {
+  top: 3px;
+  bottom: 20px;
+  height: auto;
+}
+
+.hud-cooldown-entry--skill .hud-cooldown-entry-mask,
+.hud-cooldown-entry--skill .hud-cooldown-entry-value {
+  bottom: 19px;
+}
+
+.hud-cooldown-entry--skill .hud-cooldown-entry-name {
+  bottom: 10px;
+}
+
+.hud-cooldown-entry-levels {
+  --hud-skill-level-size: clamp(5px, 0.48vw, 8px);
+
+  position: absolute;
+  right: 2px;
+  bottom: 1px;
+  left: 2px;
+  z-index: 4;
+}
+
 .hud-cooldown-entry-icon {
   position: absolute;
   inset: 4% 7% 18%;

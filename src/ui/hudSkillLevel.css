@@ -1,0 +1,23 @@
+.hud-skill-levels {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  pointer-events: none;
+}
+
+.hud-skill-levels[hidden] {
+  display: none;
+}
+
+.hud-skill-level-marker {
+  display: block;
+  width: var(--hud-skill-level-size, 8px);
+  height: var(--hud-skill-level-size, 8px);
+  flex: none;
+  object-fit: contain;
+}
+
+.hud-skill-level-marker + .hud-skill-level-marker {
+  margin-left: calc(var(--hud-skill-level-size, 8px) * -0.16);
+}

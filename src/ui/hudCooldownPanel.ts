@@ -6,6 +6,7 @@ import skill09Url from '../../assets/hud/item/skill/skill-09.png';
 import type { SkillId } from '../game/skills';
 import type { HudText } from './text/hudText';
 import type { HudTextKey } from './text/hudText.types';
+import { createHudSkillLevel } from './hudSkillLevel';
 import './hudCooldownPanel.css';
 
 type CooldownEntryDefinition = {
@@ -61,7 +62,7 @@ export class HudCooldownPanel {
     this.root.appendChild(this.content);
 
     for (const definition of HUD_COOLDOWN_SKILLS) {
-      const view = this.createEntry(definition.icon, text.value(definition.label));
+      const view = this.createEntry(definition.icon, text.value(definition.label), true);
       const name = view.root.querySelector('.hud-cooldown-entry-name') as HTMLElement;
       text.bindText(name, definition.label);
       view.root.hidden = true;
@@ -109,7 +110,7 @@ export class HudCooldownPanel {
     this.effectContent.hidden = this.effects.size === 0;
   }
 
-  private createEntry(iconUrl: string, label: string): CooldownEntryView {
+  private createEntry(iconUrl: string, label: string, showLevel = false): CooldownEntryView {
     const root = document.createElement('div');
     root.className = 'hud-cooldown-entry';
     root.setAttribute('aria-label', label);
@@ -128,6 +129,10 @@ export class HudCooldownPanel {
     name.className = 'hud-text hud-text--pixel hud-cooldown-entry-name';
     name.textContent = label;
     root.append(icon, mask, value, name);
+    if (showLevel) {
+      root.classList.add('hud-cooldown-entry--skill');
+      root.appendChild(createHudSkillLevel(undefined, undefined, 'hud-cooldown-entry-levels'));
+    }
     return { root, value, lastValue: '' };
   }
 

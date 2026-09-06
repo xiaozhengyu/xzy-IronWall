@@ -8,8 +8,10 @@ import skill06Url from '../../assets/hud/item/skill/skill-06.png';
 import skill07Url from '../../assets/hud/item/skill/skill-07.png';
 import talisman01Url from '../../assets/hud/item/talisman/talisman-01.png';
 import talisman02Url from '../../assets/hud/item/talisman/talisman-02.png';
+import type { SkillId } from '../game/skills';
 import type { HudText } from './text/hudText';
 import type { HudTextKey } from './text/hudText.types';
+import { createHudSkillLevel } from './hudSkillLevel';
 import './hudQuickbar.css';
 
 export interface HudQuickSlotOptions {
@@ -29,10 +31,14 @@ export interface HudQuickbarOptions {
 
 type HudQuickSlotView = {
   root: HTMLElement;
+  icon: HTMLImageElement | null;
+  name: HTMLSpanElement | null;
+  levels: HTMLElement | null;
   cooldown: HTMLSpanElement | null;
   cooldownValue: HTMLSpanElement | null;
   countValue: HTMLSpanElement | null;
   lastCooldownText: string;
+  skillId: SkillId | null | undefined;
 };
 
 type HudItemSlot = {
@@ -54,6 +60,12 @@ const DEFAULT_SKILLS: readonly HudQuickSlotOptions[] = [
   { key: 'E', icon: skill07Url, label: 'activeSkillSlot' },
   { key: 'R', label: 'activeSkillSlot', emptyLabel: 'emptyActiveSkillSlot' },
 ];
+
+const ACTIVE_SKILL_PRESENTATION: Partial<Record<SkillId, { icon: string; name: HudTextKey }>> = {
+  lunge: { icon: skill01Url, name: 'skillLunge' },
+  aegis: { icon: skill06Url, name: 'skillAegis' },
+  dharma: { icon: skill07Url, name: 'skillDharma' },
+};
 
 const DEFAULT_ITEMS: readonly HudQuickSlotOptions[] = [
   { key: '1', id: 'pill-01', icon: pill01Url, label: 'itemSlot', count: 3, effectDuration: 8 },
@@ -95,6 +107,16 @@ export class HudQuickbar {
       this.itemGroup.appendChild(view.root);
     }
     this.root.append(this.skillGroup, this.itemGroup);
+    text.onChange(() => {
+      for (const slot of this.skillSlots) this.refreshSkillPresentation(slot);
+    });
+  }
+
+  setSkill(index: number, id: SkillId | null): void {
+    const slot = this.skillSlots[index];
+    if (!slot || slot.skillId === id) return;
+    slot.skillId = id;
+    this.refreshSkillPresentation(slot);
   }
 
   setSkillCooldown(index: number, remaining: number, total: number): void {
@@ -140,26 +162,36 @@ export class HudQuickbar {
     body.className = 'hud-quick-slot-body';
     slot.appendChild(body);
 
-    if (options.icon) {
-      const icon = document.createElement('img');
+    let icon: HTMLImageElement | null = null;
+    if (options.icon || skill) {
+      icon = document.createElement('img');
       icon.className = 'hud-quick-slot-icon';
-      icon.src = options.icon;
+      if (options.icon) icon.src = options.icon;
       icon.alt = '';
       icon.draggable = false;
+      icon.hidden = !options.icon;
       slot.appendChild(icon);
-    } else {
+    }
+    if (!options.icon) {
       slot.classList.add('hud-quick-slot--empty');
     }
 
+    let name: HTMLSpanElement | null = null;
+    let levels: HTMLElement | null = null;
     let cooldown: HTMLSpanElement | null = null;
     let cooldownValue: HTMLSpanElement | null = null;
     let countValue: HTMLSpanElement | null = null;
     if (skill) {
+      name = document.createElement('span');
+      name.className = 'hud-text hud-text--pixel hud-quick-slot-name';
+      name.hidden = true;
+      levels = createHudSkillLevel(undefined, undefined, 'hud-quick-slot-levels');
+      levels.hidden = true;
       cooldown = document.createElement('span');
       cooldown.className = 'hud-quick-slot-cooldown';
       cooldownValue = document.createElement('span');
       cooldownValue.className = 'hud-text hud-text--pixel hud-quick-slot-cooldown-value';
-      slot.append(cooldown, cooldownValue);
+      slot.append(cooldown, cooldownValue, name, levels);
     } else if (options.icon) {
       countValue = document.createElement('span');
       countValue.className = 'hud-text hud-text--pixel hud-quick-slot-count';
@@ -178,7 +210,31 @@ export class HudQuickbar {
     key.className = 'hud-text hud-text--pixel hud-quick-slot-key';
     key.textContent = options.key;
     slot.append(frame, key);
-    return { root: slot, cooldown, cooldownValue, countValue, lastCooldownText: '' };
+    return {
+      root: slot,
+      icon,
+      name,
+      levels,
+      cooldown,
+      cooldownValue,
+      countValue,
+      lastCooldownText: '',
+      skillId: undefined,
+    };
+  }
+
+  private refreshSkillPresentation(slot: HudQuickSlotView): void {
+    const presentation = slot.skillId ? ACTIVE_SKILL_PRESENTATION[slot.skillId] : undefined;
+    if (slot.icon) {
+      slot.icon.hidden = !presentation;
+      if (presentation) slot.icon.src = presentation.icon;
+    }
+    if (slot.name) {
+      slot.name.hidden = !presentation;
+      slot.name.textContent = presentation ? this.text.value(presentation.name) : '';
+    }
+    if (slot.levels) slot.levels.hidden = !presentation;
+    slot.root.classList.toggle('hud-quick-slot--empty', !presentation);
   }
 
   private refreshItemCount(item: HudItemSlot): void {

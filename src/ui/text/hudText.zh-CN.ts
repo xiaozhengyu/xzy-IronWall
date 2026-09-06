@@ -16,7 +16,7 @@ export const HUD_TEXT_ZH_CN: HudMessages = {
   settings: '设置',
   currencyInfo: '货币信息',
   gold: '金币',
-  energy: '收集能量',
+  energy: '灵石',
   gemProgress: '蓝色宝石收集进度',
   activeSkills: '主动技能栏',
   activeSkillSlot: '主动技能 {key}',
@@ -30,4 +30,7 @@ export const HUD_TEXT_ZH_CN: HudMessages = {
   skillWave: '破空',
   skillHeavenSplit: '开天',
   skillSkyArrow: '穿云箭',
+  skillLunge: '突进',
+  skillAegis: '金钟罩',
+  skillDharma: '天地法相',
 };
