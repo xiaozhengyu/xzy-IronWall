@@ -1,6 +1,5 @@
 import minimapFrameUrl from '../../assets/hud/minimap-frame.png';
 import { playerPresetDisplayName, type Battle } from '../game/battle';
-import { skillById } from '../game/skills';
 import type { Field } from '../game/field';
 import type { Camera } from '../render/camera';
 import './hud.css';
@@ -13,6 +12,7 @@ import { swordCursorImage } from './cursorImage';
 import { HudWavePanel } from './hudWavePanel';
 import { HudPlayerPanel } from './hudPlayerPanel';
 import { HudQuickbar } from './hudQuickbar';
+import { HUD_COOLDOWN_SKILLS, HudCooldownPanel } from './hudCooldownPanel';
 import { HudText, type HudLocale } from './text/hudText';
 export { createHudButton, type HudButtonOptions, type HudButtonSkin } from './hudButton';
 export { HudProgressBar, type HudProgressBarOptions } from './hudProgressBar';
@@ -20,7 +20,13 @@ export { HudFrame, type HudFrameOptions, type HudFrameSkin } from './hudFrame';
 export { createHudIcon, HUD_ICON_URLS, type HudIconName } from './hudIcons';
 export { HudWavePanel, type HudWavePanelOptions } from './hudWavePanel';
 export { HudPlayerPanel, type HudPlayerPanelOptions } from './hudPlayerPanel';
-export { HudQuickbar, type HudQuickbarOptions, type HudQuickSlotOptions } from './hudQuickbar';
+export {
+  HudQuickbar,
+  type HudQuickbarItemUse,
+  type HudQuickbarOptions,
+  type HudQuickSlotOptions,
+} from './hudQuickbar';
+export { HudCooldownPanel, type HudTimedEffect } from './hudCooldownPanel';
 export { HudText, type HudLocale, type HudTextKey, type HudTextParams } from './text/hudText';
 
 /**
@@ -65,6 +71,7 @@ export class Hud {
   readonly waveInfo: HudWavePanel;
   readonly currencyInfo: HudFrame;
   readonly quickbar: HudQuickbar;
+  readonly cooldownInfo: HudCooldownPanel;
   readonly text: HudText;
 
   private readonly topInfoRow = document.createElement('div');
@@ -154,6 +161,10 @@ export class Hud {
     this.pointerSurfaces.push(this.quickbar.root);
     this.quickbarResizeObserver = new ResizeObserver(() => this.syncGemProgressWidth());
 
+    this.cooldownInfo = new HudCooldownPanel(this.text);
+    this.root.appendChild(this.cooldownInfo.root);
+    this.pointerSurfaces.push(this.cooldownInfo.root);
+
     this.hudPointer.className = 'hud-pointer';
     this.hudPointer.hidden = true;
     const pointerImage = swordCursorImage();
@@ -203,6 +214,17 @@ export class Hud {
 
   setLocale(locale: HudLocale): void {
     this.text.setLocale(locale);
+  }
+
+  useItem(index: number): boolean {
+    const effect = this.quickbar.consumeItem(index);
+    if (!effect) return false;
+    this.cooldownInfo.activateTimedEffect(effect);
+    return true;
+  }
+
+  update(dt: number): void {
+    this.cooldownInfo.update(dt);
   }
 
   /** CSS 长度或百分比，例如 '22.5%'、'240px'。 */
@@ -260,7 +282,12 @@ export class Hud {
       const skillId = battle.skillLoadout.activeSkillSlots[index];
       this.quickbar.setSkillCooldown(index,
         skillId ? battle.skillCooldown(skillId) : 0,
-        skillId ? skillById(skillId).cooldown : 0);
+        skillId ? battle.skillCooldownDuration(skillId) : 0);
+    }
+    for (const definition of HUD_COOLDOWN_SKILLS) {
+      this.cooldownInfo.setSkillState(definition.id,
+        battle.skillLoadout.isEquipped(definition.id),
+        battle.skillCooldown(definition.id), battle.skillCooldownDuration(definition.id));
     }
     this.minimap.draw(field, battle, camera);
     const total = battle.collectedGems;

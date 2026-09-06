@@ -21,6 +21,13 @@ export interface HudMessages {
   emptyActiveSkillSlot: string;
   itemQuickbar: string;
   itemSlot: string;
+  itemEffect: string;
+  cooldownPanel: string;
+  skillSweep: string;
+  skillSpin: string;
+  skillWave: string;
+  skillHeavenSplit: string;
+  skillSkyArrow: string;
 }
 
 export type HudTextKey = keyof HudMessages;

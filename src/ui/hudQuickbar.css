@@ -131,6 +131,27 @@
   display: grid;
 }
 
+.hud-quick-slot-count {
+  position: absolute;
+  right: 11%;
+  bottom: 9%;
+  z-index: 5;
+  min-width: 16px;
+  padding: 2px 4px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.78);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  text-align: center;
+  text-shadow: 0 1px 1px #000;
+}
+
+.hud-quick-slot--depleted .hud-quick-slot-icon {
+  opacity: 0.28;
+  filter: grayscale(1) brightness(0.72);
+}
+
 .hud-quick-slot--empty .hud-quick-slot-body {
   background:
     radial-gradient(circle, rgba(75, 72, 67, 0.14), transparent 58%),

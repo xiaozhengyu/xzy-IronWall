@@ -1162,8 +1162,10 @@ export class Battle {
       (x, y) => this.placeWorldEnemy(x, y, view));
     this.spawnWave(dt, view);
     this.advanceSkillSchedule(dt, view);
-    this.swing();
+    // 先推进当前攻击和完整攻击间隔；本帧一旦归零，就在同一帧开始下一次攻击。
+    // 这样 HUD 的 0 与实际再次发动严格重合，不会出现归零后空等一帧。
     this.advancePlayerAttack(dt, view);
+    this.swing();
     this.advanceSkills(dt, view);
     // 完整怪物和无骨架数据一起移动，并共享避让与分离。
     this.driveEnemies(dt, view);
@@ -1326,7 +1328,19 @@ export class Battle {
   }
 
   skillCooldown(id: SkillId): number {
+    if (skillById(id).category === 'attack') {
+      return this.skillLoadout.attackSkill === id ? this.player.attackCooldown : 0;
+    }
     return this.skillLoadout.cooldownOf(id);
+  }
+
+  /** HUD 使用的完整发动间隔；自动攻击还要包含武器动作本身，而不只是技能表里的额外等待。 */
+  skillCooldownDuration(id: SkillId): number {
+    const skill = skillById(id);
+    if (skill.category === 'attack') {
+      return attackDuration(this.player.def) + PLAYER_SWING_GAP + skill.cooldown;
+    }
+    return skill.cooldown;
   }
 
   private startPlayerAttack(): boolean {

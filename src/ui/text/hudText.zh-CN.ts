@@ -23,4 +23,11 @@ export const HUD_TEXT_ZH_CN: HudMessages = {
   emptyActiveSkillSlot: '主动技能 {key}，空槽位',
   itemQuickbar: '物品快捷栏',
   itemSlot: '物品快捷键 {key}',
+  itemEffect: '物品 {key} 效果',
+  cooldownPanel: '技能与药效冷却',
+  skillSweep: '横扫',
+  skillSpin: '回旋',
+  skillWave: '破空',
+  skillHeavenSplit: '开天',
+  skillSkyArrow: '穿云箭',
 };

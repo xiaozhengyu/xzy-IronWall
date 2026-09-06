@@ -307,7 +307,9 @@ function onKeyPressed(code: string): void {
   if (code === 'BracketRight') camera.nudgeMagnify(1);
 
   const digit = code.startsWith('Digit') ? Number(code.slice(5)) : NaN;
-  if (digit >= 1 && digit <= PlayerPresets.length) {
+  if (state === 'playing' && digit >= 1 && digit <= 4) {
+    hud.useItem(digit - 1);
+  } else if (state !== 'playing' && digit >= 1 && digit <= PlayerPresets.length) {
     battle.setPreset(digit - 1);
     // 暂停时主循环不跑；菜单换角色后主动补一帧，让名称和头像当场同步。
     draw();
@@ -333,6 +335,7 @@ app.ticker.add((ticker) => {
   // 后台、断点、掉帧都会，夹一下省得人一口气瞬移出去。
   const dt = Math.min(ticker.deltaMS / 1000, 1 / 20);
   battle.update(dt, readInput(), viewOf());
+  hud.update(dt);
   draw();
 });
 

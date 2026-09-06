@@ -23,4 +23,11 @@ export const HUD_TEXT_EN: HudMessages = {
   emptyActiveSkillSlot: 'ACTIVE SKILL {key}, EMPTY SLOT',
   itemQuickbar: 'ITEM QUICKBAR',
   itemSlot: 'ITEM SHORTCUT {key}',
+  itemEffect: 'ITEM {key} EFFECT',
+  cooldownPanel: 'SKILL AND EFFECT COOLDOWNS',
+  skillSweep: 'SWEEP',
+  skillSpin: 'SPIN',
+  skillWave: 'WAVE',
+  skillHeavenSplit: 'HEAVEN SPLIT',
+  skillSkyArrow: 'SKY ARROW',
 };

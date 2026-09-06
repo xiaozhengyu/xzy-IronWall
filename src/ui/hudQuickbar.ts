@@ -17,6 +17,9 @@ export interface HudQuickSlotOptions {
   icon?: string;
   label: HudTextKey;
   emptyLabel?: HudTextKey;
+  id?: string;
+  count?: number;
+  effectDuration?: number;
 }
 
 export interface HudQuickbarOptions {
@@ -28,8 +31,22 @@ type HudQuickSlotView = {
   root: HTMLElement;
   cooldown: HTMLSpanElement | null;
   cooldownValue: HTMLSpanElement | null;
+  countValue: HTMLSpanElement | null;
   lastCooldownText: string;
 };
+
+type HudItemSlot = {
+  view: HudQuickSlotView;
+  options: HudQuickSlotOptions;
+  count: number;
+};
+
+export interface HudQuickbarItemUse {
+  id: string;
+  icon: string;
+  label: string;
+  duration: number;
+}
 
 const DEFAULT_SKILLS: readonly HudQuickSlotOptions[] = [
   { key: 'Q', icon: skill01Url, label: 'activeSkillSlot' },
@@ -39,10 +56,10 @@ const DEFAULT_SKILLS: readonly HudQuickSlotOptions[] = [
 ];
 
 const DEFAULT_ITEMS: readonly HudQuickSlotOptions[] = [
-  { key: '1', icon: pill01Url, label: 'itemSlot' },
-  { key: '2', icon: pill02Url, label: 'itemSlot' },
-  { key: '3', icon: talisman01Url, label: 'itemSlot' },
-  { key: '4', icon: talisman02Url, label: 'itemSlot' },
+  { key: '1', id: 'pill-01', icon: pill01Url, label: 'itemSlot', count: 3, effectDuration: 8 },
+  { key: '2', id: 'pill-02', icon: pill02Url, label: 'itemSlot', count: 3, effectDuration: 10 },
+  { key: '3', id: 'talisman-01', icon: talisman01Url, label: 'itemSlot', count: 2, effectDuration: 12 },
+  { key: '4', id: 'talisman-02', icon: talisman02Url, label: 'itemSlot', count: 2, effectDuration: 14 },
 ];
 
 /** 底部快捷栏的纯显示组件；技能和物品逻辑接入时只需更新各槽位图标与状态。 */
@@ -52,8 +69,11 @@ export class HudQuickbar {
   readonly itemGroup = document.createElement('div');
 
   private readonly skillSlots: HudQuickSlotView[] = [];
+  private readonly itemSlots: HudItemSlot[] = [];
+  private readonly text: HudText;
 
   constructor(text: HudText, options: HudQuickbarOptions = {}) {
+    this.text = text;
     this.root.className = 'hud-quickbar';
     this.skillGroup.className = 'hud-quickbar-group hud-quickbar-group--skills';
     this.itemGroup.className = 'hud-quickbar-group hud-quickbar-group--items';
@@ -68,7 +88,11 @@ export class HudQuickbar {
       this.skillGroup.appendChild(view.root);
     }
     for (let index = 0; index < items.length; index++) {
-      this.itemGroup.appendChild(this.createSlot(text, items[index], index, items.length, false).root);
+      const view = this.createSlot(text, items[index], index, items.length, false);
+      const count = Math.max(0, Math.floor(items[index].count ?? 0));
+      this.itemSlots.push({ view, options: items[index], count });
+      this.refreshItemCount(this.itemSlots[index]);
+      this.itemGroup.appendChild(view.root);
     }
     this.root.append(this.skillGroup, this.itemGroup);
   }
@@ -87,6 +111,21 @@ export class HudQuickbar {
     if (slot.lastCooldownText === cooldownText) return;
     slot.lastCooldownText = cooldownText;
     slot.cooldownValue.textContent = cooldownText;
+  }
+
+  consumeItem(index: number): HudQuickbarItemUse | null {
+    const item = this.itemSlots[index];
+    const icon = item?.options.icon;
+    const duration = item?.options.effectDuration ?? 0;
+    if (!item || !icon || item.count <= 0 || duration <= 0) return null;
+    item.count--;
+    this.refreshItemCount(item);
+    return {
+      id: item.options.id ?? `item-${index + 1}`,
+      icon,
+      label: this.text.value('itemEffect', { key: item.options.key }),
+      duration,
+    };
   }
 
   private createSlot(text: HudText, options: HudQuickSlotOptions, index: number, count: number,
@@ -114,12 +153,17 @@ export class HudQuickbar {
 
     let cooldown: HTMLSpanElement | null = null;
     let cooldownValue: HTMLSpanElement | null = null;
+    let countValue: HTMLSpanElement | null = null;
     if (skill) {
       cooldown = document.createElement('span');
       cooldown.className = 'hud-quick-slot-cooldown';
       cooldownValue = document.createElement('span');
       cooldownValue.className = 'hud-text hud-text--pixel hud-quick-slot-cooldown-value';
       slot.append(cooldown, cooldownValue);
+    } else if (options.icon) {
+      countValue = document.createElement('span');
+      countValue.className = 'hud-text hud-text--pixel hud-quick-slot-count';
+      slot.appendChild(countValue);
     }
 
     const frame = document.createElement('img');
@@ -134,6 +178,11 @@ export class HudQuickbar {
     key.className = 'hud-text hud-text--pixel hud-quick-slot-key';
     key.textContent = options.key;
     slot.append(frame, key);
-    return { root: slot, cooldown, cooldownValue, lastCooldownText: '' };
+    return { root: slot, cooldown, cooldownValue, countValue, lastCooldownText: '' };
+  }
+
+  private refreshItemCount(item: HudItemSlot): void {
+    if (item.view.countValue) item.view.countValue.textContent = String(item.count);
+    item.view.root.classList.toggle('hud-quick-slot--depleted', item.count <= 0);
   }
 }
