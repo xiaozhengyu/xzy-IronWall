@@ -26,7 +26,6 @@ export interface HudPlayerPanelOptions {
 
 type PlayerBar = {
   root: HTMLDivElement;
-  fill: HTMLDivElement;
   value: HTMLSpanElement;
 };
 
@@ -126,9 +125,12 @@ export class HudPlayerPanel {
 
     const experienceBar = document.createElement('div');
     experienceBar.className = 'hud-player-experience-bar';
+    const experienceClip = document.createElement('div');
+    experienceClip.className = 'hud-player-experience-clip';
     const experienceFill = document.createElement('span');
     experienceFill.className = 'hud-player-experience-fill';
-    experienceBar.append(experienceFill,
+    experienceClip.append(experienceFill);
+    experienceBar.append(experienceClip,
       this.createFrameImage(experienceFrameUrl, 'hud-player-experience-frame'));
 
     this.experienceValue.className = 'hud-text hud-text--pixel hud-player-experience-value';
@@ -181,19 +183,22 @@ export class HudPlayerPanel {
   setExperience(value: number, maximum: number): void {
     [this.experience, this.maxExperience] = this.normalizeRange(value, maximum);
     const ratio = this.experience / this.maxExperience;
-    this.root.style.setProperty('--hud-player-experience', `${ratio * 92}%`);
+    this.root.style.setProperty('--hud-player-experience', `${ratio * 100}%`);
     this.refreshText();
   }
 
   private createStatusBar(kind: 'health' | 'mana'): PlayerBar {
     const root = document.createElement('div');
     root.className = `hud-player-status-bar hud-player-status-bar--${kind}`;
+    const clip = document.createElement('div');
+    clip.className = 'hud-player-status-clip';
     const fill = document.createElement('div');
     fill.className = 'hud-player-status-fill';
+    clip.append(fill);
     const value = document.createElement('span');
     value.className = 'hud-text hud-text--pixel hud-player-status-value';
-    root.append(fill, value, this.createFrameImage(statusBarFrameUrl, 'hud-player-status-frame'));
-    return { root, fill, value };
+    root.append(clip, value, this.createFrameImage(statusBarFrameUrl, 'hud-player-status-frame'));
+    return { root, value };
   }
 
   private createFrameImage(source: string, className: string): HTMLImageElement {
@@ -206,7 +211,7 @@ export class HudPlayerPanel {
   }
 
   private refreshBar(bar: PlayerBar, value: number, maximum: number, kind: 'health' | 'mana'): void {
-    bar.fill.style.width = `${value / maximum * 96}%`;
+    bar.root.style.setProperty('--hud-player-status-progress', `${value / maximum * 100}%`);
     bar.value.textContent = `${value} / ${maximum}`;
     bar.root.setAttribute('aria-label', this.text.value(kind, { value, maximum }));
   }

@@ -75,13 +75,19 @@
   overflow: hidden;
 }
 
-.hud-player-status-fill {
+.hud-player-status-clip {
   position: absolute;
   top: 8%;
   bottom: 0;
-  left: 2%;
+  left: 1.2%;
+  right: 1.2%;
   z-index: 1;
-  max-width: 96%;
+  clip-path: inset(0 calc(100% - var(--hud-player-status-progress, 0%)) 0 0);
+}
+
+.hud-player-status-fill {
+  position: absolute;
+  inset: 0;
   border-radius: 7px;
   box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.16), inset 0 -2px 0 rgba(0, 0, 0, 0.42);
 }
@@ -113,14 +119,19 @@
   overflow: hidden;
 }
 
-.hud-player-experience-fill {
+.hud-player-experience-clip {
   position: absolute;
   top: 16%;
   bottom: 16%;
   left: 4%;
+  right: 4%;
   z-index: 1;
-  width: var(--hud-player-experience, 0%);
-  max-width: 92%;
+  clip-path: inset(0 calc(100% - var(--hud-player-experience, 0%)) 0 0);
+}
+
+.hud-player-experience-fill {
+  position: absolute;
+  inset: 0;
   background: linear-gradient(#ffd35a, #c68418 65%, #6f3e09);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
   clip-path: polygon(0 50%, 2% 0, 100% 0, 100% 100%, 2% 100%);
