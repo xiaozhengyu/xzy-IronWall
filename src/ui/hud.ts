@@ -29,6 +29,10 @@ export {
 export { HudCooldownPanel, type HudTimedEffect } from './hudCooldownPanel';
 export { HudText, type HudLocale, type HudTextKey, type HudTextParams } from './text/hudText';
 
+/** HUD 的设计坐标；窗口只缩放整层，不改变组件内部布局。 */
+const HUD_DESIGN_WIDTH = 1920;
+const HUD_DESIGN_HEIGHT = 1080;
+
 /**
  * 小地图调节集中在这里：size 改整个 HUD 尺寸，zoom 改内部地图视野（1 = 整张地图）。
  * 也可以在 new Hud(host, options) 时覆盖，不必改组件实现。
@@ -82,6 +86,7 @@ export class Hud {
   private readonly currencyValues = new Map<'gold' | 'energy', HTMLSpanElement>();
   private readonly hudPointer = document.createElement('div');
   private readonly quickbarResizeObserver: ResizeObserver;
+  private readonly viewportResizeObserver: ResizeObserver;
   private readonly gemsPerCycle: number;
   private readonly gemProgressSideOverhang: number;
   private lastCollectedGems = 0;
@@ -89,6 +94,8 @@ export class Hud {
 
   constructor(host: HTMLElement, options: HudOptions = {}) {
     this.root.className = 'hud';
+    this.root.style.width = `${HUD_DESIGN_WIDTH}px`;
+    this.root.style.height = `${HUD_DESIGN_HEIGHT}px`;
     this.text = new HudText(options.locale ?? 'zh-CN');
 
     this.playerInfo = new HudPlayerPanel(this.text, { className: 'hud-player-info' });
@@ -177,12 +184,24 @@ export class Hud {
     }
     this.root.appendChild(this.hudPointer);
     host.appendChild(this.root);
+    this.viewportResizeObserver = new ResizeObserver(([entry]) => {
+      if (entry) this.syncViewportScale(entry.contentRect.width, entry.contentRect.height);
+    });
+    this.viewportResizeObserver.observe(host);
+    const viewportRect = host.getBoundingClientRect();
+    this.syncViewportScale(viewportRect.width, viewportRect.height);
     this.quickbarResizeObserver.observe(this.quickbar.root);
     this.syncGemProgressWidth();
   }
 
+  private syncViewportScale(width: number, height: number): void {
+    const scale = Math.min(width / HUD_DESIGN_WIDTH, height / HUD_DESIGN_HEIGHT);
+    this.root.style.setProperty('--hud-scale', String(scale));
+  }
+
   private syncGemProgressWidth(): void {
-    const width = this.quickbar.root.getBoundingClientRect().width;
+    // 读取变换前的设计宽度，保留小数；屏幕宽度会把根容器的缩放重复计算进去。
+    const width = Number.parseFloat(getComputedStyle(this.quickbar.root).width);
     if (width > 0) {
       this.gemProgress.root.style.width = `${width + this.gemProgressSideOverhang * 2}px`;
     }
@@ -243,6 +262,7 @@ export class Hud {
    * 指针锁定时浏览器只把点击交给 canvas；用游戏准星的屏幕坐标命中 HUD 按钮。
    */
   activateControlAt(clientX: number, clientY: number): boolean {
+    // 命中测试使用缩放后的屏幕矩形，与 canvas 传来的 client 坐标一致。
     for (const button of this.actionButtons) {
       const rect = button.getBoundingClientRect();
       if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) continue;

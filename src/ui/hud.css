@@ -1,8 +1,11 @@
 /**
- * 正式 HUD 始终以固定 16:9 游戏画框为参照。这里用百分比而不是窗口单位，所以无论外面留的是
- * 上下边还是左右边，小地图相对战场的位置与占屏比例都不变。
+ * 正式 HUD 在 hud.ts 指定的 1920×1080 设计尺寸内布局，再随 16:9 游戏画框整体缩放。
+ * 百分比和 px 都是设计坐标；组件不要使用 vw/vh，否则内部布局仍会随窗口变化。
  */
 .hud {
+  /* 1280px 宽画框下恢复原来的显示字号，之后仍随整层等比缩放。 */
+  --hud-font-scale: 1.5;
+
   /**
    * 位置仍在 CSS 中调整；尺寸与内部视野倍率集中在 hud.ts 的 MINIMAP_SETTINGS。
    */
@@ -12,7 +15,10 @@
   --hud-gem-progress-height: 34px;
 
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
+  transform: scale(var(--hud-scale, 0));
+  transform-origin: top left;
   z-index: 4;
   overflow: hidden;
   pointer-events: none;
@@ -156,7 +162,7 @@
 
 .hud-currency-value {
   color: #eee7d7;
-  font: 700 15px/1 Georgia, 'Times New Roman', serif;
+  font: 700 calc(15px * var(--hud-font-scale, 1))/1 Georgia, 'Times New Roman', serif;
   text-shadow: 0 2px 3px #000;
 }
 

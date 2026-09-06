@@ -105,7 +105,7 @@
   height: 16%;
   place-items: center;
   color: #f7f5ee;
-  font-size: 14px;
+  font-size: calc(14px * var(--hud-font-scale, 1));
   line-height: 1;
   transform: translate(-50%, 2px);
 }
@@ -134,7 +134,7 @@
   display: none;
   place-items: center;
   color: #fff;
-  font-size: 15px;
+  font-size: calc(15px * var(--hud-font-scale, 1));
   text-shadow: 0 2px 2px #000, 1px 0 1px #000, -1px 0 1px #000;
 }
 
@@ -149,7 +149,7 @@
   border-radius: 3px;
   background: rgba(0, 0, 0, 0.58);
   color: #f7f5ee;
-  font-size: 10px;
+  font-size: calc(10px * var(--hud-font-scale, 1));
   line-height: 1;
   text-align: center;
   text-overflow: ellipsis;
@@ -158,7 +158,7 @@
 }
 
 .hud-quick-slot-levels {
-  --hud-skill-level-size: clamp(6px, 0.62vw, 10px);
+  --hud-skill-level-size: 10px;
 
   position: absolute;
   right: 11%;
@@ -190,7 +190,7 @@
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.78);
   color: #fff;
-  font-size: 11px;
+  font-size: calc(11px * var(--hud-font-scale, 1));
   line-height: 1;
   text-align: center;
   text-shadow: 0 1px 1px #000;

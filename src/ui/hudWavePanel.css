@@ -1,6 +1,6 @@
 .hud-wave-panel-content {
   display: grid;
-  grid-template-rows: 26px 30px 22px;
+  grid-template-rows: calc(26px * var(--hud-font-scale, 1)) calc(30px * var(--hud-font-scale, 1)) 22px;
   align-content: center;
   padding: 8px 18px;
 }
@@ -25,16 +25,16 @@
 .hud-wave-title {
   min-width: 0;
   overflow: hidden;
-  font-size: 19px;
-  line-height: 26px;
+  font-size: calc(19px * var(--hud-font-scale, 1));
+  line-height: calc(26px * var(--hud-font-scale, 1));
   letter-spacing: 0.1em;
   text-align: center;
   white-space: nowrap;
 }
 
 .hud-wave-timer {
-  font-size: 25px;
-  line-height: 30px;
+  font-size: calc(25px * var(--hud-font-scale, 1));
+  line-height: calc(30px * var(--hud-font-scale, 1));
   letter-spacing: 0.08em;
   text-align: center;
 }
