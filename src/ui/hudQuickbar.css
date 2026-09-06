@@ -1,0 +1,138 @@
+.hud-quickbar {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--hud-gem-progress-bottom, 2.6%) + var(--hud-gem-progress-height, 34px) + 2px);
+  display: flex;
+  align-items: flex-end;
+  height: 14%;
+  gap: 28px;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 5px 7px rgba(0, 0, 0, 0.72));
+}
+
+.hud-quickbar-group {
+  display: flex;
+  align-items: flex-end;
+  height: 100%;
+}
+
+.hud-quick-slot {
+  position: relative;
+  width: auto;
+  height: 100%;
+  flex: none;
+}
+
+.hud-quick-slot--left {
+  --hud-quick-slot-key-center: 52.4%;
+
+  aspect-ratio: 319 / 388;
+}
+
+.hud-quick-slot--middle {
+  --hud-quick-slot-key-center: 50%;
+
+  aspect-ratio: 300 / 388;
+}
+
+.hud-quick-slot--right {
+  --hud-quick-slot-key-center: 46.9%;
+
+  aspect-ratio: 320 / 388;
+}
+
+.hud-quick-slot + .hud-quick-slot {
+  margin-left: -1px;
+}
+
+.hud-quick-slot-body {
+  position: absolute;
+  top: 20%;
+  right: 7%;
+  bottom: 7%;
+  left: 7%;
+  z-index: 0;
+  background: rgba(5, 6, 8, 0.88);
+  clip-path: polygon(4% 0, 96% 0, 100% 4%, 100% 96%, 96% 100%, 4% 100%, 0 96%, 0 4%);
+}
+
+.hud-quick-slot-icon {
+  position: absolute;
+  top: 25%;
+  right: 14%;
+  bottom: 13%;
+  left: 14%;
+  z-index: 2;
+  display: block;
+  width: 72%;
+  height: 62%;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.72));
+}
+
+.hud-quick-slot-frame {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.hud-quick-slot-key {
+  position: absolute;
+  top: 1%;
+  left: var(--hud-quick-slot-key-center, 50%);
+  z-index: 5;
+  display: grid;
+  width: 40%;
+  height: 16%;
+  place-items: center;
+  color: #f7f5ee;
+  font-size: 14px;
+  line-height: 1;
+  transform: translate(-50%, 2px);
+}
+
+.hud-quick-slot-cooldown {
+  position: absolute;
+  top: 24%;
+  right: 13%;
+  bottom: 12%;
+  left: 13%;
+  z-index: 3;
+  background: rgba(1, 4, 9, 0.68);
+  clip-path: polygon(4% 0, 96% 0, 100% 4%, 100% 96%, 96% 100%, 4% 100%, 0 96%, 0 4%);
+  opacity: 0;
+  transform: scaleY(var(--hud-quick-slot-cooldown, 0));
+  transform-origin: bottom;
+}
+
+.hud-quick-slot-cooldown-value {
+  position: absolute;
+  top: 24%;
+  right: 13%;
+  bottom: 12%;
+  left: 13%;
+  z-index: 4;
+  display: none;
+  place-items: center;
+  color: #fff;
+  font-size: 15px;
+  text-shadow: 0 2px 2px #000, 1px 0 1px #000, -1px 0 1px #000;
+}
+
+.hud-quick-slot--cooling .hud-quick-slot-cooldown {
+  opacity: 1;
+}
+
+.hud-quick-slot--cooling .hud-quick-slot-cooldown-value {
+  display: grid;
+}
+
+.hud-quick-slot--empty .hud-quick-slot-body {
+  background:
+    radial-gradient(circle, rgba(75, 72, 67, 0.14), transparent 58%),
+    rgba(5, 6, 8, 0.9);
+}

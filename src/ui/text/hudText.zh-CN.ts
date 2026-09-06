@@ -18,4 +18,9 @@ export const HUD_TEXT_ZH_CN: HudMessages = {
   gold: '金币',
   energy: '收集能量',
   gemProgress: '蓝色宝石收集进度',
+  activeSkills: '主动技能栏',
+  activeSkillSlot: '主动技能 {key}',
+  emptyActiveSkillSlot: '主动技能 {key}，空槽位',
+  itemQuickbar: '物品快捷栏',
+  itemSlot: '物品快捷键 {key}',
 };

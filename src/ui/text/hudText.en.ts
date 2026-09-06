@@ -18,4 +18,9 @@ export const HUD_TEXT_EN: HudMessages = {
   gold: 'GOLD',
   energy: 'COLLECTED ENERGY',
   gemProgress: 'BLUE GEM COLLECTION PROGRESS',
+  activeSkills: 'ACTIVE SKILLS',
+  activeSkillSlot: 'ACTIVE SKILL {key}',
+  emptyActiveSkillSlot: 'ACTIVE SKILL {key}, EMPTY SLOT',
+  itemQuickbar: 'ITEM QUICKBAR',
+  itemSlot: 'ITEM SHORTCUT {key}',
 };

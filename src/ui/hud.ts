@@ -1,5 +1,6 @@
 import minimapFrameUrl from '../../assets/hud/minimap-frame.png';
 import { playerPresetDisplayName, type Battle } from '../game/battle';
+import { skillById } from '../game/skills';
 import type { Field } from '../game/field';
 import type { Camera } from '../render/camera';
 import './hud.css';
@@ -11,6 +12,7 @@ import { createHudIcon } from './hudIcons';
 import { swordCursorImage } from './cursorImage';
 import { HudWavePanel } from './hudWavePanel';
 import { HudPlayerPanel } from './hudPlayerPanel';
+import { HudQuickbar } from './hudQuickbar';
 import { HudText, type HudLocale } from './text/hudText';
 export { createHudButton, type HudButtonOptions, type HudButtonSkin } from './hudButton';
 export { HudProgressBar, type HudProgressBarOptions } from './hudProgressBar';
@@ -18,6 +20,7 @@ export { HudFrame, type HudFrameOptions, type HudFrameSkin } from './hudFrame';
 export { createHudIcon, HUD_ICON_URLS, type HudIconName } from './hudIcons';
 export { HudWavePanel, type HudWavePanelOptions } from './hudWavePanel';
 export { HudPlayerPanel, type HudPlayerPanelOptions } from './hudPlayerPanel';
+export { HudQuickbar, type HudQuickbarOptions, type HudQuickSlotOptions } from './hudQuickbar';
 export { HudText, type HudLocale, type HudTextKey, type HudTextParams } from './text/hudText';
 
 /**
@@ -34,6 +37,7 @@ export const GEM_PROGRESS_SETTINGS = {
   width: '60%',
   height: '34px',
   gemsPerCycle: 100,
+  sideOverhang: 20,
 };
 
 export interface HudOptions {
@@ -42,6 +46,7 @@ export interface HudOptions {
   gemProgressWidth?: string;
   gemProgressHeight?: string;
   gemsPerCycle?: number;
+  gemProgressSideOverhang?: number;
   requestPause?: () => void;
   locale?: HudLocale;
 }
@@ -59,6 +64,7 @@ export class Hud {
   readonly playerInfo: HudPlayerPanel;
   readonly waveInfo: HudWavePanel;
   readonly currencyInfo: HudFrame;
+  readonly quickbar: HudQuickbar;
   readonly text: HudText;
 
   private readonly topInfoRow = document.createElement('div');
@@ -67,7 +73,9 @@ export class Hud {
   private readonly actionButtons: HTMLButtonElement[] = [];
   private readonly pointerSurfaces: HTMLElement[] = [];
   private readonly hudPointer = document.createElement('div');
+  private readonly quickbarResizeObserver: ResizeObserver;
   private readonly gemsPerCycle: number;
+  private readonly gemProgressSideOverhang: number;
   private lastCollectedGems = 0;
   private lastPlayerPreset = -1;
 
@@ -126,16 +134,25 @@ export class Hud {
     this.pointerSurfaces.push(this.minimapDock);
     const cycle = options.gemsPerCycle ?? GEM_PROGRESS_SETTINGS.gemsPerCycle;
     this.gemsPerCycle = Number.isFinite(cycle) ? Math.max(1, Math.floor(cycle)) : GEM_PROGRESS_SETTINGS.gemsPerCycle;
+    const sideOverhang = options.gemProgressSideOverhang ?? GEM_PROGRESS_SETTINGS.sideOverhang;
+    this.gemProgressSideOverhang = Number.isFinite(sideOverhang) ? Math.max(0, sideOverhang) : 0;
+    const gemProgressHeight = options.gemProgressHeight ?? GEM_PROGRESS_SETTINGS.height;
+    this.root.style.setProperty('--hud-gem-progress-height', gemProgressHeight);
     this.gemProgress = new HudProgressBar({
       label: this.text.value('gemProgress'),
       className: 'hud-gem-progress',
       width: options.gemProgressWidth ?? GEM_PROGRESS_SETTINGS.width,
-      height: options.gemProgressHeight ?? GEM_PROGRESS_SETTINGS.height,
+      height: gemProgressHeight,
     });
     this.text.bindAttribute(this.gemProgress.root, 'aria-label', 'gemProgress');
     this.gemProgress.setValue(0, this.gemsPerCycle, false);
     this.root.appendChild(this.gemProgress.root);
     this.pointerSurfaces.push(this.gemProgress.root);
+
+    this.quickbar = new HudQuickbar(this.text);
+    this.root.appendChild(this.quickbar.root);
+    this.pointerSurfaces.push(this.quickbar.root);
+    this.quickbarResizeObserver = new ResizeObserver(() => this.syncGemProgressWidth());
 
     this.hudPointer.className = 'hud-pointer';
     this.hudPointer.hidden = true;
@@ -148,6 +165,15 @@ export class Hud {
     }
     this.root.appendChild(this.hudPointer);
     host.appendChild(this.root);
+    this.quickbarResizeObserver.observe(this.quickbar.root);
+    this.syncGemProgressWidth();
+  }
+
+  private syncGemProgressWidth(): void {
+    const width = this.quickbar.root.getBoundingClientRect().width;
+    if (width > 0) {
+      this.gemProgress.root.style.width = `${width + this.gemProgressSideOverhang * 2}px`;
+    }
   }
 
   private createCurrencyFrame(): HudFrame {
@@ -230,6 +256,12 @@ export class Hud {
       this.playerInfo.setAvatar(battle.player);
     }
     this.playerInfo.setHealth(Math.max(0, Math.ceil(battle.player.hp)), battle.player.maxHp);
+    for (let index = 0; index < battle.skillLoadout.activeSkillSlots.length; index++) {
+      const skillId = battle.skillLoadout.activeSkillSlots[index];
+      this.quickbar.setSkillCooldown(index,
+        skillId ? battle.skillCooldown(skillId) : 0,
+        skillId ? skillById(skillId).cooldown : 0);
+    }
     this.minimap.draw(field, battle, camera);
     const total = battle.collectedGems;
     if (total !== this.lastCollectedGems) {

@@ -16,6 +16,11 @@ export interface HudMessages {
   gold: string;
   energy: string;
   gemProgress: string;
+  activeSkills: string;
+  activeSkillSlot: string;
+  emptyActiveSkillSlot: string;
+  itemQuickbar: string;
+  itemSlot: string;
 }
 
 export type HudTextKey = keyof HudMessages;

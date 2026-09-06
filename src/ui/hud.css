@@ -8,6 +8,8 @@
    */
   --hud-minimap-top: 1.6%;
   --hud-minimap-right: 2.2%;
+  --hud-gem-progress-bottom: 2.6%;
+  --hud-gem-progress-height: 34px;
 
   position: absolute;
   inset: 0;
@@ -80,7 +82,7 @@
 .hud > .hud-gem-progress {
   position: absolute;
   left: 50%;
-  bottom: 2.6%;
+  bottom: var(--hud-gem-progress-bottom);
   transform: translateX(-50%);
 }
 
