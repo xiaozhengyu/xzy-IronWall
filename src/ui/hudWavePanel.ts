@@ -40,10 +40,8 @@ export class HudWavePanel {
 
     const header = document.createElement('div');
     header.className = 'hud-wave-header';
-    const leftSkull = createHudIcon('skull', 'hud-wave-skull');
-    const rightSkull = createHudIcon('skull', 'hud-wave-skull');
     this.title.className = 'hud-text hud-text--pixel hud-wave-title';
-    header.append(leftSkull, this.title, rightSkull);
+    header.append(this.title);
 
     this.timer.className = 'hud-text hud-text--pixel hud-text--gold hud-wave-timer';
     this.bossTrack.className = 'hud-wave-boss-track';

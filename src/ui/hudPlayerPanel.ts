@@ -76,6 +76,7 @@ export class HudPlayerPanel {
   private readonly nameElement = document.createElement('span');
   private readonly levelElement = document.createElement('span');
   private readonly experienceValue = document.createElement('span');
+  private readonly experienceBar = document.createElement('div');
   private readonly avatarCanvas = document.createElement('canvas');
   private readonly avatarShapes = new ShapeBatch();
   private readonly avatarSink: PortraitSink;
@@ -123,7 +124,7 @@ export class HudPlayerPanel {
     this.healthBar = this.createStatusBar('health');
     this.manaBar = this.createStatusBar('mana');
 
-    const experienceBar = document.createElement('div');
+    const experienceBar = this.experienceBar;
     experienceBar.className = 'hud-player-experience-bar';
     const experienceClip = document.createElement('div');
     experienceClip.className = 'hud-player-experience-clip';
@@ -148,6 +149,13 @@ export class HudPlayerPanel {
   setName(name?: string): void {
     this.name = name?.trim() || null;
     this.refreshText();
+  }
+
+  /** 正式 HUD 将同一套数值视图分放在战斗栏和资源栏，更新接口保持一致。 */
+  mountSections(vitals: HTMLElement, progression: HTMLElement): void {
+    vitals.append(this.healthBar.root, this.manaBar.root);
+    this.experienceBar.appendChild(this.levelElement);
+    progression.append(this.experienceBar, this.experienceValue);
   }
 
   setLevel(level: number): void {
@@ -183,7 +191,7 @@ export class HudPlayerPanel {
   setExperience(value: number, maximum: number): void {
     [this.experience, this.maxExperience] = this.normalizeRange(value, maximum);
     const ratio = this.experience / this.maxExperience;
-    this.root.style.setProperty('--hud-player-experience', `${ratio * 100}%`);
+    this.experienceBar.style.setProperty('--hud-player-experience', `${ratio * 100}%`);
     this.refreshText();
   }
 
@@ -212,7 +220,7 @@ export class HudPlayerPanel {
 
   private refreshBar(bar: PlayerBar, value: number, maximum: number, kind: 'health' | 'mana'): void {
     bar.root.style.setProperty('--hud-player-status-progress', `${value / maximum * 100}%`);
-    bar.value.textContent = `${value} / ${maximum}`;
+    bar.value.textContent = `${kind === 'health' ? 'HP' : 'MP'} ${value} / ${maximum}`;
     bar.root.setAttribute('aria-label', this.text.value(kind, { value, maximum }));
   }
 

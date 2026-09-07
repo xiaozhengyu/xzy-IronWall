@@ -11,8 +11,7 @@
    */
   --hud-minimap-top: 1.6%;
   --hud-minimap-right: 2.2%;
-  --hud-gem-progress-bottom: 2.6%;
-  --hud-gem-progress-height: 34px;
+  --hud-gem-progress-height: 20px;
 
   position: absolute;
   top: 0;
@@ -35,7 +34,7 @@
   display: flex;
   justify-content: flex-end;
   box-sizing: border-box;
-  height: 78px;
+  height: 48px;
   gap: 5px;
   padding-right: 3px;
 }
@@ -85,54 +84,33 @@
   height: 100%;
 }
 
-.hud > .hud-gem-progress {
-  position: absolute;
-  left: 50%;
-  bottom: var(--hud-gem-progress-bottom);
-  transform: translateX(-50%);
-}
-
-.hud-top-info-row {
+.hud > .hud-wave-info {
+  --hud-font-scale: 1;
   position: absolute;
   top: 1.6%;
-  left: 0;
-  right: 0;
-  height: 18%;
-}
-
-.hud-top-info-row > .hud-player-info,
-.hud-top-info-row > .hud-wave-info {
-  position: absolute;
-  top: 0;
-  height: 82%;
-  filter: drop-shadow(0 6px 7px rgba(0, 0, 0, 0.68));
-}
-
-.hud-player-info {
-  left: 1.4%;
-  width: 22.5%;
-}
-
-.hud-wave-info {
   left: 50%;
-  width: 28%;
+  width: 174px;
+  height: 58px;
   transform: translateX(-50%);
 }
 
-.hud-top-info-row > .hud-currency-info {
-  position: absolute;
-  top: 0;
-  left: 67.5%;
-  width: 21%;
-  height: 48%;
-  filter: drop-shadow(0 5px 6px rgba(0, 0, 0, 0.66));
+.hud-minimap-dock > .hud-currency-info {
+  --hud-font-scale: 1.1;
+  width: 320px;
+  height: 88px;
+  margin-top: 6px;
+  margin-left: auto;
+  /* 资源面板右对齐地图，宽度独立，经验数字不挤压地图尺寸。 */
+  left: calc(100% - 320px);
 }
 
 .hud-currency-info .hud-frame-content {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: 32px 28px;
+  gap: 4px 0;
   align-items: center;
-  padding: 7px 11px;
+  padding: 10px 14px;
 }
 
 .hud-currency-item {
@@ -150,8 +128,8 @@
 
 .hud-currency-icon {
   display: block;
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 24px;
   flex: none;
   object-fit: contain;
 }
@@ -164,6 +142,89 @@
   color: #eee7d7;
   font: 700 calc(15px * var(--hud-font-scale, 1))/1 Georgia, 'Times New Roman', serif;
   text-shadow: 0 2px 3px #000;
+}
+
+.hud-resource-progression {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  border-top: 1px solid rgba(202, 164, 91, 0.2);
+  padding-top: 4px;
+}
+
+.hud-resource-progression .hud-player-experience-bar {
+  grid-column: auto;
+  height: 24px;
+}
+
+.hud-resource-progression .hud-player-level {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  height: 100%;
+  place-items: center;
+  color: #fff1c9;
+  font-size: 14px;
+}
+
+.hud-resource-progression .hud-player-experience-value {
+  grid-column: auto;
+  padding: 0;
+  font-size: 14px;
+  letter-spacing: 0;
+}
+
+.hud > .hud-combat-panel {
+  --hud-font-scale: 1.2;
+  position: absolute;
+  left: 50%;
+  bottom: calc(2% + var(--hud-gem-progress-height) + 5px);
+  width: max-content;
+  transform: translateX(-50%);
+}
+
+.hud-combat-panel > .hud-frame-content {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  padding: 12px;
+}
+
+.hud-combat-vitals {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+  height: 30px;
+  padding: 0 8px;
+}
+
+.hud-combat-vitals .hud-player-status-bar {
+  grid-column: auto;
+  background: #090c12;
+}
+
+.hud > .hud-gem-progress {
+  position: absolute;
+  left: 50%;
+  /* 与左下被动技能面板共用底部基线。 */
+  bottom: 2%;
+  transform: translateX(-50%);
+}
+
+/* 三块信息面板使用同一层级的深色半透明暗底。 */
+.hud .hud-frame::before {
+  inset: 0;
+  background: rgba(3, 6, 8, 0.7);
+  border: 1px solid rgba(226, 211, 172, 0.07);
+  border-radius: 6px;
+}
+
+.hud .hud-frame::after {
+  display: none;
 }
 
 .hud-pointer {

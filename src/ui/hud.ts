@@ -1,5 +1,5 @@
 import minimapFrameUrl from '../../assets/hud/minimap-frame.png';
-import { playerPresetDisplayName, type Battle } from '../game/battle';
+import type { Battle } from '../game/battle';
 import type { Field } from '../game/field';
 import type { Camera } from '../render/camera';
 import './hud.css';
@@ -38,16 +38,16 @@ const HUD_DESIGN_HEIGHT = 1080;
  * 也可以在 new Hud(host, options) 时覆盖，不必改组件实现。
  */
 export const MINIMAP_SETTINGS = {
-  size: '17%',
+  size: '11.5%',
   zoom: 1.35,
 };
 
 /** 宝石进度只做循环显示，暂不接升级或奖励。 */
 export const GEM_PROGRESS_SETTINGS = {
   width: '60%',
-  height: '34px',
+  height: '20px',
   gemsPerCycle: 100,
-  sideOverhang: 20,
+  sideOverhang: 0,
 };
 
 export interface HudOptions {
@@ -78,7 +78,9 @@ export class Hud {
   readonly cooldownInfo: HudCooldownPanel;
   readonly text: HudText;
 
-  private readonly topInfoRow = document.createElement('div');
+  private readonly combatPanel = new HudFrame({ className: 'hud-combat-panel' });
+  private readonly vitals = document.createElement('div');
+  private readonly progression = document.createElement('div');
   private readonly minimapDock = document.createElement('div');
   private readonly minimapElement = document.createElement('div');
   private readonly currencyValues = new Map<'gold' | 'energy', HTMLSpanElement>();
@@ -88,7 +90,6 @@ export class Hud {
   private readonly gemsPerCycle: number;
   private readonly gemProgressSideOverhang: number;
   private lastCollectedGems = 0;
-  private lastPlayerPreset = -1;
 
   constructor(host: HTMLElement, options: HudOptions = {}) {
     this.root.className = 'hud';
@@ -99,9 +100,11 @@ export class Hud {
     this.playerInfo = new HudPlayerPanel(this.text, { className: 'hud-player-info' });
     this.waveInfo = new HudWavePanel(this.text, { className: 'hud-wave-info' });
     this.currencyInfo = this.createCurrencyFrame();
-    this.topInfoRow.className = 'hud-top-info-row';
-    this.topInfoRow.append(this.playerInfo.root, this.waveInfo.root, this.currencyInfo.root);
-    this.root.appendChild(this.topInfoRow);
+    this.root.appendChild(this.waveInfo.root);
+    this.vitals.className = 'hud-combat-vitals';
+    this.progression.className = 'hud-resource-progression';
+    this.playerInfo.mountSections(this.vitals, this.progression);
+    this.currencyInfo.content.appendChild(this.progression);
 
     this.minimapDock.className = 'hud-minimap-dock';
     const minimapControls = document.createElement('div');
@@ -140,7 +143,7 @@ export class Hud {
     this.minimapLayer.appendChild(this.minimap.canvas);
 
     this.minimapElement.append(frame, this.minimapLayer);
-    this.minimapDock.append(minimapControls, this.minimapElement);
+    this.minimapDock.append(minimapControls, this.minimapElement, this.currencyInfo.root);
     this.root.appendChild(this.minimapDock);
     const cycle = options.gemsPerCycle ?? GEM_PROGRESS_SETTINGS.gemsPerCycle;
     this.gemsPerCycle = Number.isFinite(cycle) ? Math.max(1, Math.floor(cycle)) : GEM_PROGRESS_SETTINGS.gemsPerCycle;
@@ -156,10 +159,9 @@ export class Hud {
     });
     this.text.bindAttribute(this.gemProgress.root, 'aria-label', 'gemProgress');
     this.gemProgress.setValue(0, this.gemsPerCycle, false);
-    this.root.appendChild(this.gemProgress.root);
-
     this.quickbar = new HudQuickbar(this.text);
-    this.root.appendChild(this.quickbar.root);
+    this.combatPanel.content.append(this.vitals, this.quickbar.root);
+    this.root.append(this.combatPanel.root, this.gemProgress.root);
     this.quickbarResizeObserver = new ResizeObserver(() => this.syncGemProgressWidth());
 
     this.cooldownInfo = new HudCooldownPanel(this.text);
@@ -200,8 +202,8 @@ export class Hud {
   }
 
   private syncGemProgressWidth(): void {
-    // 读取变换前的设计宽度，保留小数；屏幕宽度会把根容器的缩放重复计算进去。
-    const width = Number.parseFloat(getComputedStyle(this.quickbar.root).width);
+    // 使用变换前的面板外宽，进度条两端与血条技能面板外沿对齐。
+    const width = this.combatPanel.root.offsetWidth;
     if (width > 0) {
       this.gemProgress.root.style.width = `${width + this.gemProgressSideOverhang * 2}px`;
     }
@@ -273,11 +275,6 @@ export class Hud {
   }
 
   draw(field: Field, battle: Battle, camera: Camera): void {
-    if (battle.presetIndex !== this.lastPlayerPreset) {
-      this.lastPlayerPreset = battle.presetIndex;
-      this.playerInfo.setName(playerPresetDisplayName(battle.presetIndex));
-      this.playerInfo.setAvatar(battle.player);
-    }
     this.playerInfo.setHealth(Math.max(0, Math.ceil(battle.player.hp)), battle.player.maxHp);
     for (let index = 0; index < battle.skillLoadout.activeSkillSlots.length; index++) {
       const skillId = battle.skillLoadout.activeSkillSlots[index];
