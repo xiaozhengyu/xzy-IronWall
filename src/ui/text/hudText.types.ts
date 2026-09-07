@@ -1,4 +1,5 @@
 export interface HudMessages {
+  gameTitle: string;
   playerInfo: string;
   playerName: string;
   playerLevel: string;

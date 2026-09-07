@@ -1,6 +1,7 @@
 import type { HudMessages } from './hudText.types';
 
 export const HUD_TEXT_ZH_CN: HudMessages = {
+  gameTitle: '铁壁',
   playerInfo: '玩家信息',
   playerName: '玩家名称',
   playerLevel: '等级 {level}',

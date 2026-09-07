@@ -1,6 +1,7 @@
 import type { HudMessages } from './hudText.types';
 
 export const HUD_TEXT_EN: HudMessages = {
+  gameTitle: 'IronWall',
   playerInfo: 'PLAYER INFO',
   playerName: 'PLAYER NAME',
   playerLevel: 'Lv. {level}',

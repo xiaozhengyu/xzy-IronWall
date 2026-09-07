@@ -2,6 +2,7 @@ import './menu.css';
 import { SkillCategoryRules, type SkillCategory, type SkillId } from '../game/skills';
 import { ACTIVE_SKILL_KEYS, type SkillLoadoutSnapshot } from '../game/skillLoadout';
 import { cursorCss } from './cursorImage';
+import { HudText } from './text/hudText';
 import type { WeatherKind } from '../world/weather';
 
 /**
@@ -114,6 +115,7 @@ function row(parent: HTMLElement, label: string): HTMLElement {
 
 export class Menu {
   private readonly bridge: MenuBridge;
+  readonly text: HudText;
 
   readonly root = el('div', 'menu');
   private readonly mode = el('span', 'menu-mode');
@@ -143,8 +145,9 @@ export class Menu {
   private skillNote = el('div');
 
 
-  constructor(bridge: MenuBridge) {
+  constructor(bridge: MenuBridge, text: HudText = new HudText()) {
     this.bridge = bridge;
+    this.text = text;
     this.build();
     document.body.appendChild(this.root);
 
@@ -274,7 +277,9 @@ export class Menu {
     this.root.appendChild(card);
 
     const head = el('div', 'menu-head');
-    head.appendChild(el('span', 'menu-title', 'IRONWALL'));
+    const title = el('span', 'menu-title');
+    this.text.bindText(title, 'gameTitle');
+    head.appendChild(title);
     head.appendChild(this.mode);
     card.appendChild(head);
     card.appendChild(el('div', 'menu-rule'));
