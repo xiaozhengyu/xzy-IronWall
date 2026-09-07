@@ -1,14 +1,14 @@
 import './menu.css';
 import { SkillCategoryRules, type SkillCategory, type SkillId } from '../game/skills';
 import { ACTIVE_SKILL_KEYS, type SkillLoadoutSnapshot } from '../game/skillLoadout';
-import { swordCursorCss } from './cursorImage';
+import { cursorCss } from './cursorImage';
 import type { WeatherKind } from '../world/weather';
 
 /**
  * 加载条 + 开始 + 暂停，三样东西共用一块面板。
  *
  * 合成一块是因为它们本来就是同一件事的三个阶段：开局要先烘完地面（加载），再等玩家点一下
- * 才能拿到指针锁定（开始），而暂停正是锁定丢掉之后回到的那个状态（暂停）。三者的区别只是
+ * 开始游戏，ESC 或窗口失焦时回到暂停面板。三者的区别只是
  * 主按钮上写什么、以及下面那半屏数据要不要显示 —— 拆成三个面板会得到三份一模一样的布局。
  *
  * 顺带把原来钉在左上角的 HUD 收了进来。那行字在游戏里一直亮着，而它上面的东西 —— 帧率、
@@ -77,19 +77,9 @@ export interface MenuBridge {
   /** 按类别规则选择、开关或装入主动槽。 */
   toggleSkill(id: SkillId): void;
   read(): MenuState;
-  /**
-   * 试着夺回指针锁定。resolve 表示锁上了，reject 表示浏览器还在冷却期。
-   * 面板不自己碰画布 —— 它连画布是哪个都不知道。
-   */
-  requestLock(): Promise<void>;
+  /** 开始或继续游戏，保持鼠标当前的屏幕位置。 */
+  resume(): void;
 }
-
-/**
- * 按过 ESC 之后 Chrome 有大约一秒二的冷却期，这期间 requestPointerLock 直接 reject。
- * 玩家点了"继续游戏"却什么都没发生是最糟的观感，所以自己按这个节奏重试到冷却结束。
- */
-const RETRY_INTERVAL = 250;
-const RETRY_DEADLINE = 2200;
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -141,7 +131,6 @@ export class Menu {
 
   private readonly startBox = el('div');
   private readonly startButton = el('button', 'menu-start');
-  private readonly hint = el('div', 'menu-hint');
 
   /** 数据和开关：只有暂停时才有意义，开始画面上是收起来的。 */
   private readonly detail = el('div');
@@ -153,17 +142,14 @@ export class Menu {
   /** 技能那一行下面的说明，跟着当前选中的技能变。 */
   private skillNote = el('div');
 
-  private locking = false;
 
   constructor(bridge: MenuBridge) {
     this.bridge = bridge;
     this.build();
     document.body.appendChild(this.root);
 
-    // 指针没锁的时候（加载、开始画面、暂停）露出来的是系统箭头，而游戏里是那把剑 —— 两套
-    // 光标的接缝很明显。挂在 body 上而不是面板上：cursor 是继承的，而面板的背景那一层
-    // pointer-events 是 none，光标样式落不到它头上（见 menu.css 顶上那段）。
-    document.body.style.cursor = swordCursorCss();
+    // 顶层光标还没启用时使用同款浏览器光标，包含菜单的透传区域。
+    document.body.style.cursor = cursorCss();
   }
 
   // ---------------------------------------------------------------- 三个状态
@@ -192,7 +178,6 @@ export class Menu {
     // 那是这个时候唯一真正有用的东西。
     this.detail.hidden = true;
     this.startButton.textContent = '开始游戏';
-    this.setHint('');
     this.startButton.disabled = false;
   }
 
@@ -204,7 +189,6 @@ export class Menu {
     this.startBox.hidden = false;
     this.detail.hidden = false;
     this.startButton.textContent = '继续游戏';
-    this.setHint('');
     this.startButton.disabled = false;
     this.refresh();
   }
@@ -212,7 +196,6 @@ export class Menu {
   hide(): void {
     this.root.hidden = true;
     this.setPeek(false);
-    this.locking = false;
   }
 
   /**
@@ -284,10 +267,6 @@ export class Menu {
     this.skillNote.textContent = `已装备：${equipped || '无'} ｜ 主动槽：${active}`;
   }
 
-  private setHint(text: string): void {
-    this.hint.textContent = text;
-  }
-
   // ---------------------------------------------------------------- 搭面板
 
   private build(): void {
@@ -313,9 +292,8 @@ export class Menu {
 
     // ---- 主按钮
 
-    this.startButton.addEventListener('click', () => void this.acquire());
+    this.startButton.addEventListener('click', () => this.bridge.resume());
     this.startBox.appendChild(this.startButton);
-    this.startBox.appendChild(this.hint);
     card.appendChild(this.startBox);
 
     // ---- 数据和开关
@@ -476,34 +454,4 @@ export class Menu {
     return box;
   }
 
-  // ---------------------------------------------------------------- 夺回指针
-
-  /**
-   * 反复试到锁上、或者试到超时为止。
-   *
-   * 面板**不**在这里收起来 —— 收面板的唯一依据是 pointerlockchange 真的报告锁上了。点一下
-   * 就把面板撤掉的话，撞上冷却期就会变成"菜单没了、鼠标还在外面、人也不动"，最难受的一种。
-   */
-  private async acquire(): Promise<void> {
-    if (this.locking) return;
-    this.locking = true;
-    this.startButton.disabled = true;
-    this.setHint('');
-
-    const deadline = performance.now() + RETRY_DEADLINE;
-    while (this.locking) {
-      try {
-        await this.bridge.requestLock();
-        return; // 锁上了。面板由 pointerlockchange 收起。
-      } catch {
-        if (performance.now() >= deadline) break;
-        await new Promise((r) => setTimeout(r, RETRY_INTERVAL));
-      }
-    }
-
-    if (!this.locking) return; // 中途已经从别的路子锁上了。
-    this.locking = false;
-    this.startButton.disabled = false;
-    this.setHint('浏览器暂时不肯交出鼠标（刚按过 ESC 会有约一秒的冷却），再点一次。');
-  }
 }

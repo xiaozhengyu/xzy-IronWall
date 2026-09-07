@@ -1,25 +1,18 @@
-import { SWORD_CURSOR, forEachCursorPixel } from '../render/swordCursor';
+import { POINTER_SHAPE, forEachCursorPixel } from '../render/pointerShape';
 
 /**
- * 把准心那把剑烤成一张 CSS 光标图，给**菜单和开始画面**用。
- *
- * 游戏里指针是锁定的，系统光标根本不显示，画面上那把剑是 Scene 每帧画进缓冲的；而菜单、
- * 开始画面、加载画面这些时候指针没锁，露出来的是系统箭头 —— 一半是剑一半是箭头，接缝很明显。
- *
- * 做法是把同一份像素数据（render/swordCursor.ts）在一张离屏 canvas 上逐格画出来，转成
- * data URI 挂进 CSS 的 cursor。所以形状只有一处定义，改了剑三个地方一起变。
- *
- * 尺寸压在 32×32 以内：浏览器对 CSS 光标图有尺寸上限，超过之后各家的行为不一样（有的直接
- * 退回默认箭头）。十六格 × 每格两像素正好卡在这个数上。
+ * 光标只烘焙一次：全局 UI 覆盖层使用它，覆盖层未启用时供浏览器 cursor 回退。
+ * 两种显示方式共用向左上倾斜 45° 的图片和剑尖热点，不依赖窗口或战场颗粒度。
  */
 
-/** 一格几个 CSS 像素。2 让整张图落在 32×32，是各浏览器都稳的尺寸。 */
+/** 原始像素图为 32×32，旋转后扩展透明画布，避免护手和描边被裁掉。 */
 const PIXEL = 2;
+const ANGLE = -Math.PI / 4;
 
 /** 烤失败时用什么。默认箭头总比没有光标强。 */
 const FALLBACK = 'auto';
 
-export interface SwordCursorImage {
+export interface CursorImage {
   url: string;
   width: number;
   height: number;
@@ -27,13 +20,13 @@ export interface SwordCursorImage {
   hotY: number;
 }
 
-let cached: SwordCursorImage | null | undefined;
+let cached: CursorImage | null | undefined;
 
-export function swordCursorImage(): SwordCursorImage | null {
+export function cursorImage(): CursorImage | null {
   if (cached !== undefined) return cached;
 
-  const w = SWORD_CURSOR.width * PIXEL;
-  const h = SWORD_CURSOR.height * PIXEL;
+  const w = POINTER_SHAPE.width * PIXEL;
+  const h = POINTER_SHAPE.height * PIXEL;
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;
@@ -44,23 +37,47 @@ export function swordCursorImage(): SwordCursorImage | null {
     return cached;
   }
 
-  const hotX = SWORD_CURSOR.hotX * PIXEL;
-  const hotY = SWORD_CURSOR.hotY * PIXEL;
-  // forEachCursorPixel 给的偏移是相对**剑尖**的，加回热点就是图内坐标。
+  const sourceHotX = POINTER_SHAPE.hotX * PIXEL;
+  const sourceHotY = POINTER_SHAPE.hotY * PIXEL;
+  // 像素偏移相对剑尖，加回热点就是图内坐标。
   forEachCursorPixel(PIXEL, (ox, oy, color) => {
     ctx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${(color.a / 255).toFixed(3)})`;
-    ctx.fillRect(hotX + ox, hotY + oy, PIXEL, PIXEL);
+    ctx.fillRect(sourceHotX + ox, sourceHotY + oy, PIXEL, PIXEL);
   });
 
+  // 围绕剑尖旋转，并从四个角计算新边界；DOM 和原生 cursor 使用同一个旋转后热点。
+  const cos = Math.cos(ANGLE);
+  const sin = Math.sin(ANGLE);
+  const corners = [[0, 0], [w, 0], [0, h], [w, h]].map(([x, y]) => ({
+    x: (x - sourceHotX) * cos - (y - sourceHotY) * sin,
+    y: (x - sourceHotX) * sin + (y - sourceHotY) * cos,
+  }));
+  const minX = Math.floor(Math.min(...corners.map(point => point.x)));
+  const minY = Math.floor(Math.min(...corners.map(point => point.y)));
+  const rotated = document.createElement('canvas');
+  rotated.width = Math.ceil(Math.max(...corners.map(point => point.x))) - minX;
+  rotated.height = Math.ceil(Math.max(...corners.map(point => point.y))) - minY;
+  const rotatedContext = rotated.getContext('2d');
+  if (!rotatedContext) {
+    cached = null;
+    return cached;
+  }
+  const hotX = -minX;
+  const hotY = -minY;
+  rotatedContext.imageSmoothingEnabled = false;
+  rotatedContext.translate(hotX, hotY);
+  rotatedContext.rotate(ANGLE);
+  rotatedContext.drawImage(canvas, -sourceHotX, -sourceHotY);
+
   try {
-    cached = { url: canvas.toDataURL('image/png'), width: w, height: h, hotX, hotY };
+    cached = { url: rotated.toDataURL('image/png'), width: rotated.width, height: rotated.height, hotX, hotY };
   } catch {
     cached = null;
   }
   return cached;
 }
 
-export function swordCursorCss(): string {
-  const image = swordCursorImage();
+export function cursorCss(): string {
+  const image = cursorImage();
   return image ? `url(${image.url}) ${image.hotX} ${image.hotY}, ${FALLBACK}` : FALLBACK;
 }

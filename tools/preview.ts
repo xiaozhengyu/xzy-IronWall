@@ -26,7 +26,7 @@ import { Projection } from '../src/render/projection';
 import { Projector } from '../src/render/projector';
 import { drawAegisDome } from '../src/effects/aegisDome';
 import { drawSkyBlade, skyArrowBlade } from '../src/effects/skyBlade';
-import { forEachCursorPixel } from '../src/render/swordCursor';
+import { forEachCursorPixel } from '../src/render/pointerShape';
 import { ShapeBatch, type PrimitiveSink } from '../src/render/shapeBatch';
 import { ellipseSegments, unitCircle } from '../src/render/ellipseFan';
 import { type Rgba, rgb, rgba } from '../src/render/color';
@@ -860,13 +860,12 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
 
 // ---------------------------------------------------------------- 准心
 //
-// 一群人上面摆两个准心：左边旧的十字，右边新的像素剑。
+// 一群人上面摆两个准心：左边旧的十字，右边亮青色宝剑。
 //
 // 准心的全部问题是"在花的底色上找不找得到"，所以必须画在人堆上看。空地上那个十字也是看得
 // 见的 —— 正因为如此它才一直没被发现有问题。
 //
-// 剑走的是 src/render/swordCursor.ts 里那份像素数据，和运行时 Scene 画进 Graphics 的是
-// 同一份；这里只是换了个画笔（ShapeBatch 而不是 Graphics），形状不会两边不一样。
+// 宝剑共用 src/render/pointerShape.ts 的像素数据；运行时由 UI 顶层显示。
 {
   const STEP = 1 / 120;
   const COUNT = 46;
@@ -893,7 +892,7 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
 
   const sheet = new Canvas(W * 2, H, [71, 105, 59]);
 
-  // 准心画在最上面，所以给一个比谁都大的深度。运行时它压根不进批次（走单独的 Graphics）。
+  // 准心画在最上面，所以给一个比谁都大的深度。运行时由独立 DOM 光标覆盖。
   const ON_TOP = 1e7;
 
   [false, true].forEach((sword, side) => {
@@ -918,7 +917,7 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
       const cx = Math.round(spot.x);
       const cy = Math.round(spot.y);
       if (sword) {
-        const px = Math.max(1, Math.min(4, Math.round(GRAIN / 2)));
+        const px = 2;
         forEachCursorPixel(px, (ox, oy, color) => {
           shapes.rect(v2(cx + ox + px / 2, cy + oy + px / 2), px, px, 0, color, ON_TOP);
         });
@@ -942,7 +941,7 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   });
 
   writePng('.preview-cursor.png', sheet.upscale(3));
-  console.log('准心：左旧十字 / 右像素剑，各摆在空地、人堆边、人堆中');
+  console.log('准心：左旧十字 / 右亮青色宝剑，各摆在空地、人堆边、人堆中');
 }
 
 // ---------------------------------------------------------------- 人堆里找得到玩家吗

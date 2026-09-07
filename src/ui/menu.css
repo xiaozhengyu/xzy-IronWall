@@ -23,8 +23,7 @@
   line-height: 1.5;
   color: #cdd5e4;
   /*
-   * 背景不吃点击 —— 点空白处会穿过去落到画布上，也就是浏览器 FPS 里那条"点任意处继续"。
-   * 这不是省事：指针锁定必须由一次真实的用户手势发起，而画布上的 mousedown 正是那一下。
+   * 背景不吃点击，空白处点击透传给画布以继续游戏。
    */
   pointer-events: none;
   user-select: none;
@@ -121,16 +120,6 @@
   background: #1c2231;
   border-color: #2b3242;
   cursor: inherit;
-}
-
-.menu-hint {
-  margin-top: 8px;
-  font-size: 12px;
-  color: #b08a5a;
-}
-
-.menu-hint:empty {
-  display: none;
 }
 
 /* ---------------------------------------------------------------- 数据 */

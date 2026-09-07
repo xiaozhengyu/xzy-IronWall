@@ -35,13 +35,11 @@ import './style.css';
  * 游戏的四个状态。
  *
  *   loading —— 在烘地面，面板上是进度条。
- *   title   —— 烘完了，等玩家点一下。这一下不是仪式：指针锁定必须由一次真实的用户手势
- *               发起，没有那一下就进不了锁定状态。
- *   playing —— 指针锁着，世界在跑。
- *   paused  —— 指针丢了。
+ *   title   —— 烘完了，等玩家点击开始。
+ *   playing —— 世界在跑。
+ *   paused  —— ESC、暂停按钮或失去窗口焦点。
  *
- * playing 和 paused 的分界线就是**指针锁定在不在**，不是另一件事。所以没有一个处理器叫
- * "ESC 暂停"，监听的是丢锁定 —— 详见 Controls 里 pointerlockchange 上那段。
+ * Controls 统一切换运行状态；鼠标始终使用普通屏幕坐标，暂停不移动光标。
  */
 type GameState = 'loading' | 'title' | 'playing' | 'paused';
 let state: GameState = 'loading';
@@ -86,7 +84,7 @@ const menu = new Menu({
     field.weather.kind = kind;
   },
   toggleSkill: (id) => battle.toggleSkill(id),
-  requestLock: () => controls.requestLock(),
+  resume: () => controls.resume(),
   read: () => {
     // 人从脚底到头顶大约 18.3 个世界单位，被相机俯角压掉一截才是屏幕上的高度。
     const figureUnits = (RigSpec.headZ + RigSpec.headRadius) * Projection.heightSquash;
@@ -169,12 +167,7 @@ gameViewport.appendChild(app.canvas);
 const hud = new Hud(gameViewport, {
   requestPause: () => {
     if (state !== 'playing') return;
-    if (document.pointerLockElement) {
-      document.exitPointerLock();
-      return;
-    }
-    state = 'paused';
-    menu.showPause();
+    controls.pause();
   },
 });
 
@@ -206,8 +199,8 @@ bootDone += SHEET_WEIGHT;
 const battle = new Battle(field);
 const controls = new Controls(app.canvas as HTMLCanvasElement, camera, {
   onKey: (code) => onKeyPressed(code),
-  onLockChange: (locked) => {
-    if (locked) {
+  onActiveChange: (active) => {
+    if (active) {
       if (state === 'title' || state === 'paused') {
         state = 'playing';
         menu.hide();
@@ -219,19 +212,8 @@ const controls = new Controls(app.canvas as HTMLCanvasElement, camera, {
       menu.showPause();
     }
   },
-  canLock: () => state !== 'loading',
+  canActivate: () => state !== 'loading',
 });
-
-// 指针锁定时 DOM 按钮不会直接收到鼠标事件；准星命中 HUD 控件时，先于移动输入消费左键。
-(app.canvas as HTMLCanvasElement).addEventListener('mousedown', (event) => {
-  if (!controls.pointerLocked || event.button !== 0) return;
-  const rect = app.canvas.getBoundingClientRect();
-  const clientX = rect.left + controls.cursor.x / camera.viewWidth * rect.width;
-  const clientY = rect.top + controls.cursor.y / camera.viewHeight * rect.height;
-  if (!hud.activateControlAt(clientX, clientY)) return;
-  event.preventDefault();
-  event.stopImmediatePropagation();
-}, { capture: true });
 
 // ---------------------------------------------------------------- 命令表
 
@@ -349,7 +331,10 @@ addEventListener('resize', () => {
 
 /** 把缓冲和镜头对齐到固定逻辑画幅、颗粒度和玩家位置。窗口变化只影响 CSS 外框。 */
 function layout(): void {
+  const previousWidth = camera.viewWidth;
+  const previousHeight = camera.viewHeight;
   scene.resize(app.screen.width, app.screen.height, app.renderer.resolution);
+  controls.resizeCursor(previousWidth, previousHeight);
   camera.follow(battle.player.x, battle.player.y, field.width, field.height);
 }
 
@@ -386,14 +371,11 @@ function galleryCount(): number {
 function draw(): void {
   if (state !== 'playing') battle.syncEnemyVisibility(viewOf());
   hud.draw(field, battle, camera);
-  hud.updatePointer(controls.cursor.x, controls.cursor.y, camera.viewWidth, camera.viewHeight, controls.pointerLocked);
   if (showItems) {
     scene.drawItems(ItemCatalog, itemSheet);
     return;
   }
   scene.draw(field, battle, {
-    cursor: controls.cursor,
-    showReticle: controls.pointerLocked,
     showSkeleton,
   });
 }
@@ -416,7 +398,6 @@ bootDone += FIELD_WEIGHT;
 battle.update(0, readInput(), viewOf());
 draw();
 
-// 加载结束。接下来那一下点击不是仪式：指针锁定必须由一次真实的用户手势发起，而"开始游戏"
-// 就是那一下。锁上之后 pointerlockchange 会把状态推进到 playing。
+// 加载结束，点击开始后由 Controls 把状态推进到 playing。
 state = 'title';
 menu.showTitle();

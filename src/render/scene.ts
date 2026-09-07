@@ -1,4 +1,4 @@
-import { Container, Graphics, Sprite, type Renderer } from 'pixi.js';
+import { Container, Sprite, type Renderer } from 'pixi.js';
 import { RigSpec } from '../characters/rig';
 import { drawAegisDome } from '../effects/aegisDome';
 import { drawDharmaAspect } from '../effects/dharmaAspect';
@@ -11,20 +11,19 @@ import type { Field } from '../game/field';
 import type { ItemDef } from '../items/itemDef';
 import type { ItemSheet } from '../items/renderer';
 import { v2, type Vec2 } from '../core/math';
-import { rgb, rgba, toHex } from './color';
+import { rgb, rgba } from './color';
 import type { Camera } from './camera';
 import { PixelSurface } from './pixelSurface';
 import { PrimitiveMesh } from './primitiveMesh';
 import { Projection } from './projection';
 import { Projector } from './projector';
 import { ShapeBatch } from './shapeBatch';
-import { forEachCursorPixel } from './swordCursor';
 
 /**
  * 一帧画面从头到尾。
  *
  * 这个文件存在的理由是**画家顺序**：地面 → 脚印 → 草石 → 冲击弧 → 树和人（同一批次按深度
- * 排序）→ 水花 → 雨雪 → 准星。这个顺序是画面成立的全部前提，而它以前散在 main.ts 中间的
+ * 排序）→ 水花 → 雨雪。光标由 UI 顶层绘制。这个顺序以前散在 main.ts 中间的
  * 六十行里，和出怪、碰撞、暂停挤在一起。想加一层新东西（血条、伤害数字、技能特效），要先
  * 在那六十行里找准位置；现在打开这个文件，顺序就是它自己。
  *
@@ -34,25 +33,10 @@ import { forEachCursorPixel } from './swordCursor';
 
 /** 每帧从外面传进来的、不属于世界本身的东西。 */
 export interface SceneOverlay {
-  /** 准星在缓冲里的位置。 */
-  cursor: { x: number; y: number };
-  /** 指针没锁着就不画准星：那时候玩家用的是系统光标。 */
-  showReticle: boolean;
   showSkeleton: boolean;
 }
 
 const smooth = (prev: number, now: number): number => prev * 0.9 + now * 0.1;
-
-/**
- * 准心一格画多大（缓冲像素）。
- *
- * 跟着颗粒度走，但只走整数 —— 半格会让像素图糊掉，而这把剑的全部说服力就在于它的边是硬的。
- *
- * 除以 2 而不是除以 4：出货那一档（grain 4）得到 2，整把剑三十二个缓冲像素，和场上一把剑
- * 的长度相当。第一版按 1 画，准心只有敌人武器的一半大，在人堆里非但不显眼，反而像是谁掉了
- * 一把小刀。准心得比场上的东西**大**，不能只是"不小"。
- */
-const cursorPixel = (grain: number): number => Math.max(1, Math.min(4, Math.round(grain / 2)));
 
 /**
  * 剔除时在视口四边各留多少世界单位。
@@ -124,8 +108,6 @@ export class Scene {
    * 毫秒（见 PrimitiveMesh 顶上那段实测）。这里是自己把三角形写进顶点缓冲。
    */
   private readonly prim = new PrimitiveMesh();
-  /** 准星单独一个 Graphics：四个小矩形，不值得进批次，而且它要压在最上面。 */
-  private readonly reticle = new Graphics();
   /**
    * 物品图鉴那一屏的精灵。
    *
@@ -152,7 +134,7 @@ export class Scene {
     this.camera = camera;
     this.surface = new PixelSurface(renderer, camera.magnify);
     this.itemLayer.visible = false;
-    this.surface.units.addChild(this.prim.mesh, this.itemLayer, this.reticle);
+    this.surface.units.addChild(this.prim.mesh, this.itemLayer);
   }
 
   /** 挂到 stage 上的那个精灵：放大后的整帧。 */
@@ -282,8 +264,6 @@ export class Scene {
     shapes.flushToMesh(this.prim, this.surface.width, this.surface.height);
     this.prim.end();
 
-    this.drawReticle(overlay);
-
     this.surface.render();
     this.buildMs = smooth(this.buildMs, performance.now() - t0);
   }
@@ -305,7 +285,6 @@ export class Scene {
     this.prim.begin();
     this.prim.end();
     this.primitives = 0;
-    this.reticle.clear();
 
     this.itemLayer.visible = true;
 
@@ -689,25 +668,4 @@ export class Scene {
     }
   }
 
-  /**
-   * 准星。中间留空，免得盖住脚下那块地。它画在单位层里，所以会跟着吃那圈一像素暗边 ——
-   * 在草地上正是靠那圈边才看得清。
-   *
-   * 不走 ShapeBatch：那一批已经 flush 过了，而准星要压在最上面，且不参与深度排序。
-   */
-  private drawReticle(overlay: SceneOverlay): void {
-    this.reticle.clear();
-    if (!overlay.showReticle) return;
-
-    // 落在整数缓冲像素上。差半格的话，一张十六见方的像素图会被渲染器插值糊掉一圈。
-    const cx = Math.round(overlay.cursor.x);
-    const cy = Math.round(overlay.cursor.y);
-    const px = cursorPixel(this.camera.grain);
-
-    // 一格一个 rect。十六见方里实着的大约六十格，比原来那个十字贵，但这是每帧只画一次的
-    // 东西 —— 场上一个人就有六七十个图元。
-    forEachCursorPixel(px, (ox, oy, color) => {
-      this.reticle.rect(cx + ox, cy + oy, px, px).fill({ color: toHex(color), alpha: color.a / 255 });
-    });
-  }
 }

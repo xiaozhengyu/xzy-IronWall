@@ -8,7 +8,7 @@ import { HudProgressBar } from './hudProgressBar';
 import { HudFrame } from './hudFrame';
 import { createHudButton } from './hudButton';
 import { createHudIcon } from './hudIcons';
-import { swordCursorImage } from './cursorImage';
+import { cursorImage } from './cursorImage';
 import { HudWavePanel } from './hudWavePanel';
 import { HudPlayerPanel } from './hudPlayerPanel';
 import { HudQuickbar } from './hudQuickbar';
@@ -81,8 +81,6 @@ export class Hud {
   private readonly topInfoRow = document.createElement('div');
   private readonly minimapDock = document.createElement('div');
   private readonly minimapElement = document.createElement('div');
-  private readonly actionButtons: HTMLButtonElement[] = [];
-  private readonly pointerSurfaces: HTMLElement[] = [];
   private readonly currencyValues = new Map<'gold' | 'energy', HTMLSpanElement>();
   private readonly hudPointer = document.createElement('div');
   private readonly quickbarResizeObserver: ResizeObserver;
@@ -104,7 +102,6 @@ export class Hud {
     this.topInfoRow.className = 'hud-top-info-row';
     this.topInfoRow.append(this.playerInfo.root, this.waveInfo.root, this.currencyInfo.root);
     this.root.appendChild(this.topInfoRow);
-    this.pointerSurfaces.push(this.playerInfo.root, this.waveInfo.root, this.currencyInfo.root);
 
     this.minimapDock.className = 'hud-minimap-dock';
     const minimapControls = document.createElement('div');
@@ -126,7 +123,6 @@ export class Hud {
     settingsButton.addEventListener('click', requestPause);
     this.text.bindAttribute(pauseButton, 'aria-label', 'pause');
     this.text.bindAttribute(settingsButton, 'aria-label', 'settings');
-    this.actionButtons.push(pauseButton, settingsButton);
     minimapControls.append(pauseButton, settingsButton);
 
     this.minimapElement.className = 'hud-minimap';
@@ -146,7 +142,6 @@ export class Hud {
     this.minimapElement.append(frame, this.minimapLayer);
     this.minimapDock.append(minimapControls, this.minimapElement);
     this.root.appendChild(this.minimapDock);
-    this.pointerSurfaces.push(this.minimapDock);
     const cycle = options.gemsPerCycle ?? GEM_PROGRESS_SETTINGS.gemsPerCycle;
     this.gemsPerCycle = Number.isFinite(cycle) ? Math.max(1, Math.floor(cycle)) : GEM_PROGRESS_SETTINGS.gemsPerCycle;
     const sideOverhang = options.gemProgressSideOverhang ?? GEM_PROGRESS_SETTINGS.sideOverhang;
@@ -162,28 +157,33 @@ export class Hud {
     this.text.bindAttribute(this.gemProgress.root, 'aria-label', 'gemProgress');
     this.gemProgress.setValue(0, this.gemsPerCycle, false);
     this.root.appendChild(this.gemProgress.root);
-    this.pointerSurfaces.push(this.gemProgress.root);
 
     this.quickbar = new HudQuickbar(this.text);
     this.root.appendChild(this.quickbar.root);
-    this.pointerSurfaces.push(this.quickbar.root);
     this.quickbarResizeObserver = new ResizeObserver(() => this.syncGemProgressWidth());
 
     this.cooldownInfo = new HudCooldownPanel(this.text);
     this.root.appendChild(this.cooldownInfo.root);
-    this.pointerSurfaces.push(this.cooldownInfo.root);
 
     this.hudPointer.className = 'hud-pointer';
+    this.hudPointer.setAttribute('aria-hidden', 'true');
     this.hudPointer.hidden = true;
-    const pointerImage = swordCursorImage();
+    const pointerImage = cursorImage();
     if (pointerImage) {
       this.hudPointer.style.width = `${pointerImage.width}px`;
       this.hudPointer.style.height = `${pointerImage.height}px`;
       this.hudPointer.style.backgroundImage = `url(${pointerImage.url})`;
       this.hudPointer.style.transform = `translate(${-pointerImage.hotX}px, ${-pointerImage.hotY}px)`;
     }
-    this.root.appendChild(this.hudPointer);
     host.appendChild(this.root);
+    // 固定在窗口顶层，连 ESC 菜单和画框留边也使用同一枚光标。
+    document.body.appendChild(this.hudPointer);
+    addEventListener('mousemove', (event) => this.updatePointer(event.clientX, event.clientY));
+    document.documentElement.addEventListener('mouseleave', () => this.hidePointer());
+    addEventListener('blur', () => this.hidePointer());
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.hidePointer();
+    });
     this.viewportResizeObserver = new ResizeObserver(([entry]) => {
       if (entry) this.syncViewportScale(entry.contentRect.width, entry.contentRect.height);
     });
@@ -258,39 +258,18 @@ export class Hud {
     this.minimap.zoom = zoom;
   }
 
-  /**
-   * 指针锁定时浏览器只把点击交给 canvas；用游戏准星的屏幕坐标命中 HUD 按钮。
-   */
-  activateControlAt(clientX: number, clientY: number): boolean {
-    // 命中测试使用缩放后的屏幕矩形，与 canvas 传来的 client 坐标一致。
-    for (const button of this.actionButtons) {
-      const rect = button.getBoundingClientRect();
-      if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) continue;
-      button.click();
-      return true;
-    }
-    return false;
+  /** 直接跟随真实屏幕坐标；暂停、继续和窗口缩放不重设光标位置。 */
+  private updatePointer(clientX: number, clientY: number): void {
+    if (!this.hudPointer.style.backgroundImage) return;
+    this.hudPointer.hidden = false;
+    this.hudPointer.style.left = `${clientX}px`;
+    this.hudPointer.style.top = `${clientY}px`;
+    document.documentElement.classList.add('game-pointer-active');
   }
 
-  /** 指针锁定时，场景准星被 HUD 遮住的区域改由最上层 DOM 光标接力显示。 */
-  updatePointer(x: number, y: number, viewWidth: number, viewHeight: number, visible: boolean): void {
-    if (!visible || viewWidth <= 0 || viewHeight <= 0 || !this.hudPointer.style.backgroundImage) {
-      this.hudPointer.hidden = true;
-      return;
-    }
-    const nx = Math.max(0, Math.min(1, x / viewWidth));
-    const ny = Math.max(0, Math.min(1, y / viewHeight));
-    const rootRect = this.root.getBoundingClientRect();
-    const clientX = rootRect.left + nx * rootRect.width;
-    const clientY = rootRect.top + ny * rootRect.height;
-    const overHud = this.pointerSurfaces.some((surface) => {
-      const rect = surface.getBoundingClientRect();
-      return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
-    });
-    this.hudPointer.hidden = !overHud;
-    if (!overHud) return;
-    this.hudPointer.style.left = `${nx * 100}%`;
-    this.hudPointer.style.top = `${ny * 100}%`;
+  private hidePointer(): void {
+    this.hudPointer.hidden = true;
+    document.documentElement.classList.remove('game-pointer-active');
   }
 
   draw(field: Field, battle: Battle, camera: Camera): void {

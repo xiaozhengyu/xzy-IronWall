@@ -167,10 +167,34 @@
 }
 
 .hud-pointer {
-  position: absolute;
-  z-index: 20;
+  position: fixed;
+  z-index: 100;
   background-repeat: no-repeat;
+  image-rendering: pixelated;
   pointer-events: none;
+  filter: drop-shadow(0 0 2px rgba(0, 240, 255, 0.65));
+  animation: hud-pointer-color 3s ease-in-out infinite;
+}
+
+/* 仅改变色相和轻微外发光，白色刃边与深色轮廓保持明暗对比。 */
+@keyframes hud-pointer-color {
+  0%, 100% {
+    filter: hue-rotate(0deg) drop-shadow(0 0 2px rgba(0, 240, 255, 0.65));
+  }
+  50% {
+    filter: hue-rotate(110deg) drop-shadow(0 0 3px rgba(235, 72, 255, 0.65));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-pointer {
+    animation: none;
+  }
+}
+
+.game-pointer-active,
+.game-pointer-active * {
+  cursor: none !important;
 }
 
 .hud-pointer[hidden] {
