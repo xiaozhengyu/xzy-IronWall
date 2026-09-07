@@ -68,6 +68,16 @@
 }
 
 .hud-player-status-bar {
+  /* 边框的轮廓：直边压在描边中线上（上下 4%、左右 0.6%），四角跟着花角斜切
+     （外沿从 (2.2%, 0) 切到 (0, 13%)）。填充和底槽都按这个形状裁，边缘才会整圈
+     藏在金边下面，又不会有直角从花角外面探出来。 */
+  --hud-player-status-shape: polygon(
+    2.2% 4%, 97.8% 4%,
+    99.4% 13%, 99.4% 87%,
+    97.8% 95.5%, 2.2% 95.5%,
+    0.6% 87%, 0.6% 13%
+  );
+
   position: relative;
   grid-column: 2;
   min-width: 0;
@@ -77,10 +87,7 @@
 
 .hud-player-status-clip {
   position: absolute;
-  top: 8%;
-  bottom: 0;
-  left: 1.2%;
-  right: 1.2%;
+  inset: 0;
   z-index: 1;
   clip-path: inset(0 calc(100% - var(--hud-player-status-progress, 0%)) 0 0);
 }
@@ -88,8 +95,8 @@
 .hud-player-status-fill {
   position: absolute;
   inset: 0;
-  border-radius: 7px;
   box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.16), inset 0 -2px 0 rgba(0, 0, 0, 0.42);
+  clip-path: var(--hud-player-status-shape);
 }
 
 .hud-player-status-bar--health .hud-player-status-fill {
@@ -121,10 +128,7 @@
 
 .hud-player-experience-clip {
   position: absolute;
-  top: 16%;
-  bottom: 16%;
-  left: 4%;
-  right: 4%;
+  inset: 0;
   z-index: 1;
   clip-path: inset(0 calc(100% - var(--hud-player-experience, 0%)) 0 0);
 }
@@ -134,7 +138,9 @@
   inset: 0;
   background: linear-gradient(#ffd35a, #c68418 65%, #6f3e09);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
-  clip-path: polygon(0 50%, 2% 0, 100% 0, 100% 100%, 2% 100%);
+  /* 描边是两端带尖角的六边形：顶点走描边中线（外沿 0.1%/内沿 3.4%），
+     上下同样压到描边中线（外沿 0.6%/内沿 13.7%），填充边缘整圈藏在金边下面。 */
+  clip-path: polygon(1.7% 50%, 5.6% 7%, 94.4% 7%, 98.3% 50%, 94.4% 93%, 5.6% 93%);
 }
 
 .hud-player-experience-value {

@@ -204,7 +204,16 @@
 
 .hud-combat-vitals .hud-player-status-bar {
   grid-column: auto;
+}
+
+/* 空槽的暗底得跟边框一个轮廓，否则方角会从花角外面露出四块黑。 */
+.hud-combat-vitals .hud-player-status-bar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
   background: #090c12;
+  clip-path: var(--hud-player-status-shape);
 }
 
 .hud > .hud-gem-progress {
