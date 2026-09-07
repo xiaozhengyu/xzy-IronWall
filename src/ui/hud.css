@@ -12,6 +12,11 @@
   --hud-minimap-top: 1.6%;
   --hud-minimap-right: 2.2%;
   --hud-gem-progress-height: 20px;
+  /* 空槽底色：HP/MP 的暗底和灵石进度条的槽位共用，改一处两边一起变。 */
+  --hud-empty-slot: #090c12;
+
+  /* 底部一列（被动 CD、血条技能面板、灵石进度条）整体缩放，只影响这一列的占高。 */
+  --hud-bottom-scale: 0.77;
 
   position: absolute;
   top: 0;
@@ -189,7 +194,9 @@
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  transform: translateX(-50%);
+  /* 先按设计尺寸排好，再整列等比缩放；原点取底部中线，缩放后仍然水平居中、底边不动。 */
+  transform: translateX(-50%) scale(var(--hud-bottom-scale, 1));
+  transform-origin: bottom center;
 }
 
 .hud-bottom-stack > .hud-combat-panel {
@@ -202,6 +209,10 @@
 .hud-bottom-stack > .hud-cooldown-panel {
   align-self: flex-start;
   margin-left: 20px;
+  /* CD 行不跟着整列缩小：反向抵消 --hud-bottom-scale，回到设计尺寸。
+     原点取左下角，行底仍贴着技能面板顶边，左沿仍对齐血条起点，只向上长高。 */
+  transform: scale(calc(1 / var(--hud-bottom-scale, 1)));
+  transform-origin: bottom left;
 }
 
 .hud-combat-panel > .hud-frame-content {
@@ -216,7 +227,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 20px;
-  height: 30px;
+  height: 36px;
   padding: 0 8px;
 }
 
@@ -230,7 +241,7 @@
   position: absolute;
   inset: 0;
   z-index: 0;
-  background: #090c12;
+  background: var(--hud-empty-slot);
   clip-path: var(--hud-player-status-shape);
 }
 

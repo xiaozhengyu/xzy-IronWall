@@ -6,7 +6,6 @@
   min-width: calc(var(--hud-progress-height) * 2 + 24px);
   pointer-events: none;
   user-select: none;
-  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.7));
 }
 
 /**
@@ -24,15 +23,22 @@
   border-image-slice: 0 68 fill;
   border-image-width: 0 var(--hud-progress-height);
   border-image-repeat: stretch;
+  /* 投影只挂在静止的边框上：填充在 transform 过渡时就不会带着整棵滤镜子树重新栅格化，
+     否则金边的半透明描边每帧重算，看起来像边框在闪。 */
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.7));
 }
 
-/** 延伸到金框内缘下方；两端凹口贴合菱形装饰，消除原来矩形槽位留下的空隙。 */
+/**
+ * 延伸到金框内缘下方；两端凹口贴合菱形装饰，消除原来矩形槽位留下的空隙。
+ * 下沿多压进去 3 个源像素（68px 高的第 47 行），落在下条金边完全不透明的区间里，
+ * 缩放取整时不会再露出一条缝；上沿贴着描边中线不动。
+ */
 .hud-progress-track {
   position: absolute;
   left: calc(var(--hud-progress-height) * 50 / 68);
   right: calc(var(--hud-progress-height) * 50 / 68);
   top: 32.3529%;
-  bottom: 35.2941%;
+  bottom: 30.8824%;
   clip-path: polygon(
     0 0, 100% 0,
     calc(100% - var(--hud-progress-height) * 10 / 68) 50%,
@@ -40,8 +46,8 @@
     calc(var(--hud-progress-height) * 10 / 68) 50%
   );
   overflow: hidden;
-  background: linear-gradient(180deg, #071722, #041017 65%, #092432);
-  box-shadow: inset 0 1px 2px #000;
+  /* 和 HP/MP 的空槽同一个底色；组件单独用时回落到同样的字面值。 */
+  background: var(--hud-empty-slot, #090c12);
 }
 
 .hud-progress-fill {
@@ -50,8 +56,10 @@
   transform: scaleX(0);
   transform-origin: left center;
   transition: transform 140ms ease-out;
-  background: linear-gradient(180deg, #8bfaff 0%, #22cdec 38%, #099abd 62%, #08516f 100%);
-  box-shadow: inset 0 1px rgba(241, 255, 255, 0.9), inset 0 -1px rgba(3, 33, 54, 0.7);
+  /* 取敌人掉落灵石那颗方块的本色：高光 #f1ffff、切面 #8bfaff、主体 #22cdec、暗面 #083652
+     （见 world/collectibles.ts）。亮色占大头，条子细的时候才不会看起来发暗。 */
+  background: linear-gradient(180deg, #f1ffff 0%, #8bfaff 26%, #22cdec 64%, #1aa6c9 100%);
+  box-shadow: inset 0 1px rgba(241, 255, 255, 0.95), inset 0 -1px rgba(8, 54, 82, 0.45);
 }
 
 @media (prefers-reduced-motion: reduce) {

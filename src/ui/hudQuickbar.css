@@ -104,7 +104,7 @@
   color: #f7f5ee;
   font-size: calc(14px * var(--hud-font-scale, 1));
   line-height: 1;
-  transform: translate(-50%, 2px);
+  transform: translate(-50%, 4px);
 }
 
 .hud-quick-slot-cooldown {

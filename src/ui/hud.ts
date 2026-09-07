@@ -42,6 +42,12 @@ export const MINIMAP_SETTINGS = {
   zoom: 1.35,
 };
 
+/**
+ * HP/MP 金边（status-bar-frame.png 九宫格）在设计尺寸下的厚度。
+ * 实际值会就近对齐到整数物理像素，见 syncStatusFrameBorder。
+ */
+const STATUS_FRAME_BORDER = 8;
+
 /** 宝石进度只做循环显示，暂不接升级或奖励。 */
 export const GEM_PROGRESS_SETTINGS = {
   width: '60%',
@@ -90,6 +96,7 @@ export class Hud {
   private readonly gemsPerCycle: number;
   private readonly gemProgressSideOverhang: number;
   private lastCollectedGems = 0;
+  private lastViewportScale = 0;
 
   constructor(host: HTMLElement, options: HudOptions = {}) {
     this.root.className = 'hud';
@@ -195,14 +202,49 @@ export class Hud {
     this.viewportResizeObserver.observe(host);
     const viewportRect = host.getBoundingClientRect();
     this.syncViewportScale(viewportRect.width, viewportRect.height);
+    this.watchPixelRatio();
     this.quickbarResizeObserver.observe(this.quickbar.root);
     this.syncGemProgressWidth();
   }
 
   private syncViewportScale(width: number, height: number): void {
     const scale = Math.min(width / HUD_DESIGN_WIDTH, height / HUD_DESIGN_HEIGHT);
+    this.lastViewportScale = scale;
     this.root.style.setProperty('--hud-scale', String(scale));
+    this.syncStatusFrameBorder();
   }
+
+  /**
+   * 把 HP/MP 金边的宽度对齐到整数物理像素。
+   *
+   * 整层 --hud-scale 再乘底部一列的 --hud-bottom-scale，8px 的边框落到屏幕上常常是
+   * 4.1、5.7 这种带小数的物理像素，上下两条边一条压在像素格上、一条压在半格上，
+   * 抗锯齿之后就一深一浅。这里把边宽凑成整数物理像素再换回设计 px：
+   * 只改宽度、不改切图比例，所以各分辨率下金边的粗细观感始终在 8px 上下，不会跳。
+   */
+  private syncStatusFrameBorder(): void {
+    const bottomScale = Number.parseFloat(
+      getComputedStyle(this.root).getPropertyValue('--hud-bottom-scale'),
+    );
+    const pixelRatio = devicePixelRatio || 1;
+    const effective = this.lastViewportScale
+      * (Number.isFinite(bottomScale) && bottomScale > 0 ? bottomScale : 1)
+      * pixelRatio;
+    if (!(effective > 0)) return;
+    const border = Math.max(1, Math.round(STATUS_FRAME_BORDER * effective)) / effective;
+    this.root.style.setProperty('--hud-player-status-border', `${border}px`);
+  }
+
+  /** dppx 媒体查询只对当前比例成立，换了缩放或显示器就得重新挂一次。 */
+  private watchPixelRatio(): void {
+    matchMedia(`(resolution: ${devicePixelRatio}dppx)`)
+      .addEventListener('change', this.onPixelRatioChange, { once: true });
+  }
+
+  private readonly onPixelRatioChange = (): void => {
+    this.watchPixelRatio();
+    this.syncStatusFrameBorder();
+  };
 
   private syncGemProgressWidth(): void {
     // 使用变换前的面板外宽，进度条两端与血条技能面板外沿对齐。
