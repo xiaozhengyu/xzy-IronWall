@@ -177,13 +177,31 @@
   letter-spacing: 0;
 }
 
-.hud > .hud-combat-panel {
-  --hud-font-scale: 1.2;
+/**
+ * 底部一列：被动 CD 行、血条技能面板、灵石进度条，自上而下贴在一起、整列底部对齐。
+ * CD 行占掉约 70px 高，所以底部留白从 2% 收到 0.6%，尽量把主视图还回去。
+ */
+.hud-bottom-stack {
   position: absolute;
+  bottom: 0.6%;
   left: 50%;
-  bottom: calc(2% + var(--hud-gem-progress-height) + 5px);
-  width: max-content;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
   transform: translateX(-50%);
+}
+
+.hud-bottom-stack > .hud-combat-panel {
+  --hud-font-scale: 1.2;
+  width: max-content;
+}
+
+/* CD 从左往右顶格排，左沿对齐血条起点（面板 12px 内边距 + 血条区 8px），
+   这样某个技能不在 CD 时后面的格子只会向左收，整行不会跟着重新居中。 */
+.hud-bottom-stack > .hud-cooldown-panel {
+  align-self: flex-start;
+  margin-left: 20px;
 }
 
 .hud-combat-panel > .hud-frame-content {
@@ -214,14 +232,6 @@
   z-index: 0;
   background: #090c12;
   clip-path: var(--hud-player-status-shape);
-}
-
-.hud > .hud-gem-progress {
-  position: absolute;
-  left: 50%;
-  /* 与左下被动技能面板共用底部基线。 */
-  bottom: 2%;
-  transform: translateX(-50%);
 }
 
 /* 三块信息面板使用同一层级的深色半透明暗底。 */

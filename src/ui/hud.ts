@@ -161,11 +161,14 @@ export class Hud {
     this.gemProgress.setValue(0, this.gemsPerCycle, false);
     this.quickbar = new HudQuickbar(this.text);
     this.combatPanel.content.append(this.vitals, this.quickbar.root);
-    this.root.append(this.combatPanel.root, this.gemProgress.root);
-    this.quickbarResizeObserver = new ResizeObserver(() => this.syncGemProgressWidth());
-
     this.cooldownInfo = new HudCooldownPanel(this.text);
-    this.root.appendChild(this.cooldownInfo.root);
+    // 被动 CD、血条技能面板、灵石进度条自上而下叠成一列，整列底部对齐。三者的间距和
+    // 底部留白只在 .hud-bottom-stack 里写一次，要给主视图让高度也只改那一处。
+    const bottomStack = document.createElement('div');
+    bottomStack.className = 'hud-bottom-stack';
+    bottomStack.append(this.cooldownInfo.root, this.combatPanel.root, this.gemProgress.root);
+    this.root.appendChild(bottomStack);
+    this.quickbarResizeObserver = new ResizeObserver(() => this.syncGemProgressWidth());
 
     this.hudPointer.className = 'hud-pointer';
     this.hudPointer.setAttribute('aria-hidden', 'true');

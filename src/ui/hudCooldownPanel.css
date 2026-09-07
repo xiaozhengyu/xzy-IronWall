@@ -1,36 +1,22 @@
+/** 不带背景板，格子直接压在画面上；位置由 .hud-bottom-stack 排。 */
 .hud-cooldown-panel {
-  position: absolute;
-  bottom: 2%;
-  left: 1.4%;
   width: max-content;
-  max-width: 23%;
-  max-height: 40%;
-  overflow-y: auto;
-  padding: 3px;
-  border-radius: 6px;
-  background: rgba(3, 6, 8, 0.3);
-}
-
-.hud-cooldown-panel::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border: 1px solid rgba(226, 211, 172, 0.07);
-  border-radius: 5px;
-  pointer-events: none;
 }
 
 .hud-cooldown-panel-content {
   --hud-cooldown-entry-size: 52px;
+  /* 名字和星级那一行的高度；物品格没有这两样，但也照这个高度留白，全行等高。 */
+  --hud-cooldown-entry-height: calc(var(--hud-cooldown-entry-size) + 9px * var(--hud-font-scale, 1) + 4px);
 
   position: relative;
-  min-height: 100%;
-  padding: 9px;
+  display: flex;
+  gap: 5px;
+  /* 先占住格子高度：CD 进出时这行高度不变，底下的面板才不会上下抖。 */
+  min-height: var(--hud-cooldown-entry-height);
 }
 
 .hud-cooldown-panel-group {
-  display: grid;
-  grid-template-columns: repeat(4, var(--hud-cooldown-entry-size));
+  display: flex;
   gap: 5px;
 }
 
@@ -38,8 +24,9 @@
   display: none;
 }
 
+/** 药效和技能之间比格子间距再宽一点，两组不会读成一串。 */
 .hud-cooldown-panel-group--effects {
-  margin-top: 5px;
+  margin-left: 5px;
 }
 
 .hud-cooldown-entry {
@@ -48,7 +35,7 @@
   position: relative;
   overflow: hidden;
   width: var(--hud-cooldown-entry-size);
-  aspect-ratio: 1;
+  height: var(--hud-cooldown-entry-height);
   flex: none;
   border: 1px solid rgba(206, 170, 87, 0.3);
   border-radius: 5px;
@@ -58,26 +45,6 @@
 
 .hud-cooldown-entry[hidden] {
   display: none;
-}
-
-.hud-cooldown-entry--skill {
-  height: calc(var(--hud-cooldown-entry-size) + 9px * var(--hud-font-scale, 1) + 4px);
-  aspect-ratio: auto;
-}
-
-.hud-cooldown-entry--skill .hud-cooldown-entry-icon {
-  top: 3px;
-  bottom: calc(9px * var(--hud-font-scale, 1) + 11px);
-  height: auto;
-}
-
-.hud-cooldown-entry--skill .hud-cooldown-entry-mask,
-.hud-cooldown-entry--skill .hud-cooldown-entry-value {
-  bottom: calc(9px * var(--hud-font-scale, 1) + 10px);
-}
-
-.hud-cooldown-entry--skill .hud-cooldown-entry-name {
-  bottom: 10px;
 }
 
 .hud-cooldown-entry-levels {
@@ -90,18 +57,23 @@
   z-index: 4;
 }
 
+/* 图标、遮罩、读秒、名字都按同一套上下留白摆，技能格和物品格逐像素一致；
+   物品格只是底下少了一行星级。 */
 .hud-cooldown-entry-icon {
   position: absolute;
-  inset: 4% 7% auto;
+  top: 3px;
+  left: 7%;
   display: block;
+  /* img 是替换元素，宽高留 auto 会退回图片自身的像素尺寸、无视 left/right，
+     然后被格子的 overflow: hidden 裁成一块色斑。两边都要写死。 */
   width: 86%;
-  height: calc(96% - 9px * var(--hud-font-scale, 1) - 4px);
+  height: calc(100% - 3px - 9px * var(--hud-font-scale, 1) - 11px);
   object-fit: contain;
 }
 
 .hud-cooldown-entry-mask {
   position: absolute;
-  inset: 0;
+  inset: 0 0 calc(9px * var(--hud-font-scale, 1) + 10px);
   z-index: 1;
   background: rgba(2, 5, 9, 0.7);
   opacity: 0;
@@ -111,7 +83,7 @@
 
 .hud-cooldown-entry-value {
   position: absolute;
-  inset: 0 0 calc(9px * var(--hud-font-scale, 1) + 2px);
+  inset: 0 0 calc(9px * var(--hud-font-scale, 1) + 10px);
   z-index: 2;
   display: none;
   place-items: center;
@@ -123,7 +95,7 @@
 .hud-cooldown-entry-name {
   position: absolute;
   right: 1px;
-  bottom: 2px;
+  bottom: 10px;
   left: 1px;
   z-index: 3;
   overflow: hidden;
