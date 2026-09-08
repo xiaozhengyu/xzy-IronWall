@@ -43,6 +43,7 @@ lerna-debug.log*
 # `npm run figures` 生成的，都是从代码算出来的，不该进仓库 —— 改一次参数就全变，
 # 每次提交都会带一堆二进制 diff。要看效果的人自己跑一次就有。
 .preview.mjs
+.bench.mjs
 .preview-*.png
 
 # 临时的一次性校验脚本（碰撞、烘焙耗时、散布统计之类），跑完即删。
