@@ -135,14 +135,16 @@
   text-shadow: 0 2px 2px #000, 1px 0 1px #000, -1px 0 1px #000;
 }
 
+/* 底部面板缩到 77% 后字号按同样倍数补了回来，"天地法相"这种四个字的名字要 68px、
+   原来只有 65px，会被省略号截掉。左右各让 2px、内边距各让 1px，正好放下。 */
 .hud-quick-slot-name {
   position: absolute;
-  right: calc(var(--hud-quick-slot-mask-right, 8%) + 4px);
+  right: calc(var(--hud-quick-slot-mask-right, 8%) + 2px);
   bottom: calc(13% + 7px);
-  left: calc(var(--hud-quick-slot-mask-left, 8%) + 4px);
+  left: calc(var(--hud-quick-slot-mask-left, 8%) + 2px);
   z-index: 5;
   overflow: hidden;
-  padding: 2px 3px;
+  padding: 2px;
   border-radius: 3px;
   background: rgba(0, 0, 0, 0.58);
   color: #f7f5ee;

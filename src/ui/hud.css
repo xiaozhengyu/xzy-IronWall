@@ -200,7 +200,9 @@
 }
 
 .hud-bottom-stack > .hud-combat-panel {
-  --hud-font-scale: 1.2;
+  /* 整列缩到 --hud-bottom-scale，文字得按同样的倍数补回来，否则 HP/MP 和技能名
+     跟着缩成一团。1.2 是缩放之前用的字号倍率，除回去就是原来的观感大小。 */
+  --hud-font-scale: calc(1.2 / var(--hud-bottom-scale, 1));
   width: max-content;
 }
 
