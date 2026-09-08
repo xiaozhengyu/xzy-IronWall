@@ -90,6 +90,7 @@ export class Hud {
   private readonly gemsPerCycle: number;
   private readonly gemProgressSideOverhang: number;
   private lastCollectedGems = 0;
+  private lastCollectedCoins = 0;
 
   constructor(host: HTMLElement, options: HudOptions = {}) {
     this.root.className = 'hud';
@@ -292,6 +293,11 @@ export class Hud {
         battle.skillCooldown(definition.id), battle.skillCooldownDuration(definition.id));
     }
     this.minimap.draw(field, battle, camera);
+    if (battle.collectedCoins !== this.lastCollectedCoins) {
+      const goldValue = this.currencyValues.get('gold');
+      if (goldValue) goldValue.textContent = String(battle.collectedCoins);
+      this.lastCollectedCoins = battle.collectedCoins;
+    }
     const total = battle.collectedGems;
     if (total !== this.lastCollectedGems) {
       const energyValue = this.currencyValues.get('energy');

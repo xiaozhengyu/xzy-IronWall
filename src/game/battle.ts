@@ -180,6 +180,14 @@ const SPAWN_INTERVAL = 0.18;
  *
  * 代价是开局有几秒钟画面偏空。这是对的：割草的压迫感来自人越涌越多，而不是一上来就满屏。
  */
+/**
+ * 敌人死亡掉金币的概率，剩下的都掉灵石。
+ *
+ * 1/50 是故意压低的：金币要当成一局里能记住的小惊喜，掉多了就和灵石一样成了背景噪音，
+ * 玩家反而两种都不会去看。数值平衡以后要动的话改这一个常量就行。
+ */
+const COIN_DROP_CHANCE = 1 / 50;
+
 const SEED_COUNT = 30;
 
 /** 每种兵连续出生多少个再换下一种；和开局人数一致，第一屏天然就是完整的一波。 */
@@ -524,6 +532,7 @@ export class Battle {
   readonly collectibles = new Collectibles();
   /** 当前一局实际拾取的宝石数，HUD 用于循环进度；暂不参与升级或奖励。 */
   collectedGems = 0;
+  collectedCoins = 0;
   /** 弓箭手已经射出的箭。公开只供 Scene 读取并绘制。 */
   readonly enemyArrows: EnemyArrow[] = [];
 
@@ -780,6 +789,7 @@ export class Battle {
     this.debris.clear();
     this.collectibles.clear();
     this.collectedGems = 0;
+    this.collectedCoins = 0;
     this.player.death = -1;
     this.player.hurt = 0;
     this.player.hp = this.player.maxHp;
@@ -1175,7 +1185,9 @@ export class Battle {
 
     this.effects.update(dt);
     this.debris.update(dt);
-    this.collectedGems += this.collectibles.update(dt, player);
+    this.collectibles.update(dt, player);
+    this.collectedGems += this.collectibles.collected.gem;
+    this.collectedCoins += this.collectibles.collected.coin;
     field.update(dt, this.actors());
 
     // 玩家倒下了就重开：清场、回血、重新铺一批。
@@ -1190,6 +1202,7 @@ export class Battle {
       this.enemyArrows.length = 0;
       this.collectibles.clear();
       this.collectedGems = 0;
+      this.collectedCoins = 0;
       this.seed(view);
     }
 
@@ -1417,7 +1430,10 @@ export class Battle {
   ): void {
     e.kill(fromX, fromY, launch);
     this.kills++;
-    this.collectibles.dropGem(e.x, e.y);
+    // 掉落二选一：绝大多数是灵石，偶尔出一枚金币。概率低是故意的 —— 金币要当成
+    // 一局里能记住的小惊喜，掉多了就和灵石一样变成背景噪音。
+    if (Math.random() < COIN_DROP_CHANCE) this.collectibles.dropCoin(e.x, e.y);
+    else this.collectibles.dropGem(e.x, e.y);
 
     let dx = e.x - fromX;
     let dy = e.y - fromY;
