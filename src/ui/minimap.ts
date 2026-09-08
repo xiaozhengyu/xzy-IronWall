@@ -9,6 +9,18 @@ const TERRAIN_SIZE = 192;
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 8;
 
+/**
+ * 敌人点层多久重画一次，毫秒。
+ *
+ * 这是这张图上唯一按人数增长的开销：上千个怪，每帧一次遍历加一千次 arc。而这一层表达的
+ * 是"哪一片有多密"，不是准星 —— 12 赫兹足够，眼睛读的是那团红斑的形状，不是某一个点。
+ *
+ * 点层烘在自己的画布上，并记下烘的那一刻对应的世界矩形；贴回来时按镜头差值整体平移，
+ * 所以玩家跑动时这一层跟着平滑地移，只是层里的人比实际位置旧最多 83 毫秒 —— 换算到
+ * 这张 256 像素的图上不足半个像素。玩家箭头不在这一层里，仍然逐帧画。
+ */
+const ENEMY_LAYER_INTERVAL = 1000 / 12;
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
@@ -32,6 +44,20 @@ export class Minimap {
   private terrainField: Field | null = null;
   private innerZoom = 1;
 
+  /** 敌人点层，以及它烘的那一刻对应的世界矩形。见 ENEMY_LAYER_INTERVAL。 */
+  private enemyLayer: HTMLCanvasElement | null = null;
+  private enemyContext: CanvasRenderingContext2D | null = null;
+  private enemyLeft = 0;
+  private enemyTop = 0;
+  private enemyScale = 0;
+  private enemyAt = -Infinity;
+
+  /**
+   * 内圈暗角的渐变。坐标只跟画布尺寸有关，而画布尺寸是常量，所以建一次就够 ——
+   * 每帧 new 一个 CanvasGradient 是纯粹的白扔。
+   */
+  private readonly vignette: CanvasGradient;
+
   constructor(zoom: number) {
     this.canvas.className = 'hud-minimap-canvas';
     this.canvas.width = CANVAS_SIZE;
@@ -41,6 +67,11 @@ export class Minimap {
     const context = this.canvas.getContext('2d');
     if (!context) throw new Error('Canvas 2D is required for the minimap');
     this.context = context;
+    const radius = CANVAS_SIZE * 0.5;
+    this.vignette = context.createRadialGradient(radius, radius, radius * 0.55, radius, radius, radius);
+    this.vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    this.vignette.addColorStop(0.82, 'rgba(0, 0, 0, 0.05)');
+    this.vignette.addColorStop(1, 'rgba(0, 0, 0, 0.46)');
     this.zoom = zoom;
   }
 
@@ -116,12 +147,56 @@ export class Minimap {
     );
     ctx.setLineDash([]);
 
-    // 敌人统一进一条路径再填充，避免上千个点各自触发一次 Canvas fill。
+    // 敌人点层。整层贴回来，位移取整：贴到半个像素上会被插值糊掉，而这些点只有一两像素宽。
+    this.refreshEnemies(battle, left, top, scale);
+    if (this.enemyLayer) {
+      const smoothing = ctx.imageSmoothingEnabled;
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(
+        this.enemyLayer,
+        Math.round((this.enemyLeft - left) * scale),
+        Math.round((this.enemyTop - top) * scale),
+      );
+      ctx.imageSmoothingEnabled = smoothing;
+    }
+
+    this.drawPlayer(mapX(battle.player.x), mapY(battle.player.y), battle.player.facing);
+
+    // 内圈暗角既压住圆形裁剪边缘，也让贴边标记不和金框抢层次。
+    ctx.fillStyle = this.vignette;
+    ctx.fillRect(0, 0, size, size);
+    ctx.restore();
+  }
+
+  /**
+   * 把所有敌人重新烘进点层。到点了才做，见 ENEMY_LAYER_INTERVAL。
+   *
+   * 缩放变了也要立刻重烘：贴回来那一步只平移不缩放，比例对不上就整层错位。
+   */
+  private refreshEnemies(battle: Battle, left: number, top: number, scale: number): void {
+    const now = performance.now();
+    if (this.enemyLayer && scale === this.enemyScale && now - this.enemyAt < ENEMY_LAYER_INTERVAL) return;
+
+    if (!this.enemyContext) {
+      const layer = document.createElement('canvas');
+      layer.width = CANVAS_SIZE;
+      layer.height = CANVAS_SIZE;
+      const context = layer.getContext('2d');
+      if (!context) return; // 拿不到就退回"不画敌人"，别把整张小地图拖下水。
+      this.enemyLayer = layer;
+      this.enemyContext = context;
+    }
+
+    const ctx = this.enemyContext;
+    const size = CANVAS_SIZE;
+    ctx.clearRect(0, 0, size, size);
+
+    // 统一进一条路径再填充，避免上千个点各自触发一次 Canvas fill。
     const enemyRadius = clamp(0.9 + this.innerZoom * 0.16, 1, 2.1);
     ctx.beginPath();
     for (const enemy of battle.minimapEnemyPositions()) {
-      const x = mapX(enemy.x);
-      const y = mapY(enemy.y);
+      const x = (enemy.x - left) * scale;
+      const y = (enemy.y - top) * scale;
       if (x < -enemyRadius || y < -enemyRadius || x > size + enemyRadius || y > size + enemyRadius) continue;
       ctx.moveTo(x + enemyRadius, y);
       ctx.arc(x, y, enemyRadius, 0, Math.PI * 2);
@@ -129,16 +204,10 @@ export class Minimap {
     ctx.fillStyle = 'rgba(207, 58, 48, 0.88)';
     ctx.fill();
 
-    this.drawPlayer(mapX(battle.player.x), mapY(battle.player.y), battle.player.facing);
-
-    // 内圈暗角既压住圆形裁剪边缘，也让贴边标记不和金框抢层次。
-    const vignette = ctx.createRadialGradient(radius, radius, radius * 0.55, radius, radius, radius);
-    vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
-    vignette.addColorStop(0.82, 'rgba(0, 0, 0, 0.05)');
-    vignette.addColorStop(1, 'rgba(0, 0, 0, 0.46)');
-    ctx.fillStyle = vignette;
-    ctx.fillRect(0, 0, size, size);
-    ctx.restore();
+    this.enemyLeft = left;
+    this.enemyTop = top;
+    this.enemyScale = scale;
+    this.enemyAt = now;
   }
 
   private drawPlayer(x: number, y: number, facing: number): void {

@@ -30,6 +30,21 @@ const BAKE_SLICES = 16;
  */
 const WEATHER_STEPS = 25;
 
+/** 云稀到这个程度就当没有 —— 精灵收起来，那张图也不必再算。 */
+const CLOUD_MIN = 0.01;
+
+/**
+ * 云影贴图多久重算一次，毫秒。
+ *
+ * 格点是 17×17 铺满整个视口的，一格三十几个世界单位宽，而云飘过一格要好几秒 —— 每帧重算
+ * 一遍是拿一千多次 sin 和一次贴图上传去换一个看不出来的差别。三十赫兹的代价是镜头移动时
+ * 影子最多贴着屏幕滑半格间隔的距离，而这张图本来就是线性采样的一团软斑，看不出边。
+ */
+const CLOUD_INTERVAL = 1000 / 30;
+
+/** cloudsAt 取这个值表示"没云、已经清干净了"，云一回来它自然满足重算条件。 */
+const CLOUDS_IDLE = Number.NEGATIVE_INFINITY;
+
 export class GroundSurface {
   readonly sprite: Sprite;
   /** 云影叠加层，正片叠底压在底图上。 */
@@ -49,6 +64,8 @@ export class GroundSurface {
 
   /** 正在重烘时，下一片从哪一行开始；负数表示没有在重烘。 */
   private bakingRow = -1;
+  /** 云影上一次重算是什么时候，毫秒。见 CLOUD_INTERVAL。 */
+  private cloudsAt = CLOUDS_IDLE;
   private bakedKey = -1;
   private pendingKey = 0;
 
@@ -147,6 +164,25 @@ export class GroundSurface {
     }
 
     // 云影。格点直接来自 Weather，这里只是把它变成一张能贴的图。
+    //
+    // 没云就整段不做：晴天是默认档，那张图整个是白的，layout 里精灵本来也收着（同一个
+    // CLOUD_MIN），算了也没人看。
+    //
+    // 但"没云"的第一帧还得再跑一次 prepareClouds：草、树、篝火每帧都在问 weather.cloudShade，
+    // 而那个函数读的是 prepareClouds 写下的强度。不清零的话，云散了以后整片林子会一直留着
+    // 最后那一档影子。跑完把 cloudsAt 记成 CLOUDS_IDLE，之后彻底停手 —— 而云一回来，这个
+    // 值自然满足下面的重算条件，不用等间隔。
+    if (this.weather.cloudiness <= CLOUD_MIN) {
+      if (this.cloudsAt === CLOUDS_IDLE) return;
+      this.weather.prepareClouds(camX - halfW, camY - halfH, camX + halfW, camY + halfH);
+      this.cloudsAt = CLOUDS_IDLE;
+      return;
+    }
+
+    const now = performance.now();
+    if (now - this.cloudsAt < CLOUD_INTERVAL) return;
+    this.cloudsAt = now;
+
     this.weather.prepareClouds(camX - halfW, camY - halfH, camX + halfW, camY + halfH);
     const lattice = this.weather.cloudLattice;
     for (let i = 0; i < lattice.length; i++) {
@@ -177,6 +213,6 @@ export class GroundSurface {
     this.shadowSprite.width = viewW;
     this.shadowSprite.height = viewH;
     this.shadowSprite.position.set(0, 0);
-    this.shadowSprite.visible = this.weather.cloudiness > 0.01;
+    this.shadowSprite.visible = this.weather.cloudiness > CLOUD_MIN;
   }
 }

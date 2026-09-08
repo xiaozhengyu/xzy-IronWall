@@ -29,6 +29,9 @@ export interface HudQuickbarOptions {
   items?: readonly HudQuickSlotOptions[];
 }
 
+/** 冷却进度写进 CSS 前量化到多少档。见 setSkillCooldown。 */
+const COOLDOWN_STEPS = 128;
+
 type HudQuickSlotView = {
   root: HTMLElement;
   icon: HTMLImageElement | null;
@@ -38,6 +41,9 @@ type HudQuickSlotView = {
   cooldownValue: HTMLSpanElement | null;
   countValue: HTMLSpanElement | null;
   lastCooldownText: string;
+  /** 上一次写进 CSS 的冷却进度，量化过；见 setSkillCooldown。 */
+  lastCooldownStep: number;
+  lastCooling: boolean;
   skillId: SkillId | null | undefined;
 };
 
@@ -125,9 +131,24 @@ export class HudQuickbar {
     const safeTotal = Number.isFinite(total) ? Math.max(0, total) : 0;
     const safeRemaining = Number.isFinite(remaining) ? Math.max(0, remaining) : 0;
     const ratio = safeTotal > 0 ? Math.min(1, safeRemaining / safeTotal) : 0;
-    slot.root.style.setProperty('--hud-quick-slot-cooldown', String(ratio));
-    slot.root.classList.toggle('hud-quick-slot--cooling', ratio > 0);
-    const cooldownText = ratio > 0
+
+    // 进度量化到 1/128 再写。
+    //
+    // 这个方法每帧被调四次，而写自定义属性不管值变没变都会让这一格的样式失效。一个六秒的
+    // 技能每帧只走 0.3%，量化之后大约三帧才真的写一次，而 1/128 换算到格子上是半个像素 ——
+    // 扫过去的那道暗边照样是连续的。
+    const step = Math.round(ratio * COOLDOWN_STEPS);
+    if (step !== slot.lastCooldownStep) {
+      slot.lastCooldownStep = step;
+      slot.root.style.setProperty('--hud-quick-slot-cooldown', String(step / COOLDOWN_STEPS));
+    }
+    const cooling = ratio > 0;
+    if (cooling !== slot.lastCooling) {
+      slot.lastCooling = cooling;
+      slot.root.classList.toggle('hud-quick-slot--cooling', cooling);
+    }
+
+    const cooldownText = cooling
       ? (safeRemaining >= 10 ? String(Math.ceil(safeRemaining)) : safeRemaining.toFixed(1))
       : '';
     if (slot.lastCooldownText === cooldownText) return;
@@ -219,6 +240,8 @@ export class HudQuickbar {
       cooldownValue,
       countValue,
       lastCooldownText: '',
+      lastCooldownStep: -1,
+      lastCooling: false,
       skillId: undefined,
     };
   }

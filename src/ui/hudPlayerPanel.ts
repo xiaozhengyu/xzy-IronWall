@@ -178,18 +178,34 @@ export class HudPlayerPanel {
     this.avatarShapes.flushToMesh(this.avatarSink, this.avatarCanvas.width, this.avatarCanvas.height);
   }
 
+  /**
+   * 这三个 set 每帧都会被 Hud.draw 调一遍，但血量一秒里变不了几次。
+   *
+   * 数值没变就直接回去：一次 refreshBar 是三笔 DOM 写入（自定义属性、文字、aria-label），
+   * 而写自定义属性会让这一枝的样式失效，等于每帧白白让浏览器重算一次 HUD 的样式。
+   * 换语言走的是 refreshText，那条路照旧无条件刷新，所以这里的提前返回不会让文案卡住。
+   */
   setHealth(value: number, maximum: number): void {
-    [this.health, this.maxHealth] = this.normalizeRange(value, maximum);
+    const [health, maxHealth] = this.normalizeRange(value, maximum);
+    if (health === this.health && maxHealth === this.maxHealth) return;
+    this.health = health;
+    this.maxHealth = maxHealth;
     this.refreshBar(this.healthBar, this.health, this.maxHealth, 'health');
   }
 
   setMana(value: number, maximum: number): void {
-    [this.mana, this.maxMana] = this.normalizeRange(value, maximum);
+    const [mana, maxMana] = this.normalizeRange(value, maximum);
+    if (mana === this.mana && maxMana === this.maxMana) return;
+    this.mana = mana;
+    this.maxMana = maxMana;
     this.refreshBar(this.manaBar, this.mana, this.maxMana, 'mana');
   }
 
   setExperience(value: number, maximum: number): void {
-    [this.experience, this.maxExperience] = this.normalizeRange(value, maximum);
+    const [experience, maxExperience] = this.normalizeRange(value, maximum);
+    if (experience === this.experience && maxExperience === this.maxExperience) return;
+    this.experience = experience;
+    this.maxExperience = maxExperience;
     const ratio = this.experience / this.maxExperience;
     this.experienceBar.style.setProperty('--hud-player-experience', `${ratio * 100}%`);
     this.refreshText();

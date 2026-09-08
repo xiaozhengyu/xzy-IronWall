@@ -19,6 +19,10 @@ type CooldownEntryView = {
   root: HTMLElement;
   value: HTMLSpanElement;
   lastValue: string;
+  /** 上一次写进 DOM 的那几笔。这几个方法每帧都会被调，值不变就不该再写。 */
+  lastStep: number;
+  lastActive: boolean;
+  lastVisible: boolean | null;
 };
 
 type ActiveTimedEffect = HudTimedEffect & {
@@ -32,6 +36,9 @@ export interface HudTimedEffect {
   label: string;
   duration: number;
 }
+
+/** 冷却进度写进 CSS 前量化到多少档。见 updateEntry。 */
+const COOLDOWN_STEPS = 128;
 
 export const HUD_COOLDOWN_SKILLS: readonly CooldownEntryDefinition[] = [
   { id: 'sweep', icon: skill01Url, label: 'skillSweep' },
@@ -74,7 +81,10 @@ export class HudCooldownPanel {
   setSkillState(id: SkillId, visible: boolean, remaining: number, duration: number): void {
     const view = this.skillViews.get(id);
     if (!view) return;
-    view.root.hidden = !visible;
+    if (view.lastVisible !== visible) {
+      view.lastVisible = visible;
+      view.root.hidden = !visible;
+    }
     this.updateEntry(view, remaining, duration);
   }
 
@@ -133,15 +143,26 @@ export class HudCooldownPanel {
       root.classList.add('hud-cooldown-entry--skill');
       root.appendChild(createHudSkillLevel(undefined, undefined, 'hud-cooldown-entry-levels'));
     }
-    return { root, value, lastValue: '' };
+    return { root, value, lastValue: '', lastStep: -1, lastActive: false, lastVisible: null };
   }
 
   private updateEntry(view: CooldownEntryView, remaining: number, duration: number): boolean {
     const safeRemaining = Number.isFinite(remaining) ? Math.max(0, remaining) : 0;
     const safeDuration = Number.isFinite(duration) ? Math.max(0, duration) : 0;
     const ratio = safeDuration > 0 ? Math.min(1, safeRemaining / safeDuration) : 0;
-    view.root.style.setProperty('--hud-cooldown-ratio', String(ratio));
-    view.root.classList.toggle('hud-cooldown-entry--active', ratio > 0);
+
+    // 和技能格一样：进度量化到 1/128 再写，否则每帧五个条目各让一枝样式失效一次。
+    const step = Math.round(ratio * COOLDOWN_STEPS);
+    if (step !== view.lastStep) {
+      view.lastStep = step;
+      view.root.style.setProperty('--hud-cooldown-ratio', String(step / COOLDOWN_STEPS));
+    }
+    const active = ratio > 0;
+    if (active !== view.lastActive) {
+      view.lastActive = active;
+      view.root.classList.toggle('hud-cooldown-entry--active', active);
+    }
+
     const value = ratio > 0
       ? (safeRemaining >= 10 ? String(Math.ceil(safeRemaining)) : safeRemaining.toFixed(1))
       : '';
