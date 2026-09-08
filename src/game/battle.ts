@@ -578,6 +578,23 @@ export class Battle {
   private playerVelocityY = 0;
 
   /**
+   * 招式特效该继承多少玩家速度。冲刺期间是零。
+   *
+   * 继承速度是为了让**贴在身上**的那些形状跟着人走：一边走一边挥，弧要是钉在原地，半秒
+   * 之内人就走出去半个身位，弧读起来像是从背后掉下来的。按走路那个速度给，两者一直贴合。
+   *
+   * 但冲刺不能算进来。冲刺接近 500 单位/秒、只持续零点几秒，而一道弧活半秒 —— 继承下来
+   * 就是"冲刺早停了，招式还在以冲刺的速度往前飞"。回旋最明显：那一圈本该罩在脚下，结果
+   * 顺着冲刺方向飞出屏幕。冲刺期间的招式是发生在**某一个地方**的一件事，不跟着人跑。
+   */
+  private get effectDriftX(): number {
+    return this.lunge ? 0 : this.playerVelocityX;
+  }
+  private get effectDriftY(): number {
+    return this.lunge ? 0 : this.playerVelocityY;
+  }
+
+  /**
    * 玩家当前拥有的技能、互斥槽与每项独立冷却。敌人仍只使用自己的基础攻击。
    * 装备规则全部收在 SkillLoadout，Battle 只负责到了触发时刻之后具体发生什么。
    */
@@ -1501,8 +1518,8 @@ export class Battle {
         if (full) {
           // 回旋：一圈从脚下推开的环，见 castRing（突进的收招用的是同一份）。
           this.castRing(reach, skill.power, player.x, player.y, {
-            velocityX: this.playerVelocityX,
-            velocityY: this.playerVelocityY,
+            velocityX: this.effectDriftX,
+            velocityY: this.effectDriftY,
           });
           return;
         }
@@ -1537,8 +1554,8 @@ export class Battle {
               sparks: 0.32,
               trail: 0,
               tint: blade.tint,
-              velocityX: this.playerVelocityX,
-              velocityY: this.playerVelocityY,
+              velocityX: this.effectDriftX,
+              velocityY: this.effectDriftY,
             });
           }
         }
@@ -1554,8 +1571,8 @@ export class Battle {
         const wave: SkillWave = {
           x: at.x,
           y: at.y,
-          vx: this.playerVelocityX,
-          vy: this.playerVelocityY,
+          vx: this.effectDriftX,
+          vy: this.effectDriftY,
           heading: player.facing,
           age: 0,
           life: skill.duration,
