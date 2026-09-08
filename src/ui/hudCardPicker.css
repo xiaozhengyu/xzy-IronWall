@@ -1,0 +1,200 @@
+/**
+ * 灵石收满后弹出的三选一卡牌。
+ *
+ * 整块挂在 .hud 里，跟着同一个 --hud-scale 缩放，所以这里的尺寸全是 1920×1080 的设计 px。
+ *
+ * 进出场都走 CSS 动画。出场最长的那条（选中卡牌的 hud-card-taken）和 hudCardPicker.ts
+ * 里的 EXIT_MS 是一对：那边靠定时器把 hidden 补上（动画结束事件在 prefers-reduced-motion
+ * 下不一定来），改一处就得改另一处。
+ */
+.hud-card-picker {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  /* .hud 整层是 pointer-events: none，弹出层得自己收回点击。 */
+  pointer-events: auto;
+  /* 压暗战场。世界这时是停住的（见 main.ts 的 ticker），压暗只是让牌读起来更清楚。 */
+  background: radial-gradient(ellipse at center, rgba(4, 6, 10, 0.55), rgba(2, 3, 6, 0.82));
+}
+
+.hud-card-picker[hidden] {
+  display: none;
+}
+
+.hud-card-panel {
+  --hud-font-scale: 1.35;
+  /* 背景板留得比现在的内容大一圈：牌面下半截和面板四周都是空的，后面往里加文字
+     不用再重排一遍。 */
+  width: 1140px;
+}
+
+.hud-card-panel > .hud-frame-content {
+  display: grid;
+  justify-items: center;
+  padding: 40px;
+}
+
+.hud-card-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 22px;
+  width: 100%;
+}
+
+.hud-card {
+  position: relative;
+  display: grid;
+  /* 图、名字、说明三行。 */
+  grid-template-rows: auto auto auto;
+  justify-items: center;
+  /* 内容整体居中，再靠下边多出来的那段留白把它顶得偏上一点。 */
+  align-content: center;
+  /* 竖长方形。宽度由三列平分，高度跟着比例走，牌面比正方形更像"一张牌"。 */
+  aspect-ratio: 3 / 4;
+  gap: 14px;
+  padding: 24px 18px 64px;
+  border: 1px solid rgba(206, 170, 87, 0.42);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(30, 27, 20, 0.96), rgba(10, 11, 14, 0.96));
+  box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.8), 0 4px 10px rgba(0, 0, 0, 0.6);
+  cursor: pointer;
+}
+
+.hud-card[hidden] {
+  display: none;
+}
+
+.hud-card:hover,
+.hud-card:focus-visible {
+  border-color: rgba(244, 206, 114, 0.95);
+  background: linear-gradient(180deg, rgba(46, 40, 26, 0.96), rgba(16, 16, 18, 0.96));
+  box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.7), 0 0 14px rgba(233, 191, 96, 0.35);
+  outline: none;
+}
+
+.hud-card-icon {
+  display: block;
+  width: 128px;
+  height: 128px;
+  object-fit: contain;
+  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.75));
+}
+
+.hud-card-name {
+  color: #f7f0dd;
+  font-size: calc(15px * var(--hud-font-scale, 1));
+  letter-spacing: 0.06em;
+  text-align: center;
+  text-shadow: 0 2px 3px #000;
+}
+
+.hud-card-detail {
+  color: #cdbf9a;
+  font-size: calc(11px * var(--hud-font-scale, 1));
+  line-height: 1.5;
+  text-align: center;
+}
+
+/* ---------------------------------------------------------------- 进出场 */
+
+/**
+ * 三张牌错开 60ms 依次落位，比整排一起弹出来更像"发牌"。
+ * 出场 200ms 走完 —— 玩家已经做完选择了，再慢就是在挡路。
+ */
+@keyframes hud-card-scrim-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes hud-card-scrim-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes hud-card-panel-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes hud-card-in {
+  from { opacity: 0; transform: translateY(30px) scale(0.9); }
+  to { opacity: 1; transform: none; }
+}
+
+/** 没选的两张往下退开、让路。 */
+@keyframes hud-card-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(14px) scale(0.94); }
+}
+
+/**
+ * 选中的那张先顶一下再往上浮走：起手有个短暂的放大和描边发亮，让"就是这张"看得清楚，
+ * 然后整张升出面板。和另外两张往下沉的方向相反，一眼就分得出谁被选中了。
+ */
+@keyframes hud-card-taken {
+  0% {
+    opacity: 1;
+    transform: none;
+    border-color: rgba(244, 206, 114, 0.95);
+    box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.7), 0 0 14px rgba(233, 191, 96, 0.35);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-16px) scale(1.06);
+    border-color: rgba(255, 236, 178, 1);
+    box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.5), 0 0 34px rgba(255, 214, 120, 0.75);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-52px) scale(1.02);
+    border-color: rgba(255, 236, 178, 0.6);
+    box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.4), 0 0 18px rgba(255, 214, 120, 0.2);
+  }
+}
+
+.hud-card-picker[data-phase='in'] {
+  animation: hud-card-scrim-in 140ms ease-out both;
+}
+
+.hud-card-picker[data-phase='in'] .hud-card-panel {
+  animation: hud-card-panel-in 200ms cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
+}
+
+.hud-card-picker[data-phase='in'] .hud-card {
+  animation: hud-card-in 220ms cubic-bezier(0.2, 0.9, 0.3, 1.25) both;
+}
+
+.hud-card-picker[data-phase='in'] .hud-card:nth-child(2) {
+  animation-delay: 60ms;
+}
+
+.hud-card-picker[data-phase='in'] .hud-card:nth-child(3) {
+  animation-delay: 120ms;
+}
+
+.hud-card-picker[data-phase='out'] {
+  animation: hud-card-scrim-out 200ms ease-in both;
+}
+
+.hud-card-picker[data-phase='out'] .hud-card {
+  /* 没选的先走，选中那张才有时间浮上去。 */
+  animation: hud-card-out 140ms ease-in both;
+}
+
+.hud-card-picker[data-phase='out'] .hud-card--taken {
+  animation: hud-card-taken 200ms cubic-bezier(0.25, 0.8, 0.3, 1) both;
+  /* 压在另外两张上面。压不过面板的金边（那是 .hud-frame::after，另一个层级），
+     所以升幅收在 -52px 以内，浮到快出框时它也已经淡透了。 */
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-card-picker[data-phase] ,
+  .hud-card-picker[data-phase] .hud-card-panel,
+  .hud-card-picker[data-phase] .hud-card {
+    animation-duration: 1ms;
+    animation-delay: 0ms;
+  }
+}

@@ -108,6 +108,7 @@ const menu = new Menu({
       skillLoadout: battle.skillLoadout.snapshot(),
       autoAttack: battle.autoAttack,
       showItems,
+      showCards: hud.cardsEnabled,
       skeleton: showSkeleton,
       maxEnemies: battle.maxEnemies,
       weather: field.weather.kind,
@@ -252,6 +253,11 @@ function onKeyPressed(code: string): void {
     // 暂停和开始画面都没有帧在跑，这一下得自己补一帧，和改颗粒度、拖窗口是同一个道理。
     draw();
   }
+  // 升级卡牌。开关本身放在 HUD 上（弹不弹是它自己的事），这里只负责翻它。
+  if (code === 'KeyB') {
+    hud.cardsEnabled = !hud.cardsEnabled;
+    if (!hud.cardsEnabled) hud.cards.hide();
+  }
   if (code === 'KeyF') battle.autoAttack = !battle.autoAttack;
   if (code === 'KeyJ') battle.cycleAttackSkill();
   const activeSlot = ACTIVE_SKILL_CODES.indexOf(code as (typeof ACTIVE_SKILL_CODES)[number]);
@@ -289,6 +295,8 @@ function onKeyPressed(code: string): void {
   if (code === 'BracketRight') camera.nudgeMagnify(1);
 
   const digit = code.startsWith('Digit') ? Number(code.slice(5)) : NaN;
+  // 卡牌弹着的时候数字键先归它，不然选牌会顺手把药喝了。
+  if (hud.cards.open && digit >= 1 && hud.cards.choose(digit - 1)) return;
   if (state === 'playing' && digit >= 1 && digit <= 4) {
     hud.useItem(digit - 1);
   } else if (state !== 'playing' && digit >= 1 && digit <= PlayerPresets.length) {
@@ -313,6 +321,12 @@ app.ticker.add((ticker) => {
   if (state !== 'playing') return;
   lastFps = ticker.FPS;
   layout();
+  // 弹升级卡牌时把世界停住：和 ESC 暂停同一个道理，停的只有 update —— 牌是 DOM，
+  // 战场那一帧照样得画出来，否则改颗粒度或拖窗口时背景就定在旧尺寸上了。
+  if (hud.cards.open) {
+    draw();
+    return;
+  }
   // dt 夹在二十分之一秒：暂停期间 ticker 照常在跑，所以回来时并不会攒出一个大步长，但切
   // 后台、断点、掉帧都会，夹一下省得人一口气瞬移出去。
   const dt = Math.min(ticker.deltaMS / 1000, 1 / 20);

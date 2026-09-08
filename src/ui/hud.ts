@@ -5,6 +5,7 @@ import type { Camera } from '../render/camera';
 import './hud.css';
 import { Minimap } from './minimap';
 import { HudProgressBar } from './hudProgressBar';
+import { HudCardPicker } from './hudCardPicker';
 import { HudFrame } from './hudFrame';
 import { createHudButton } from './hudButton';
 import { createHudIcon } from './hudIcons';
@@ -76,7 +77,11 @@ export class Hud {
   readonly currencyInfo: HudFrame;
   readonly quickbar: HudQuickbar;
   readonly cooldownInfo: HudCooldownPanel;
+  readonly cards: HudCardPicker;
   readonly text: HudText;
+
+  /** 灵石收满是否弹卡牌。菜单里可以关掉，关掉就是接这个功能之前的样子。 */
+  cardsEnabled = true;
 
   private readonly combatPanel = new HudFrame({ className: 'hud-combat-panel' });
   private readonly vitals = document.createElement('div');
@@ -163,12 +168,15 @@ export class Hud {
     this.quickbar = new HudQuickbar(this.text);
     this.combatPanel.content.append(this.vitals, this.quickbar.root);
     this.cooldownInfo = new HudCooldownPanel(this.text);
+    this.cards = new HudCardPicker();
     // 被动 CD、血条技能面板、灵石进度条自上而下叠成一列，整列底部对齐。三者的间距和
     // 底部留白只在 .hud-bottom-stack 里写一次，要给主视图让高度也只改那一处。
     const bottomStack = document.createElement('div');
     bottomStack.className = 'hud-bottom-stack';
     bottomStack.append(this.cooldownInfo.root, this.combatPanel.root, this.gemProgress.root);
     this.root.appendChild(bottomStack);
+    // 卡牌压在所有 HUD 之上，所以最后挂。
+    this.root.appendChild(this.cards.root);
     this.quickbarResizeObserver = new ResizeObserver(() => this.syncGemProgressWidth());
 
     this.hudPointer.className = 'hud-pointer';
@@ -305,6 +313,9 @@ export class Hud {
       const sameCycle = Math.floor(total / this.gemsPerCycle) === Math.floor(this.lastCollectedGems / this.gemsPerCycle);
       this.gemProgress.setValue(total % this.gemsPerCycle, this.gemsPerCycle,
         total > this.lastCollectedGems && sameCycle);
+      // 跨过一整轮就是"灵石收满"。用 sameCycle 而不是 total % n === 0：一帧可能一次收好
+      // 几颗，正好落在整数上的机会并不可靠。
+      if (this.cardsEnabled && !sameCycle && total > this.lastCollectedGems) this.cards.show();
       this.lastCollectedGems = total;
     }
   }

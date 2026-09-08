@@ -46,6 +46,8 @@ export interface MenuState {
   autoAttack: boolean;
   /** 物品图鉴开着的时候面板要让开，见 showGallery。 */
   showItems: boolean;
+  /** 灵石收满是否弹升级卡牌。关掉就是接这个功能之前的样子。 */
+  showCards: boolean;
   skeleton: boolean;
   maxEnemies: number;
 
@@ -355,6 +357,7 @@ export class Menu {
     const fight = row(parent, '战斗');
     fight.appendChild(this.toggle('自动挥击', 'F', 'KeyF', (s) => s.autoAttack));
     fight.appendChild(this.toggle('骨架', 'K', 'KeyK', (s) => s.skeleton));
+    fight.appendChild(this.toggle('升级卡牌', 'B', 'KeyB', (s) => s.showCards));
     fight.appendChild(this.button('清场重来', 'X', 'KeyX'));
     // 两个独立的旋钮：出兵管**涌得多快**，同屏上限管**场上能挤多少**。
     fight.appendChild(this.spin('hp', 'KeyN', 'KeyM'));
