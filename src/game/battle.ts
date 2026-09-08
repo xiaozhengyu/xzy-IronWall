@@ -512,6 +512,31 @@ type EnemyMover = Pick<Character,
   'sideBias' | 'radius' | 'spacing' | 'alive'
 >;
 
+/** 只缓存邻居让路决策；朝向、速度、移动和碰撞仍逐帧计算。 */
+interface CrowdDecision {
+  group: number;
+  /** 下次问到必须重算：刚建的，以及站定过又重新起步的。 */
+  stale: boolean;
+  dirX: number;
+  dirY: number;
+  crowdSpacing: number;
+  room: number;
+  side: number;
+}
+
+/**
+ * 近处的邻居让路决策分几组轮流做，一帧只做其中一组。
+ *
+ * 分组本身就是陈旧度的上限：最多隔三帧。**不要再叠一道按游戏时间算的上限** —— dt 被夹在
+ * 1/20 秒（见 main.ts 主循环那段），所以掉到二十帧以下时，任何 50 毫秒量级的时间上限每帧
+ * 都正好到期，缓存命中率直接归零。实测命中率 60Hz 66%、30Hz 33%、20Hz 0%、15Hz 0%：那道
+ * 上限让这条优化在最需要它的机器上关掉了自己。
+ *
+ * 这和 collisionSteps 曾经按 moveDt 分子步是同一类错：按时间定的规则，掉帧时会反过来加重
+ * 下一帧，而那正是掉帧的机器承受不起的。
+ */
+const CROWD_DECISION_GROUPS = 3;
+
 interface Reservation extends EnemyMover {
   motion: DistantMotion;
   palette: CharacterPalette;
@@ -703,6 +728,10 @@ export class Battle {
   /** 0 本帧跳过，1 近处逐帧，2 远处本帧轮到（只做一轮分离）。 */
   private movementDue = new Uint8Array(0);
   private farGroup = 0;
+  // 按对象绑定分组，数组交换删除不会改组；回收/恢复的新对象首次移动时重新决策。
+  private readonly crowdDecisions = new WeakMap<EnemyMover, CrowdDecision>();
+  private crowdDecisionGroup = 0;
+  private crowdDecisionFrame = 0;
 
   /** 小地图读取实时位置，不需要访问无骨架怪物的战斗内部状态。 */
   *enemyPositions(): Generator<Readonly<{ x: number; y: number }>> {
@@ -1951,6 +1980,7 @@ export class Battle {
 
   private driveEnemies(dt: number, view: BattleView): void {
     const { player, field } = this;
+    this.crowdDecisionFrame = (this.crowdDecisionFrame + 1) % CROWD_DECISION_GROUPS;
 
     const enemies = this.movers;
     enemies.length = 0;
@@ -2008,7 +2038,17 @@ export class Battle {
           // 找空位：正前方被占了就沿切线绕过去。room 是"还能直着走多少"，0 表示完全被堵。
           //
           // 包括远处无骨架的数据；共用邻居表才能在进入视口前就排好队、绕开前方的人。
-          const room = this.slotAhead(i, dx / dist, dy / dist, dist);
+          // 近处按三组轮流查询邻居；远处本来已是 10 Hz，轮到移动时直接决策。
+          let room: number;
+          let side: number;
+          if (near) {
+            const decision = this.crowdDecision(i, dx / dist, dy / dist, dist, stop);
+            room = decision.room;
+            side = decision.side;
+          } else {
+            room = this.slotAhead(i, dx / dist, dy / dist, dist);
+            side = this.slotSide;
+          }
 
           // 越是被堵住越慢，而且越靠后越慢。直行那一份按 room 走全速；绕行那一份先打个折，
           // 再按离玩家多远衰减 —— 见 SIDESTEP_SPEED 上那段。
@@ -2020,7 +2060,6 @@ export class Battle {
           e.crowdPace += (wantPace - e.crowdPace) * (1 - Math.exp(-moveDt / PACE_TAU));
           const pace = e.crowdPace;
 
-          const side = this.slotSide;
           let mx = (dx / dist) * room + (-dy / dist) * side * SIDESTEP * (1 - room);
           let my = (dy / dist) * room + (dx / dist) * side * SIDESTEP * (1 - room);
           const mlen = Math.hypot(mx, my);
@@ -2054,6 +2093,8 @@ export class Battle {
           // 到位了：站定出手。crowdPace 也归零，免得下次起步带着旧值窜一下。
           e.crowdPace = 0;
           e.speed = 0;
+          const decision = this.crowdDecisions.get(e);
+          if (decision) decision.stale = true; // 重新起步时不能沿用站定前的邻居。
           if (i < activeCount) {
             const cooldown =
               e.def.weapon === 'bow'
@@ -2076,6 +2117,32 @@ export class Battle {
 
   /** slotAhead 顺带算出来的绕行方向：+1 往左，-1 往右。 */
   private slotSide = 1;
+
+  private crowdDecision(i: number, dirX: number, dirY: number, dist: number, stop: number): CrowdDecision {
+    const e = this.movers[i];
+    let decision = this.crowdDecisions.get(e);
+    if (!decision) {
+      decision = {
+        group: this.crowdDecisionGroup++ % CROWD_DECISION_GROUPS,
+        stale: true, dirX, dirY, crowdSpacing: this.crowdSpacing, room: 1, side: e.sideBias,
+      };
+      this.crowdDecisions.set(e, decision);
+    }
+    // 近身保持逐帧响应；追击方向急转或间距设置变化也立即重算。
+    if (decision.stale ||
+        decision.group === this.crowdDecisionFrame ||
+        dist <= stop + APPROACH_BAND ||
+        dirX * decision.dirX + dirY * decision.dirY < 0.94 ||
+        decision.crowdSpacing !== this.crowdSpacing) {
+      decision.room = this.slotAhead(i, dirX, dirY, dist);
+      decision.side = this.slotSide;
+      decision.stale = false;
+      decision.dirX = dirX;
+      decision.dirY = dirY;
+      decision.crowdSpacing = this.crowdSpacing;
+    }
+    return decision;
+  }
 
   /**
    * 第 i 个敌人朝 (dirX, dirY) 还能直着走多少，0..1；顺带把该往哪边绕写进 slotSide。
