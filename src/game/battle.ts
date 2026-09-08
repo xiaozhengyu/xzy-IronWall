@@ -702,9 +702,12 @@ export class Battle {
    *
    * 注意它**不决定场上有多少人** —— 稳态是回收框定的（见 DESPAWN_MARGIN），出兵再快也只是更快
    * 顶到那条线。实测（grain 3 那一档视口下）x8 稳在 1335、x20 稳在 1465，差别很小。这个数真正
-   * 影响的是**多快填满**：默认 6 大约几十秒填满一屏，调到 1 要好几分钟。
+   * 影响的是**多快填满**：调到 1 要好几分钟才填满一屏。
+   *
+   * 默认直接顶满（MAX_SPAWN_BATCH）：这是一个割草游戏，开局前几十秒的空满不是节奏，是等待。
+   * 稳态人数仍然是回收框定的（见上一段），所以顶满不会把场上堆得更多。
    */
-  spawnBatch = 6;
+  spawnBatch = MAX_SPAWN_BATCH;
 
   private innerCrowdSpacing = CROWD_SPACING;
 

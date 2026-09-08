@@ -15,7 +15,7 @@ export class Camera {
   /** 下限放到 0.22 是为了让整片场地能塞进一屏 —— 那是调试用的全景，不是给玩家的视野。 */
   static readonly MIN_GRAIN = 0.22;
   static readonly MAX_GRAIN = 8;
-  static readonly DEFAULT_GRAIN = 4;
+  static readonly DEFAULT_GRAIN = 3.1;
   /** 出货时的放大倍数。和 DEFAULT_GRAIN 一起定义了"上线后玩家实际看到多大一块地"。 */
   static readonly DEFAULT_MAGNIFY = 2;
 
@@ -30,12 +30,13 @@ export class Camera {
    * 放大会让某些像素比邻居宽一格，那正是像素画最典型的抖动。
    *
    * grain 和 magnify 的乘积才是人在屏幕上的大小。想要"同样大小、更细的颗粒"就调高 grain、
-   * 调低 magnify。定下来的是 grain 4 / magnify 2：人 50 像素高，屏幕上 100 物理像素。
+   * 调低 magnify。定下来的是 grain 3.1 / magnify 2：人 38 像素高，屏幕上 77 物理像素。
    *
    * 注意这一对不只是观感 —— DEFAULT_GRAIN 同时定义了**出货视口有多大一块地**（见
-   * shipViewport），而出怪和回收都按那个框算。所以调它会连带改变场上养多少人：grain 3 时
-   * 视口是 320×328 个世界单位，grain 4 只有 240×246，面积剩 56%。改之前先跑
-   * `npm run figures` 看观感，改之后记得复核人群那几个数。
+   * shipViewport），而出怪和回收都按那个框算。所以调它会连带改变场上养多少人：grain 3.1
+   * 时视口是 310×317 个世界单位，grain 4 只有 240×246，面积差 1.66 倍 ——
+   * 也就是屏幕上同时要画多少个人。改之前先跑 `npm run figures` 看观感，
+   * 改之后跑 `npm run bench` 复核人群和帧耗那几个数。
    */
   magnify = 2;
 
