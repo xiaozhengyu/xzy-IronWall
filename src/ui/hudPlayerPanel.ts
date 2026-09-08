@@ -1,5 +1,6 @@
 import avatarFrameUrl from '../../assets/hud/role/avatar-frame.png';
 import experienceFrameUrl from '../../assets/hud/role/experience-bar-frame.png';
+import statusBarFrameUrl from '../../assets/hud/role/status-bar-frame.png';
 import { drawCharacterUpperBody } from '../characters/renderer';
 import type { Character } from '../game/character';
 import { v2 } from '../core/math';
@@ -204,8 +205,7 @@ export class HudPlayerPanel {
     clip.append(fill);
     const value = document.createElement('span');
     value.className = 'hud-text hud-text--pixel hud-player-status-value';
-    // 金边由 .hud-player-status-bar::after 的九宫格 border-image 画出来，不再挂整张贴图。
-    root.append(clip, value);
+    root.append(clip, value, this.createFrameImage(statusBarFrameUrl, 'hud-player-status-frame'));
     return { root, value };
   }
 

@@ -31,6 +31,7 @@
 }
 
 .hud-player-avatar-frame,
+.hud-player-status-frame,
 .hud-player-experience-frame {
   position: absolute;
   inset: 0;
@@ -67,30 +68,23 @@
 }
 
 /**
- * 金边改走九宫格，和 .hud-frame / .hud-progress-frame 用的是同一套 border-image。
+ * 金边和灵石进度条、技能栏一样，整张贴图随 HUD 一起等比缩放，不做任何按分辨率的取整。
  *
- * status-bar-frame.png 是从 status-bar-frame-square.png 切出来的 112×112 图集：
- * 去掉四周空白后金框外沿是 (192, 209)-(1062, 1045)，直边厚 16px，角花连同 45° 拼角
- * 最远伸到 44px，所以四角各取 52px，四边只各留 8px 中段（52 + 8 + 52 = 112），中心留空。
- * 角花按 border-image-width 等比缩放、四边只沿长度方向拉伸，不会再像整图拉伸那样
- * 把角花压扁、把描边拉出锯齿。
+ * status-bar-frame.png 是拿 status-bar-frame-square.png 重新拼的 1928×200：方框在原图里
+ * 是 (193, 209)-(1060, 1044)，直边厚 16px、花角到 46px 处收进直边，所以四角按原尺寸取
+ * 46×46 直接贴，四条直边取中间 1px 拉长补满。1928:200 就是血条自身的比例（347:36），
+ * 贴图铺满时不会被拉变形；200 的高度让直边占 8%、花角占 23%，和原来那张长条一致。
  */
 .hud-player-status-bar {
-  /* 描边厚度由 hud.ts 的 syncStatusFrameBorder 对齐到整数物理像素后写在 .hud 上，
-     所以这里只用 var 取、不在本层声明，否则本层声明会盖掉继承下来的值。8px 是兜底。 */
-  --hud-player-status-frame-border: var(--hud-player-status-border, 8px);
-  /* 52px 的切片里金边只占外侧 17px，内缘位置按同一比例换算。 */
-  --hud-player-status-rail: calc(var(--hud-player-status-frame-border) * 17 / 52);
-  /* 底槽裁到金边内缘；角上带一点圆角，跟着角花的内弧走。 */
-  --hud-player-status-shape: inset(
-    var(--hud-player-status-rail) round calc(var(--hud-player-status-rail) + 1px)
+  /* 直边中线在 4% / 96% / 0.4% / 99.6%，花角的斜切从 (2.28%, 4%) 走到 (0.4%, 22%)。
+     填充和底槽都裁成这个八边形：边缘整圈压在金边下面，直角也不会从花角外面探出来。 */
+  --hud-player-status-shape: polygon(
+    2.28% 4%, 97.72% 4%,
+    99.6% 22%, 99.6% 78%,
+    97.72% 96%, 2.28% 96%,
+    0.4% 78%, 0.4% 22%
   );
-  /* 填充再往里收 1px，让底槽的深色从金边和填充之间透出一圈黑边。
-     切图自带的那道黑线只有 2/52 个切片宽，缩到实际尺寸不足半个像素，靠它是看不出来的。 */
-  --hud-player-status-fill-shape: inset(
-    calc(var(--hud-player-status-rail) + 1px)
-    round calc(var(--hud-player-status-rail) + 2px)
-  );
+  --hud-player-status-fill-shape: var(--hud-player-status-shape);
 
   position: relative;
   grid-column: 2;
@@ -98,20 +92,6 @@
   min-height: 0;
   /* 这里不能用 overflow: hidden——裁剪框会按物理像素取整，整层缩放后正好把贴着
      下边沿的那条金边削掉一截，就是"下边框只有一半"的来源。文字自己裁自己。 */
-}
-
-.hud-player-status-bar::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  box-sizing: border-box;
-  border: var(--hud-player-status-frame-border) solid transparent;
-  border-image-source: url('../../assets/hud/role/status-bar-frame.png');
-  border-image-slice: 52;
-  border-image-width: var(--hud-player-status-frame-border);
-  border-image-repeat: stretch;
-  pointer-events: none;
 }
 
 .hud-player-status-clip {
