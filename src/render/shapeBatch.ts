@@ -59,6 +59,21 @@ export class ShapeBatch {
   private cy: number[] = [];
   private ex: number[] = [];
   private ey: number[] = [];
+  /**
+   * 朝向以**单位向量**存，不存角度。
+   *
+   * 一帧里三分之二的图元是旋转的（满屏六百人时约一万一千个，绝大多数是 bar 画出来的肢体
+   * 和甲片），而每一个原来要付两次三角函数：剔除时算一次包围盒，发射时算一次四个角。更冤
+   * 的是 bar —— 它手上本来就有单位方向 (dx/len, dy/len)，那正是 cos 和 sin，却先用 atan2
+   * 压成一个角度，再让 flush 用 cos/sin 解回来。一去一回三次超越函数，只为了搬运一个它一
+   * 开始就有的向量。
+   *
+   * 存成向量之后：bar 一次三角函数都不用，rect/ellipse 在提交时算一次，flush 一次都不算。
+   * 实测光是剔除那一处就占 flush 的四分之一。
+   */
+  private rcos: number[] = [];
+  private rsin: number[] = [];
+  /** 角度。只有椭圆用得上（PrimitiveSink.ellipse 收的是角度），四边形一律不读。 */
   private rot: number[] = [];
   private col: Rgba[] = [];
   private depth: number[] = [];
@@ -102,7 +117,9 @@ export class ShapeBatch {
     const dy = b.y - a.y;
     const len = Math.sqrt(dx * dx + dy * dy);
     if (len < 1e-4) return;
-    this.push(0, (a.x + b.x) * 0.5, (a.y + b.y) * 0.5, len * 0.5, thickness * 0.5, Math.atan2(dy, dx), color, depth);
+    // 方向除以长度就是单位向量，也就是这个矩形的 cos/sin —— 直接交出去，不绕角度。
+    this.emit(0, (a.x + b.x) * 0.5, (a.y + b.y) * 0.5, len * 0.5, thickness * 0.5,
+      0, dx / len, dy / len, color, depth);
   }
 
   /** 圆头的连线段：一根杆加两端的关节圆。 */
@@ -189,11 +206,19 @@ export class ShapeBatch {
   }
 
   /**
-   * 按深度排好序的下标。稳定基数排序，见 keys 上那段。
+   * 画面内的图元下标，按深度排好序。稳定基数排序，见 keys 上那段。
    *
    * 深度量化到 1/8，比一个图元的尺度细得多，不会改变可见顺序。
+   *
+   * **剔除并在这一趟里做完**，不是排完再挑。为了让贴着边界的东西不缺角，上游给的余量都
+   * 是宽的（人物剔除四边各留 16~30 个世界单位，地面细节留 40），所以提交上来的图元里有
+   * 四分之一落在缓冲外面 —— 实测 27246 个里有 6981 个（25.6%）。先排后挑等于拿这四分之
+   * 一陪跑完整趟基数排序。
+   *
+   * 而这一趟本来就要走一遍 n（算量化深度、取深度值域），把剔除并进来不多花任何一趟：
+   * 后面两轮基数排序和发射循环的规模直接少四分之一。
    */
-  private sortedOrder(n: number): Float64Array {
+  private sortedOrder(n: number, clipW: number, clipH: number): Float64Array {
     if (this.keys.length < n) {
       const capacity = Math.max(n, 4096, Math.ceil(this.keys.length * 1.5));
       this.keys = new Float64Array(capacity);
@@ -202,26 +227,45 @@ export class ShapeBatch {
     }
     const depth = this.depth;
     const quantized = this.quantizedDepth;
+    const keys = this.keys;
+    const clip = clipW > 0 && clipH > 0;
     let lo = Infinity;
     let hi = -Infinity;
+    // m 是活下来的个数；keys 前 m 个位置存它们的原始下标。quantized 仍然按**原始下标**
+    // 存，基数排序那几轮读的就是 quantized[source[i]]，不用跟着搬。
+    let m = 0;
     for (let i = 0; i < n; i++) {
+      if (clip) {
+        const ex = this.ex[i];
+        const ey = this.ey[i];
+        // 旋转矩形/椭圆的轴对齐包围盒。方向是存好的，这里没有三角函数，也不值得为
+        // "没转过"再分一次支 —— 那时 cos 是 1、sin 是 0，同一个式子照样算对。
+        const ca = Math.abs(this.rcos[i]);
+        const sa = Math.abs(this.rsin[i]);
+        const hx = ex * ca + ey * sa;
+        const hy = ex * sa + ey * ca;
+        const x = this.cx[i];
+        const y = this.cy[i];
+        if (x + hx < 0 || x - hx > clipW || y + hy < 0 || y - hy > clipH) continue;
+      }
       const q = Math.round(depth[i] * DEPTH_QUANT);
       quantized[i] = q;
+      keys[m++] = i;
       if (q < lo) lo = q;
       if (q > hi) hi = q;
     }
-    const keys = this.keys;
-    const order = keys.subarray(0, n);
+    this.lastCulled = n - m;
+    if (m === 0) return keys.subarray(0, 0);
+
     const span = hi - lo + 1;
     // 每轮只处理 11 位，用 2048 个桶；正常画幅两轮即可，不受远处特效的深度跨度影响。
     if (span <= 0x100000000) {
       const counts = this.depthCounts;
       let source = keys;
       let target = this.sortScratch;
-      for (let i = 0; i < n; i++) source[i] = i;
       for (let shift = 0; shift < 32 && 2 ** shift < span; shift += 11) {
         counts.fill(0);
-        for (let i = 0; i < n; i++) counts[((quantized[source[i]] - lo) >>> shift) & 2047]++;
+        for (let i = 0; i < m; i++) counts[((quantized[source[i]] - lo) >>> shift) & 2047]++;
         let offset = 0;
         for (let bucket = 0; bucket < counts.length; bucket++) {
           const count = counts[bucket];
@@ -229,7 +273,7 @@ export class ShapeBatch {
           offset += count;
         }
         // 从前往后放，保证等深图元仍按提交顺序。
-        for (let i = 0; i < n; i++) {
+        for (let i = 0; i < m; i++) {
           const index = source[i];
           target[counts[((quantized[index] - lo) >>> shift) & 2047]++] = index;
         }
@@ -237,15 +281,17 @@ export class ShapeBatch {
         source = target;
         target = previous;
       }
-      return source.subarray(0, n);
+      return source.subarray(0, m);
     }
     const bias = 1 - lo; // 键必须非负，取下标时才能用取模
     const indexSpan = Math.max(INDEX_SPAN, n);
-    for (let i = 0; i < n; i++) {
-      keys[i] = (quantized[i] + bias) * indexSpan + i;
+    const order = keys.subarray(0, m);
+    for (let i = 0; i < m; i++) {
+      const index = order[i];
+      order[i] = (quantized[index] + bias) * indexSpan + index;
     }
     order.sort();
-    for (let i = 0; i < n; i++) order[i] %= indexSpan;
+    for (let i = 0; i < m; i++) order[i] %= indexSpan;
     return order;
   }
 
@@ -259,40 +305,24 @@ export class ShapeBatch {
     const n = this.count;
     this.count = 0;
     if (n === 0) return;
-    const clip = clipW > 0 && clipH > 0;
-    let culled = 0;
-    const order = this.sortedOrder(n);
+    // 排序那一趟顺带把画面外的挑掉了，所以这里剩下的全是要画的。
+    const order = this.sortedOrder(n, clipW, clipH);
+    const visible = order.length;
 
-    for (let k = 0; k < n; k++) {
+    for (let k = 0; k < visible; k++) {
       const i = order[k];
       const x = this.cx[i];
       const y = this.cy[i];
       const ex = this.ex[i];
       const ey = this.ey[i];
-      const rot = this.rot[i];
-
-      if (clip) {
-        let hx = ex;
-        let hy = ey;
-        if (rot !== 0) {
-          const ca = Math.abs(Math.cos(rot));
-          const sa = Math.abs(Math.sin(rot));
-          hx = ex * ca + ey * sa;
-          hy = ex * sa + ey * ca;
-        }
-        if (x + hx < 0 || x - hx > clipW || y + hy < 0 || y - hy > clipH) {
-          culled++;
-          continue;
-        }
-      }
 
       const color = this.col[i];
       if (this.kind[i] === 0) {
-        if (rot === 0) {
+        const c = this.rcos[i];
+        const s = this.rsin[i];
+        if (s === 0 && c === 1) {
           mesh.quad(x - ex, y - ey, x + ex, y - ey, x + ex, y + ey, x - ex, y + ey, color);
         } else {
-          const c = Math.cos(rot);
-          const s = Math.sin(rot);
           const ux = c * ex;
           const uy = s * ex;
           const vx = -s * ey;
@@ -306,13 +336,12 @@ export class ShapeBatch {
           );
         }
       } else {
-        mesh.ellipse(x, y, ex, ey, rot, color);
+        mesh.ellipse(x, y, ex, ey, this.rot[i], color);
       }
     }
-
-    this.lastCulled = culled;
   }
 
+  /** 按角度提交。三角函数在这里算一次，之后整条路上不再有第二次。 */
   private push(
     kind: number,
     x: number,
@@ -323,6 +352,22 @@ export class ShapeBatch {
     color: Rgba,
     depth: number,
   ): void {
+    this.emit(kind, x, y, ex, ey, rot, Math.cos(rot), Math.sin(rot), color, depth);
+  }
+
+  /** 按单位方向向量提交。手上已经有方向的（bar）走这条，省掉 atan2。 */
+  private emit(
+    kind: number,
+    x: number,
+    y: number,
+    ex: number,
+    ey: number,
+    rot: number,
+    cos: number,
+    sin: number,
+    color: Rgba,
+    depth: number,
+  ): void {
     const i = this.count++;
     this.kind[i] = kind;
     this.cx[i] = x;
@@ -330,6 +375,8 @@ export class ShapeBatch {
     this.ex[i] = ex;
     this.ey[i] = ey;
     this.rot[i] = rot;
+    this.rcos[i] = cos;
+    this.rsin[i] = sin;
     this.col[i] = color;
     this.depth[i] = depth;
   }

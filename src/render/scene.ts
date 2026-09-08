@@ -119,6 +119,17 @@ export class Scene {
   private readonly itemLayer = new Container();
   private readonly itemSprites: Sprite[] = [];
 
+  /**
+   * 敌人走平涂档（见 characters/renderer.ts 的 lite）。
+   *
+   * 只给敌人，玩家永远画全 —— 他就一个，省不出什么，而他是玩家在人海里唯一要找的东西，
+   * 身上那圈轮廓光和完整的明暗正是为这件事存在的。
+   *
+   * 默认开着：同屏几百人时它把每人的图元数降三成，而这一块（算图元 + 深度排序 + 写顶点）
+   * 完全线性跟着图元数走。出货尺寸下对照过图，轮廓、部件、武器一个不少。L 键切回完整档。
+   */
+  liteEnemies = true;
+
   /** 上一帧的统计。游戏里不显示，暂停面板要读。 */
   primitives = 0;
   drawn = 0;
@@ -625,7 +636,12 @@ export class Scene {
     const palette = ironBreath === null
       ? c.palette
       : brightenPalette(c.palette, 0.1 + ironBreath * 0.16, IRON_BODY_GLOW);
-    drawCharacter(this.shapes, c.pose, p, palette, c.def, { hurt: c.hurt, lift: c.lift });
+    // rim 只有玩家会传，所以这一条同时也是"玩家不降档"。
+    drawCharacter(this.shapes, c.pose, p, palette, c.def, {
+      hurt: c.hurt,
+      lift: c.lift,
+      lite: this.liteEnemies && !rim,
+    });
   }
 
   /**

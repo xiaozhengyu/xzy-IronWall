@@ -258,6 +258,8 @@ function onKeyPressed(code: string): void {
     hud.cardsEnabled = !hud.cardsEnabled;
     if (!hud.cardsEnabled) hud.cards.hide();
   }
+  // 敌人平涂档：省掉每个部件那条硬边阴影带，图元数降三成。见 Scene.liteEnemies。
+  if (code === 'KeyL') scene.liteEnemies = !scene.liteEnemies;
   if (code === 'KeyF') battle.autoAttack = !battle.autoAttack;
   if (code === 'KeyJ') battle.cycleAttackSkill();
   const activeSlot = ACTIVE_SKILL_CODES.indexOf(code as (typeof ACTIVE_SKILL_CODES)[number]);

@@ -68,11 +68,32 @@ const SHIELD_TOP_Z = RigSpec.headZ - RigSpec.headRadius * 1.05;
  */
 export const tokenScale = { value: 0.45 };
 
+/**
+ * 平涂档：每个部件只画本体，不画那条硬边阴影带。
+ *
+ * 这是介于完整人物和色块之间的一档，为了帧率而存在。满屏几百人时，几何那一块（算图元 →
+ * 按深度排序 → 写顶点缓冲）是整帧开销的一半，而它三样全都线性跟着**图元数**走 —— 所以
+ * 唯一能动的就是每个人由多少个图元组成。
+ *
+ * 砍的是 slab/band/limb 各自那条阴影带，也就是本文件开头原则 1 里的"一块平涂 + 一条硬边
+ * 阴影"中的后半截。轮廓、比例、部件数一个不动，所以人还是同一个人，只是不再有那一档明暗。
+ * 每人 57~78 个图元降到 38~52，约三分之一。
+ *
+ * 代价是真实的：在出货尺寸（人 50 像素高）下肢体有八个像素宽，那条阴影带看得见。所以这
+ * 不是"免费的等价简化"，是一档换帧率的画质选项 —— 该不该开由外面定，这里只负责画。
+ *
+ * 用模块级开关而不是层层传参：slab/band/limb 有二十几处调用，而绘制是同步的、一个人画完
+ * 才画下一个，drawCharacter 进来时设一次就够。和上面的 tokenScale 是同一类东西。
+ */
+let lite = false;
+
 export interface DrawOptions {
   /** 刚挨打的两帧里盖在躯干上的白光，0..1。 */
   hurt?: number;
   /** 离地高度，世界单位。击飞时影子按它缩小变淡。 */
   lift?: number;
+  /** 平涂档：省掉每个部件那条硬边阴影带，图元数降三分之一。见 lite。 */
+  lite?: boolean;
   /**
    * 剪影模式：这一遍画的不是这个人，是他的轮廓。
    *
@@ -96,6 +117,7 @@ export function drawCharacter(
   const hurt = options.hurt ?? 0;
   const lift = options.lift ?? 0;
   const silhouette = options.silhouette ?? false;
+  lite = options.lite ?? false;
 
   if (p.scale < tokenScale.value) {
     drawToken(shapes, pose, p, palette, def, hurt);
@@ -347,6 +369,7 @@ function limb(shapes: ShapeBatch, a: Vec2, b: Vec2, w: number, mid: Rgba, dark: 
   if (dot2(n, ShapeBatch.LIGHT_DIR) > 0) n = v2(-n.x, -n.y);
 
   shapes.bar(a, b, w, mid, depth);
+  if (lite) return;
   const off = w * 0.33;
   shapes.bar(v2(a.x + n.x * off, a.y + n.y * off), v2(b.x + n.x * off, b.y + n.y * off), w * 0.34, dark, depth + 0.002);
 }
@@ -385,6 +408,7 @@ function slab(
   // 两个值，不是三个。中间色铺满板面，阴影是背光侧的一条硬边；原来的第三条带是一像素宽
   // 的高光，最后总会被平均回另外两个值里去。
   shapes.bar(a, b, w, mid, depth);
+  if (lite) return;
   const o1 = w * 0.33;
   shapes.bar(v2(a.x - n.x * o1, a.y - n.y * o1), v2(b.x - n.x * o1, b.y - n.y * o1), w * 0.34, shadowColor, depth + 0.002);
 
@@ -412,6 +436,7 @@ function band(
   if (dot2(along, ShapeBatch.LIGHT_DIR) < 0) along = v2(-along.x, -along.y);
 
   shapes.rect(center, width, height, across, color, depth);
+  if (lite) return;
   const o = width * 0.34;
   shapes.rect(v2(center.x - along.x * o, center.y - along.y * o), width * 0.32, height, across, shade(color, 0.72), depth + 0.001);
 }
