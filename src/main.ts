@@ -1,18 +1,27 @@
 import { Application } from 'pixi.js';
 import { RigSpec } from './characters/rig';
-import { Battle, PlayerPresets, playerPresetDisplayName } from './game/battle';
+import { PALETTE_HERO } from './characters/palette';
+import { Battle, HUMAN_PACE, PLAYER_RUN_SPEED, PLAYER_SPEED, PlayerPresets, playerPresetDisplayName } from './game/battle';
+import { Character } from './game/character';
+import { GameMaps, type GameMapDef } from './game/maps';
+import { Roster, heroUnitDef, type HeroDef } from './game/roster';
 import { Skills } from './game/skills';
 import { ACTIVE_SKILL_CODES, type ActiveSkillSlot } from './game/skillLoadout';
 import { Field } from './game/field';
 import { ItemCatalog } from './items/catalog';
 import { ItemSheet } from './items/renderer';
+import { v2 } from './core/math';
 import { Camera } from './render/camera';
+import type { StageFigure } from './render/scene';
 import { Projection } from './render/projection';
 import { Scene } from './render/scene';
+import { Props } from './world/props';
+import { Terrain } from './world/terrain';
 import type { WeatherKind } from './world/weather';
 import { Controls } from './ui/controls';
 import { Hud } from './ui/hud';
 import { Menu } from './ui/menu';
+import { SetupScreen, type SetupMarker, type SetupStep } from './ui/setup';
 import './style.css';
 
 /**
@@ -32,16 +41,17 @@ import './style.css';
 // ---------------------------------------------------------------- 状态
 
 /**
- * 游戏的四个状态。
+ * 游戏的五个状态。
  *
- *   loading —— 在烘地面，面板上是进度条。
- *   title   —— 烘完了，等玩家点击开始。
- *   playing —— 世界在跑。
- *   paused  —— ESC、暂停按钮或失去窗口焦点。
+ *   loading  —— 在烘地面，面板上是进度条。
+ *   setup    —— 备战：选角色 → 选地图。烘完就直接进这里，没有单独的标题页。
+ *   entering —— 按下开始之后那一小段：界面盖着"正在进入"，底下在换角色、清场、铺人。
+ *   playing  —— 世界在跑。
+ *   paused   —— ESC、暂停按钮或失去窗口焦点。
  *
  * Controls 统一切换运行状态；鼠标始终使用普通屏幕坐标，暂停不移动光标。
  */
-type GameState = 'loading' | 'title' | 'playing' | 'paused';
+type GameState = 'loading' | 'setup' | 'entering' | 'playing' | 'paused';
 let state: GameState = 'loading';
 
 /** 场地：正方形，边长 1200 个世界单位 —— 一个人 19 单位高，所以是六十三个人宽。 */
@@ -203,7 +213,7 @@ const controls = new Controls(app.canvas as HTMLCanvasElement, camera, {
   onKey: (code) => onKeyPressed(code),
   onActiveChange: (active) => {
     if (active) {
-      if (state === 'title' || state === 'paused') {
+      if (state === 'paused') {
         state = 'playing';
         menu.hide();
       }
@@ -214,7 +224,8 @@ const controls = new Controls(app.canvas as HTMLCanvasElement, camera, {
       menu.showPause();
     }
   },
-  canActivate: () => state !== 'loading',
+  // 备战界面盖在画布上，点它不该把游戏"继续"起来 —— 那时候还没选完地图。
+  canActivate: () => state === 'playing' || state === 'paused',
 });
 
 // ---------------------------------------------------------------- 命令表
@@ -235,6 +246,10 @@ let showItems = false;
  * 键盘和菜单走同一张表，所以两条路的行为不会分岔 —— 详见 Menu 的 press 那段注释。
  */
 function onKeyPressed(code: string): void {
+  // 备战界面上一个调试键都不认：那些开关全是对着战场的，而战场还没开始。Shift 不走这条路
+  // （跑步读的是 Controls 自己的按键集合），所以试练地上照样能跑。
+  if (state === 'setup' || state === 'entering') return;
+
   if (code === 'Space') battle.swingNow();
   if (code === 'KeyK') showSkeleton = !showSkeleton;
 
@@ -243,15 +258,15 @@ function onKeyPressed(code: string): void {
   //
   // 载入期间直接不认这个键：那时候按下去，开关翻了但一帧都画不出来，等启动结束那次 draw
   // 就会画成图鉴而不是战场 —— 玩家只看到一屏对不上的东西，还不知道自己按过什么。
-  if (code === 'KeyI' && state !== 'loading') {
+  //
+  // 只在打仗和暂停时认。备战界面盖着整块画布，那时候翻开关只会把图鉴画在看不见的地方。
+  if (code === 'KeyI' && (state === 'playing' || state === 'paused')) {
     showItems = !showItems;
-    // 开始画面也能看：想核对一件东西画成什么样，不该逼人先开一局再暂停。
-    if (state === 'paused' || state === 'title') {
+    if (state === 'paused') {
       if (showItems) menu.showGallery(galleryCount());
-      else if (state === 'paused') menu.showPause();
-      else menu.showTitle();
+      else menu.showPause();
     }
-    // 暂停和开始画面都没有帧在跑，这一下得自己补一帧，和改颗粒度、拖窗口是同一个道理。
+    // 暂停时没有帧在跑，这一下得自己补一帧，和改颗粒度、拖窗口是同一个道理。
     draw();
   }
   // 升级卡牌。开关本身放在 HUD 上（弹不弹是它自己的事），这里只负责翻它。
@@ -308,7 +323,9 @@ function onKeyPressed(code: string): void {
   if (hud.cards.open && digit >= 1 && hud.cards.choose(digit - 1)) return;
   if (state === 'playing' && digit >= 1 && digit <= 4) {
     hud.useItem(digit - 1);
-  } else if (state !== 'playing' && digit >= 1 && digit <= PlayerPresets.length) {
+  } else if (state === 'paused' && digit >= 1 && digit <= PlayerPresets.length) {
+    // 调试用的那一排形象。正经的选人在备战界面里（见 ui/setup.ts），这里能翻到八个全部
+    // 预设，包括杂兵和弓手这些本来就不给玩家选的。
     battle.setPreset(digit - 1);
     // 暂停时主循环不跑；菜单换角色后主动补一帧，让名称和头像当场同步。
     draw();
@@ -327,6 +344,18 @@ let lastFps = 0;
  * if 的话，暂停时改一档颗粒度、拖一下窗口，画面就再也刷不出来了。
  */
 app.ticker.add((ticker) => {
+  // 备战界面：世界冻着，动的只有中间那一块 —— 选人时是试练地上那个人，选图时是底下那排敌人。
+  if (state === 'setup' || state === 'entering') {
+    const dt = Math.min(ticker.deltaMS / 1000, 1 / 20);
+    if (setup.showsHeroStage) {
+      updatePreview(dt);
+      drawHeroStage();
+    } else if (setup.showsFoeStage) {
+      updateFoes(dt);
+      drawFoeStage();
+    }
+    return;
+  }
   if (state !== 'playing') return;
   lastFps = ticker.FPS;
   layout();
@@ -346,7 +375,13 @@ app.ticker.add((ticker) => {
 
 // 开始画面和暂停时没有帧在跑，窗口尺寸变了得自己补一帧，否则画面会一直停在旧尺寸那张图上。
 addEventListener('resize', () => {
-  if (state === 'title' || state === 'paused') {
+  if (state === 'setup' || state === 'entering') {
+    scene.resize(app.screen.width, app.screen.height, app.renderer.resolution);
+    if (setup.showsHeroStage) drawHeroStage();
+    else if (setup.showsFoeStage) drawFoeStage();
+    return;
+  }
+  if (state === 'paused') {
     layout();
     draw();
   }
@@ -403,6 +438,326 @@ function draw(): void {
   });
 }
 
+// ---------------------------------------------------------------- 备战
+
+/**
+ * 选图那一步底下那排敌人有多大：就是出货那一档，和进游戏之后**一模一样**。
+ *
+ * 那一排要回答的是"我会遇到谁"，而认人靠的是轮廓，轮廓要在他真实的尺寸下才算数。
+ */
+const FOE_GRAIN = Camera.DEFAULT_GRAIN;
+
+/**
+ * 试练地上那个人比出货尺寸大多少。
+ *
+ * 敌人那一排要的是"和场上一样"，这里要的是另一件事：看清自己带的这个人 —— 头盔、肩甲、
+ * 武器怎么握、披风怎么甩。出货尺寸下他只有三十八个像素高，这些全糊在一起。
+ *
+ * 1.5 倍先把他放到看得清装备的档位，再加两成 —— 中栏空得下，而这一步的全部意义就是看清他。
+ * 更早试过三倍半，那太远了：放大到那个程度，选人时看到的和真打起来看到的不是一个东西。
+ *
+ * 地块半径写的是世界单位（见 figureStage.ts），所以它跟着一起放大，比例不变。
+ */
+const HERO_STAGE_ZOOM = 1.5 * 1.2;
+const HERO_GRAIN = Camera.DEFAULT_GRAIN * HERO_STAGE_ZOOM;
+
+/**
+ * 选人那一台的地块单独放宽，**人不跟着变**。
+ *
+ * 地块和人的那个 1.5 倍是给敌人那一排定的（见 figureStage.ts 的 STAGE_TILE_RADIUS）：小格子
+ * 里地紧一点才不显得空。中间这一台不一样 —— 人在上面走，脚下这块地是玩家真正会盯着看的
+ * 一块，宽出去的部分给的是草流动的余地。两次各加两成，合起来 1.44。
+ */
+const HERO_TILE_ZOOM = 1.2 * 1.2;
+/** 敌人和头像侧过来一点。正对镜头时武器在身体正前方，被自己挡掉一半。 */
+const PREVIEW_TURN = 0.38;
+
+/**
+ * 站在试练地上的那个人。
+ *
+ * 用一个真的 Character 而不是自己搭一份姿势：待机的呼吸、走和跑的步态、武器怎么握、披风
+ * 怎么甩，全在 CharacterAnimator 里，重写一份迟早和场上那个人长得不一样。走和跑的速度也
+ * 直接用战斗那两档 —— 这里试出来的手感就是进去之后的手感。
+ */
+const preview = new Character(heroUnitDef(Roster[0]), PALETTE_HERO, HUMAN_PACE);
+preview.facing = Math.PI * 0.5;
+
+/**
+ * 光标在试练地上的位置（缓冲像素）、按住了没有，以及走过的路。
+ *
+ * aiming 只在光标**落在那个框里**的时候为真。整屏都能转向的话，玩家在右栏读技能说明时，
+ * 中间那个人会跟着鼠标转圈 —— 那不是他在做的事。
+ */
+const stage = { x: 0, y: 0, aiming: false, moving: false, scrollX: 0, scrollY: 0 };
+
+/**
+ * 把一个 DOM 框换算成缓冲坐标。
+ *
+ * 画布和界面是**同一个** 16:9 的框（.game-viewport 和 .setup 用的是同一组 min() 尺寸），
+ * 所以两者之间只差一个等比缩放。让画布跟着 DOM 走，而不是两边各写一套百分比 —— 后者换个
+ * 窗口尺寸或者改一次 CSS 就会错位，而错位的表现是"人从框里跑出来"，很难查。
+ */
+function boxToBuffer(node: HTMLElement) {
+  const view = app.canvas.getBoundingClientRect();
+  const box = node.getBoundingClientRect();
+  const kx = camera.viewWidth / Math.max(1, view.width);
+  const ky = camera.viewHeight / Math.max(1, view.height);
+  return {
+    x: (box.left - view.left) * kx,
+    y: (box.top - view.top) * ky,
+    w: box.width * kx,
+    h: box.height * ky,
+  };
+}
+
+/** 地块中心落在缓冲的哪个像素上。0.62 是在框里留出头顶的地方：人是从脚往上画的。 */
+function stageAnchor() {
+  const box = boxToBuffer(setup.heroStage);
+  return v2(Math.round(box.x + box.w * 0.5), Math.round(box.y + box.h * 0.62));
+}
+
+/** 把一次鼠标事件换算成缓冲坐标。和 Controls.syncCursor 是同一笔换算。 */
+function trackStagePointer(event: MouseEvent): void {
+  const view = app.canvas.getBoundingClientRect();
+  stage.x = ((event.clientX - view.left) / Math.max(1, view.width)) * camera.viewWidth;
+  stage.y = ((event.clientY - view.top) / Math.max(1, view.height)) * camera.viewHeight;
+  stage.aiming = true;
+}
+
+/**
+ * 试练地上的一帧：转向、走、跑。
+ *
+ * 和战斗里那套输入是同一个形状 —— 朝向跟着光标，按住左键往那个方向走，Shift 是跑。区别只有
+ * 一处：**人不动，草动**。走的距离累加到 scroll 上，草丛按它的反方向流过去。
+ *
+ * 跑步状态直接读 Controls：它的键盘监听挂在 window 上，备战界面盖着画布也照样收得到 Shift。
+ */
+function updatePreview(dt: number): void {
+  const anchor = stageAnchor();
+  if (stage.aiming) {
+    const dx = stage.x - anchor.x;
+    // 屏幕纵向是被压扁过的，除回去才是地面上的方向 —— 和 Camera.aimAngle 同一笔账。
+    const dy = (stage.y - anchor.y) / Projection.groundSquash;
+    if (Math.hypot(dx, dy) > 1) preview.facing = Math.atan2(dy, dx);
+  }
+  preview.speed = stage.moving ? (controls.running ? PLAYER_RUN_SPEED : PLAYER_SPEED) : 0;
+  stage.scrollX += Math.cos(preview.facing) * preview.speed * dt;
+  stage.scrollY += Math.sin(preview.facing) * preview.speed * dt;
+  preview.update(dt, true);
+}
+
+function drawHeroStage(): void {
+  scene.drawStages(field, [
+    {
+      actor: preview,
+      at: stageAnchor(),
+      grain: HERO_GRAIN,
+      scrollX: stage.scrollX,
+      scrollY: stage.scrollY,
+      tileScale: HERO_TILE_ZOOM,
+    },
+  ]);
+}
+
+/**
+ * 选图那一步底下那排敌人。
+ *
+ * 他们要走要挥：走是把 speed 给上去（人本身不挪窝，动的只有步态），挥是每隔几秒 swing 一次，
+ * 各人错开，免得五个人整整齐齐一起抬手 —— 那读作一排提线木偶。
+ */
+const foeActors: Character[] = [];
+/** 每个敌人各自走了多远。他们各走各的方向，草也就各流各的。 */
+const foeScroll: { x: number; y: number }[] = [];
+let foeMapId = '';
+
+function syncFoeActors(map: GameMapDef): void {
+  if (foeMapId === map.id) return;
+  foeMapId = map.id;
+  foeActors.length = 0;
+  foeScroll.length = 0;
+  map.foes.forEach((foe, i) => {
+    const actor = new Character(foe.def, foe.palette, HUMAN_PACE);
+    actor.facing = Math.PI * 0.5 + PREVIEW_TURN;
+    // 走给一半的速度：台子上的人是在"走给你看"，不是在冲锋。
+    actor.speed = HUMAN_PACE;
+    actor.attackCooldown = 0.6 + i * 0.45;
+    foeActors.push(actor);
+    foeScroll.push({ x: 0, y: 0 });
+  });
+}
+
+function updateFoes(dt: number): void {
+  foeActors.forEach((actor, i) => {
+    if (actor.attack < 0 && actor.attackCooldown <= 0) actor.swing(2.2 + Math.random() * 1.4);
+    actor.update(dt, true);
+    // 挥击那一下站住不动：一边挥一边脚下的草还在往后跑，读起来像踩着传送带打人。
+    const speed = actor.attack >= 0 ? 0 : actor.speed;
+    foeScroll[i].x += Math.cos(actor.facing) * speed * dt;
+    foeScroll[i].y += Math.sin(actor.facing) * speed * dt;
+  });
+}
+
+function drawFoeStage(): void {
+  const slots = setup.foeSlots;
+  const stages: StageFigure[] = [];
+  for (let i = 0; i < foeActors.length && i < slots.length; i++) {
+    const box = boxToBuffer(slots[i]);
+    stages.push({
+      actor: foeActors[i],
+      // 地块中心落在格子偏下的位置：人从脚往上画，头顶那一半留给他和他举起来的武器。
+      at: v2(Math.round(box.x + box.w * 0.5), Math.round(box.y + box.h * 0.74)),
+      grain: FOE_GRAIN,
+      scrollX: foeScroll[i].x,
+      scrollY: foeScroll[i].y,
+    });
+  }
+  scene.drawStages(field, stages);
+}
+
+/** 一个角色的头像。列表和底栏都要，画一次存着，见 SetupScreen.portraitOf。 */
+function heroPortrait(hero: HeroDef): HTMLCanvasElement | null {
+  const model = new Character(heroUnitDef(hero), PALETTE_HERO, HUMAN_PACE);
+  model.facing = Math.PI * 0.5 + PREVIEW_TURN;
+  // 走几帧把姿势搭出来 —— 没跑过 update 的骨架是一堆零。
+  for (let i = 0; i < 20; i++) model.update(1 / 60, true);
+  // 64 见方，脚落在纹理下沿之外 —— 于是画面从胸口往上截断，头盔、肩甲和武器都在。
+  return scene.renderPortrait(model.pose, model.def, PALETTE_HERO, 64, 64, 6.5, 91, model.facing);
+}
+
+/**
+ * 这张地图对应的地形。
+ *
+ * 就是当前这块场地时直接用它 —— 生成一份地形要几十毫秒，而这一份已经烘在画面上了。
+ * 换成别的图时才现生成一份，那时它本来就还没存在。
+ */
+function terrainOf(map: GameMapDef): Terrain {
+  if (map.width === field.width && map.height === field.height && map.seed === FIELD_SEED) {
+    return field.terrain;
+  }
+  return new Terrain(map.width, map.height, map.seed);
+}
+
+/** 地图底图烘一次就存着：一张四百乘二百二的 RGBA，烘一次几十毫秒。 */
+const mapPixels = new Map<string, ImageData | null>();
+
+function mapImageData(map: GameMapDef): ImageData | null {
+  if (!mapPixels.has(map.id)) {
+    // 天气传 null：卡片上该是这块地本来的样子，不该跟着局内下不下雪变。
+    const baked = terrainOf(map).bakeGround(null);
+    const pixels = new ImageData(new Uint8ClampedArray(baked.data), baked.texWidth, baked.texHeight);
+    mapPixels.set(map.id, pixels);
+  }
+  return mapPixels.get(map.id) ?? null;
+}
+
+/** 每次给一张新画布：一张画布只能挂在 DOM 的一个地方，而缩略图和详图都要用。 */
+function mapCanvas(map: GameMapDef): HTMLCanvasElement | null {
+  const pixels = mapImageData(map);
+  if (!pixels) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = pixels.width;
+  canvas.height = pixels.height;
+  canvas.getContext('2d')?.putImageData(pixels, 0, 0);
+  return canvas;
+}
+
+/**
+ * 地图上标出来的点，坐标归一化到 0..1。
+ *
+ * 营地是**真的**营地坐标：Props.place 是确定性的（同一份地形、同一个种子摆在同一处），
+ * 所以这里重新摆一遍拿到的就是进去之后看到的那几处。
+ */
+function mapMarkers(map: GameMapDef): SetupMarker[] {
+  const props = new Props();
+  props.place(terrainOf(map), 4);
+  const marks: SetupMarker[] = [
+    { u: 0.5, v: 0.5, label: '进入位置', kind: 'start' },
+  ];
+  for (const prop of props.list) {
+    marks.push({ u: prop.x / map.width, v: prop.y / map.height, label: '营地', kind: 'camp' });
+  }
+  return marks;
+}
+
+/** 换角色：形象 + 那一套默认技能。数值还没有，所以只有这两样。 */
+function applyHero(hero: HeroDef): void {
+  battle.setPreset(hero.preset);
+  battle.skillLoadout.apply(hero.skills);
+}
+
+/**
+ * 按下开始之后。
+ *
+ * 先把状态推到 entering 再让出一帧：换角色、清场、重新铺一批人加起来是看得见的一段卡顿，
+ * 而"正在进入"那一层是 DOM，得等浏览器画一帧才出现。顺序反过来的话玩家盯着的是一个卡住
+ * 不动的选图界面。
+ */
+function enterMap(hero: HeroDef, map: GameMapDef): void {
+  state = 'entering';
+  requestAnimationFrame(() =>
+    setTimeout(() => {
+      applyHero(hero);
+      field.weather.kind = map.weather;
+      // 换地图本来还要重烘地面（Field 就是宽、高、种子三个数），但目前只有一张图，而它正是
+      // 启动时烘好的那一份。加第二张图时，这里要多一步重建 Field 并重跑烘制那一段进度条。
+      battle.reset(viewOf());
+      layout();
+      // 零步长跑一次，让每个人先把姿势搭出来 —— 和开场那一次是同一个道理。
+      battle.update(0, readInput(), viewOf());
+      state = 'playing';
+      setup.hide();
+      hud.setVisible(true);
+      draw();
+      controls.resume();
+    }, 0),
+  );
+}
+
+const setup = new SetupScreen(
+  {
+    heroes: Roster,
+    maps: GameMaps,
+    portrait: heroPortrait,
+    mapImage: mapCanvas,
+    markers: mapMarkers,
+    onHeroChange: (hero) => {
+      preview.def = heroUnitDef(hero);
+      drawHeroStage();
+    },
+    onMapChange: (map) => {
+      syncFoeActors(map);
+      drawFoeStage();
+    },
+    onStepChange: (step: SetupStep) => {
+      if (step === 'hero') {
+        drawHeroStage();
+        return;
+      }
+      // 选图那一步画布上换成底下那排敌人。人物台的那块地必须擦掉，不然它会从详图边上露出来。
+      syncFoeActors(setup.currentMap);
+      drawFoeStage();
+    },
+    onStart: enterMap,
+  },
+  menu.text,
+);
+
+// 试练地的鼠标**只挂在那个框上**：光标出了框就不再转向，也不该在读右栏技能说明的时候
+// 把中间那个人拽得团团转。松手挂在 window 上 —— 按下之后拖出框外再松手，也得停下来。
+setup.heroStage.addEventListener('mousemove', (event) => trackStagePointer(event));
+setup.heroStage.addEventListener('mouseleave', () => {
+  stage.aiming = false;
+  stage.moving = false;
+});
+setup.heroStage.addEventListener('mousedown', (event) => {
+  if (event.button !== 0) return;
+  trackStagePointer(event);
+  stage.moving = true;
+});
+addEventListener('mouseup', (event) => {
+  if (event.button === 0) stage.moving = false;
+});
+
 // ---------------------------------------------------------------- 开场
 
 layout();
@@ -421,6 +776,9 @@ bootDone += FIELD_WEIGHT;
 battle.update(0, readInput(), viewOf());
 draw();
 
-// 加载结束，点击开始后由 Controls 把状态推进到 playing。
-state = 'title';
-menu.showTitle();
+// 加载结束，直接进备战界面 —— 中间不再插一页只有"开始游戏"一个按钮的标题页，那一页
+// 除了多一次点击什么也没给。"铁壁"这块招牌搬到了备战界面的顶栏上。
+state = 'setup';
+menu.hide();
+hud.setVisible(false);
+setup.show();

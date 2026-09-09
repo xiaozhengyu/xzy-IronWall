@@ -48,7 +48,7 @@ import {
  * 和斗篷的甩动。它描述的是身体，不是游戏手感，所以调玩家速度时不要动它 —— 移动速度翻倍
  * 之后，人相对这个基准就是在跑，斗篷和步幅会自己跟上去。
  */
-const HUMAN_PACE = 16;
+export const HUMAN_PACE = 16;
 
 /**
  * 突进的两个常量。
@@ -108,9 +108,14 @@ const LUNGE_BODY_MARGIN = 13;
  * Character 的 HIT_FREEZE）。同样的冲击感，一分钱不从玩家的时间里出。
  */
 
-/** 玩家的基础移动速度，以及按住 Shift 的速度。 */
-const PLAYER_SPEED = 32;
-const PLAYER_RUN_SPEED = 60;
+/**
+ * 玩家的基础移动速度，以及按住 Shift 的速度。
+ *
+ * 导出是给备战界面那块试练地用的：那里的人也是走同一套走/跑，速度各写一份的话，"选人时
+ * 试出来的手感"和"进去之后的手感"迟早会是两回事。
+ */
+export const PLAYER_SPEED = 32;
+export const PLAYER_RUN_SPEED = 60;
 /**
  * 找空位时往前看多远（按两人该有的间距的倍数），以及绕行时切向分量给到多少。
  *

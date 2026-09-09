@@ -286,6 +286,16 @@ export class Hud {
     document.documentElement.classList.remove('game-pointer-active');
   }
 
+  /**
+   * 备战界面期间收起来。
+   *
+   * HUD 上每一格说的都是"这一局打得怎么样"：血、蓝、灵石、波次。选人的时候一局还没开始，
+   * 那些数字要么是零要么是上一局留下的，摆着只会让人以为已经在打了。
+   */
+  setVisible(on: boolean): void {
+    this.root.hidden = !on;
+  }
+
   draw(field: Field, battle: Battle, camera: Camera): void {
     this.playerInfo.setHealth(Math.max(0, Math.ceil(battle.player.hp)), battle.player.maxHp);
     // 波次面板：三个数都自己判重，值没变时一个 DOM 节点也不会碰。

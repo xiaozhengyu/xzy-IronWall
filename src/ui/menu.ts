@@ -7,11 +7,14 @@ import { HudText } from './text/hudText';
 import type { WeatherKind } from '../world/weather';
 
 /**
- * 加载条 + 开始 + 暂停，三样东西共用一块面板。
+ * 加载条 + 暂停，两样东西共用一块面板。
  *
- * 合成一块是因为它们本来就是同一件事的三个阶段：开局要先烘完地面（加载），再等玩家点一下
- * 开始游戏，ESC 或窗口失焦时回到暂停面板。三者的区别只是
- * 主按钮上写什么、以及下面那半屏数据要不要显示 —— 拆成三个面板会得到三份一模一样的布局。
+ * 合成一块是因为它们本来就是同一件事的两个阶段：开局要先烘完地面（加载），ESC 或窗口失焦时
+ * 回到暂停面板。两者的区别只是主按钮上写什么、以及下面那半屏数据要不要显示 —— 拆成两个面板
+ * 会得到两份一模一样的布局。
+ *
+ * 原来这里还有第三个阶段"准备开始"：烘完之后停在一个只有一个按钮的标题页上。那一页现在被
+ * 备战界面（ui/setup.ts）取代了 —— 加载完直接进选人。
  *
  * 顺带把原来钉在左上角的 HUD 收了进来。那行字在游戏里一直亮着，而它上面的东西 —— 帧率、
  * 图元数、键位表 —— 没有一样是玩家在挥锤子的时候需要读的。收进来之后游戏画面里一个字都没有。
@@ -148,6 +151,8 @@ export class Menu {
   private readonly spins: Record<string, HTMLElement> = {};
   /** 技能那一行下面的说明，跟着当前选中的技能变。 */
   private skillNote = el('div');
+  /** 键位表那一条。加载时收起来 —— 那时候一个键都还按不了。 */
+  private readonly keysBox = el('div');
 
 
   constructor(bridge: MenuBridge, text: HudText = new HudText()) {
@@ -166,27 +171,17 @@ export class Menu {
   showLoading(label: string, progress: number): void {
     this.root.hidden = false;
     this.setPeek(false);
-    this.mode.textContent = '载入中';
+    this.mode.textContent = '正在加载游戏资源…';
     this.loading.hidden = false;
     this.startBox.hidden = true;
     this.detail.hidden = true;
+    // 加载就是加载：进度条以外什么都不摆。键位表在这个时候一个键都还按不了，摆出来只是
+    // 让人以为已经能操作了。
+    this.keysBox.hidden = true;
     this.loadLabel.textContent = label;
     const pct = Math.round(progress * 100);
     this.loadPercent.textContent = `${pct}%`;
     this.barFill.style.width = `${pct}%`;
-  }
-
-  showTitle(): void {
-    this.root.hidden = false;
-    this.setPeek(false);
-    this.mode.textContent = '准备开始';
-    this.loading.hidden = true;
-    this.startBox.hidden = false;
-    // 开始画面上不摆数据：一局还没打，击杀和帧时间全是零，摆出来只是噪声。键位表留着 ——
-    // 那是这个时候唯一真正有用的东西。
-    this.detail.hidden = true;
-    this.startButton.textContent = '开始游戏';
-    this.startButton.disabled = false;
   }
 
   showPause(): void {
@@ -198,6 +193,7 @@ export class Menu {
     this.detail.hidden = false;
     this.startButton.textContent = '继续游戏';
     this.startButton.disabled = false;
+    this.keysBox.hidden = false;
     this.refresh();
   }
 
@@ -332,8 +328,6 @@ export class Menu {
     this.buildControls(this.detail);
     card.appendChild(this.detail);
 
-    card.appendChild(el('div', 'menu-rule'));
-
     // ---- 图鉴那条窄栏
     //
     // 挂在 root 上而不是卡片里：图鉴状态下卡片整个是收起来的，挂在里面就跟着一起没了。
@@ -342,11 +336,13 @@ export class Menu {
     this.peek.appendChild(this.button('返回菜单', 'I', 'KeyI'));
     this.root.appendChild(this.peek);
 
+    this.keysBox.appendChild(el('div', 'menu-rule'));
     const keys = el('div', 'menu-keys');
     keys.innerHTML =
       '<b>按住左键</b> 移动 · <b>Shift</b> 跑 · <b>空格</b> 挥击 · <b>Q/W/E/R</b> 主动技能 · ' +
       '<b>J</b> 换自动攻击 · <b>O/P</b> 上下一波 · <b>\\</b> 末波压测 · <b>滚轮</b> 缩放 · <b>I</b> 物品图鉴 · <b>ESC</b> 暂停';
-    card.appendChild(keys);
+    this.keysBox.appendChild(keys);
+    card.appendChild(this.keysBox);
   }
 
   private buildControls(parent: HTMLElement): void {

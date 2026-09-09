@@ -1,0 +1,613 @@
+/*
+ * 备战界面。和暂停面板同一套配色和字体 —— 这两块是玩家在同一个游戏里看到的两块界面，
+ * 长得不像会读成两个软件。
+ *
+ * 布局只有一条硬规则：左中右 22% / 48% / 30%，右下角主按钮固定在同一个位置。两步之间只换
+ * 内容不换骨架，玩家的视线路径因此始终是「左边挑 → 中间看 → 右下角按」。
+ */
+
+.setup {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: min(100vw, 177.7778vh);
+  height: min(100vh, 56.25vw);
+  aspect-ratio: 16 / 9;
+  transform: translate(-50%, -50%);
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, 'Microsoft YaHei', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #cdd5e4;
+  user-select: none;
+  /*
+   * 整个界面框的高度。要和画布对齐的元素按它取尺寸，而不是写死像素 —— 画布是一张固定
+   * 960×540 的缓冲，写死像素的话，窗口一大，框里的人就跟着缩水（框是 CSS 像素，人是缓冲
+   * 像素，两者只有按这个比例给才同步）。
+   */
+  --frame-h: min(100vh, 56.25vw);
+  /*
+   * 中间那一栏必须**完全透明**。
+   *
+   * 原来这里给了 0.22 的一层暗色，想着"压一压背景"，结果压的是人 —— 模型画在画布上，而这
+   * 一层盖在画布之上，于是那个人整个蒙着一层灰，一眼就看得出被什么东西挡着。左右两栏才是
+   * 需要底色的地方，中间只借画布。
+   */
+  background:
+    linear-gradient(90deg, rgba(11, 13, 18, 0.94) 0%, rgba(11, 13, 18, 0.9) 20%, rgba(11, 13, 18, 0) 30%,
+      rgba(11, 13, 18, 0) 68%, rgba(11, 13, 18, 0.9) 76%, rgba(11, 13, 18, 0.94) 100%);
+}
+
+.setup[hidden] {
+  display: none;
+}
+
+/*
+ * hidden 要能压住 display。
+ *
+ * 浏览器自带的 [hidden] { display: none } 权重最低，任何一条给了 display 的类选择器都会把它
+ * 顶掉 —— 于是 el.hidden = true 的元素照样画在那儿。这一条踩过：从选图返回选人时，地图详图
+ * 和人物模型叠在了一起。
+ */
+.setup [hidden] {
+  display: none !important;
+}
+
+/* ---------------------------------------------------------------- 顶栏 */
+
+.setup-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 20px 10px;
+  background: rgba(11, 13, 18, 0.9);
+  border-bottom: 1px solid #232a38;
+}
+
+.setup-top-l {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.setup-brand {
+  font-size: 19px;
+  letter-spacing: 0.22em;
+  color: #f0e6d2;
+}
+
+.setup-back,
+.setup-swap {
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: #cdd5e4;
+  background: #171b24;
+  border: 1px solid #2b3242;
+  cursor: pointer;
+}
+
+.setup-back:hover,
+.setup-swap:hover {
+  border-color: #46536d;
+  color: #f0e6d2;
+}
+
+.setup-steps {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: #6f7a90;
+}
+
+.setup-step {
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: #6f7a90;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.setup-step:disabled {
+  cursor: default;
+}
+
+.setup-step.on {
+  color: #f0e6d2;
+  background: #1b2130;
+  border-color: #3a4459;
+}
+
+/* ---------------------------------------------------------------- 三栏 */
+
+.setup-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.setup-col {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.setup-col.l {
+  width: 22%;
+  padding: 12px;
+  border-right: 1px solid #232a38;
+}
+
+.setup-col.m {
+  width: 48%;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 16px;
+  overflow: hidden;
+}
+
+.setup-col.r {
+  width: 30%;
+  padding: 12px 16px;
+  background: rgba(11, 13, 18, 0.92);
+  border-left: 1px solid #232a38;
+}
+
+/* ---- 左栏列表 */
+
+.setup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.setup-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  font: inherit;
+  text-align: left;
+  color: #cdd5e4;
+  background: #12151c;
+  border: 1px solid #2b3242;
+  cursor: pointer;
+}
+
+.setup-item:hover {
+  border-color: #46536d;
+}
+
+.setup-item.on {
+  background: #1b2130;
+  border-color: #c8a45c;
+  box-shadow: inset 2px 0 0 #c8a45c;
+}
+
+.setup-item-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.setup-item-k {
+  color: #f0e6d2;
+}
+
+.setup-item-v {
+  font-size: 12px;
+  color: #6f7a90;
+}
+
+/* 头像和缩略图都是最近邻放大的像素画，别让浏览器插值糊掉。 */
+.setup-face,
+.setup-thumb {
+  flex: none;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: #6f7a90;
+  background: #0b0d12;
+  border: 1px solid #2b3242;
+}
+
+.setup-face {
+  width: 40px;
+  height: 40px;
+}
+
+.setup-thumb {
+  width: 54px;
+  height: 34px;
+}
+
+.setup-face canvas,
+.setup-thumb canvas,
+.setup-map-frame canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: pixelated;
+}
+
+/* ---- 中栏 */
+
+.setup-stage-head {
+  flex: none;
+  text-align: center;
+}
+
+.setup-stage-k {
+  margin: 0;
+  font-size: 17px;
+  font-weight: normal;
+  letter-spacing: 0.14em;
+  color: #f0e6d2;
+}
+
+.setup-stage-lead {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #6f7a90;
+}
+
+/*
+ * 试练地。**一个像素的底色都不能有** —— 人画在画布上，这块 div 盖在画布之上，给它任何
+ * 底色或边框，看到的都是"人被一块颜色挡住了"。它在这里只有两个作用：占住中栏那块地方，
+ * 以及当鼠标的活动范围（光标出了这个框就不再控制朝向）。
+ *
+ * 名字也不写在这儿 —— 左边列表里那一项已经写着他的名字，而且是选中态，同一个名字摆两遍
+ * 只会让人以为是两件事。
+ *
+ * 宽高给百分比而不是像素：整个界面是一个 16:9 的框，百分比在任何窗口尺寸下都落在同一处，
+ * 而画布那边是按这个框**量**出来的（见 main.ts 的 boxToBuffer），所以两边永远对得上。
+ */
+.setup-stage-hero {
+  position: relative;
+  align-self: center;
+  width: 68%;
+  aspect-ratio: 4 / 3;
+  margin: auto 0;
+}
+
+/* 地图详图在上，这张图上会遇到谁在下。 */
+.setup-stage-map {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-height: 0;
+  padding: 8px 0 0;
+}
+
+.setup-map-box {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  min-height: 0;
+  width: 100%;
+}
+
+.setup-map-frame {
+  position: relative;
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: 20 / 11;
+  height: 100%;
+  background: #0b0d12;
+  border: 1px solid #2b3242;
+}
+
+/* ---- 这张图上会遇到谁 */
+
+/*
+ * 底下那排敌人：一人一块空地方，人和他脚下那块地都由画布画在里面（他们要走要挥，烘成图片
+ * 就动不了了）。这些格子和试练地一样**不能有底色和边框**，理由同上。
+ *
+ * 尺寸按整个界面框的高度取，不是按父容器：父容器的高度会随着地图详图一起变，而这排格子的
+ * 大小该是稳定的 —— 画布上那几个人是固定颗粒度画的，格子跟着变就会时松时紧。
+ */
+.setup-foes {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding-bottom: 6px;
+}
+
+.setup-foe {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: #97a1b5;
+}
+
+.setup-foe-frame {
+  width: calc(var(--frame-h) * 0.115);
+  height: calc(var(--frame-h) * 0.125);
+}
+
+.setup-foe.boss .setup-foe-k {
+  color: #e8b45a;
+}
+
+.setup-marker {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #cdd5e4;
+  text-shadow: 0 1px 3px #000;
+  pointer-events: none;
+}
+
+.setup-marker i {
+  width: 7px;
+  height: 7px;
+  border: 1px solid #0b0d12;
+}
+
+.setup-marker.start i {
+  background: #f0e6d2;
+}
+
+.setup-marker.camp i {
+  background: #d9822b;
+}
+
+.setup-marker-k {
+  white-space: nowrap;
+}
+
+.setup-legend {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #6f7a90;
+}
+
+.setup-legend-i {
+  width: 7px;
+  height: 7px;
+  margin-left: 8px;
+  border: 1px solid #0b0d12;
+}
+
+.setup-legend-i.start {
+  background: #f0e6d2;
+}
+
+.setup-legend-i.camp {
+  background: #d9822b;
+}
+
+/* ---- 右栏 */
+
+.setup-detail-head {
+  margin-bottom: 12px;
+}
+
+.setup-detail-k {
+  margin: 0;
+  font-size: 16px;
+  font-weight: normal;
+  color: #f0e6d2;
+}
+
+.setup-detail-v {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #97a1b5;
+}
+
+.setup-block {
+  margin-bottom: 12px;
+}
+
+.setup-block-k {
+  margin: 0 0 6px;
+  padding-bottom: 4px;
+  font-size: 12px;
+  font-weight: normal;
+  letter-spacing: 0.1em;
+  color: #6f7a90;
+  border-bottom: 1px solid #232a38;
+}
+
+.setup-skill-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.setup-skill-k {
+  flex: none;
+  width: 68px;
+  font-size: 12px;
+  color: #6f7a90;
+}
+
+.setup-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.setup-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  font: inherit;
+  font-size: 12px;
+  color: #cdd5e4;
+  background: #12151c;
+  border: 1px solid #2b3242;
+  cursor: pointer;
+}
+
+.setup-chip:hover {
+  border-color: #46536d;
+}
+
+.setup-chip.on {
+  color: #f0e6d2;
+  border-color: #c8a45c;
+}
+
+.setup-chip-icon {
+  width: 12px;
+  height: 12px;
+  image-rendering: pixelated;
+}
+
+.setup-skill-note {
+  margin-top: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  background: #12151c;
+  border-left: 2px solid #c8a45c;
+}
+
+.setup-skill-name {
+  margin-right: 6px;
+  color: #f0e6d2;
+}
+
+.setup-skill-text {
+  color: #97a1b5;
+}
+
+.setup-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.setup-line-k {
+  color: #6f7a90;
+}
+
+.setup-line-v {
+  color: #cdd5e4;
+  text-align: right;
+}
+
+.setup-goal {
+  margin: 0;
+  font-size: 12px;
+  color: #f0e6d2;
+}
+
+.setup-foot {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: #5c6577;
+}
+
+/* ---------------------------------------------------------------- 底栏 */
+
+.setup-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 20px;
+  background: rgba(11, 13, 18, 0.92);
+  border-top: 1px solid #232a38;
+}
+
+.setup-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.setup-summary-v {
+  color: #f0e6d2;
+}
+
+.setup-hint {
+  font-size: 11px;
+  color: #6f7a90;
+}
+
+.setup-main {
+  flex: none;
+  min-width: 148px;
+  padding: 9px 18px;
+  font: inherit;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  color: #1a1206;
+  background: #c8a45c;
+  border: 1px solid #e0c07a;
+  cursor: pointer;
+}
+
+.setup-main:hover {
+  background: #d8b76e;
+}
+
+.setup-main:disabled {
+  color: #6f7a90;
+  background: #1b2130;
+  border-color: #2b3242;
+  cursor: default;
+}
+
+/* ---------------------------------------------------------------- 进入战场 */
+
+.setup-veil {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(11, 13, 18, 0.92);
+}
+
+.setup-veil[hidden] {
+  display: none;
+}
+
+.setup-veil-box {
+  text-align: center;
+}
+
+.setup-veil-k {
+  font-size: 20px;
+  letter-spacing: 0.18em;
+  color: #f0e6d2;
+}
+
+.setup-veil-v {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #97a1b5;
+}
+
+.setup-veil-w {
+  margin-top: 14px;
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  color: #6f7a90;
+}

@@ -1,9 +1,12 @@
-import { Container, Sprite, type Renderer } from 'pixi.js';
+import { Container, RenderTexture, Sprite, type Renderer } from 'pixi.js';
 import { RigSpec } from '../characters/rig';
 import { drawAegisDome } from '../effects/aegisDome';
 import { drawDharmaAspect } from '../effects/dharmaAspect';
 import { SKY_BLADE_LENGTH, drawSkyBlade, heavenSplitBlade, skyArrowBlade } from '../effects/skyBlade';
 import { drawCharacter, drawSkeleton } from '../characters/renderer';
+import type { Pose } from '../characters/rig';
+import type { UnitDef } from '../characters/unitDef';
+import type { CharacterPalette } from '../characters/palette';
 import { brightenPalette, flatPalette } from '../characters/palette';
 import type { Character } from '../game/character';
 import { enemyArrowPosition, type Battle } from '../game/battle';
@@ -18,6 +21,7 @@ import { PrimitiveMesh } from './primitiveMesh';
 import { Projection } from './projection';
 import { Projector } from './projector';
 import { ShapeBatch } from './shapeBatch';
+import { drawFigureStage } from './figureStage';
 
 /**
  * 一帧画面从头到尾。
@@ -30,6 +34,23 @@ import { ShapeBatch } from './shapeBatch';
  * Scene 只读不写：它不改世界的任何状态，所以爱调几次调几次 —— 开始画面和暂停时改颗粒度、
  * 拖窗口，靠的就是单独把 draw 再跑一遍。
  */
+
+/**
+ * 备战界面上的一台：谁、画在哪儿、多大、走了多远。
+ *
+ * 位置和大小由界面那边量出来（DOM 摆框，画布跟着框走），所以这里只是一个纯数据的口子。
+ */
+export interface StageFigure {
+  actor: Character;
+  /** 地块中心落在缓冲的哪个像素上。 */
+  at: Vec2;
+  grain: number;
+  /** 走过的路，世界单位。人不动，草按它的反方向流。 */
+  scrollX: number;
+  scrollY: number;
+  /** 只放大地块，不动人。不给就是 1。 */
+  tileScale?: number;
+}
 
 /** 每帧从外面传进来的、不属于世界本身的东西。 */
 export interface SceneOverlay {
@@ -143,7 +164,10 @@ export class Scene {
    */
   buildMs = 0;
 
+  private readonly renderer: Renderer;
+
   constructor(renderer: Renderer, camera: Camera) {
+    this.renderer = renderer;
     this.camera = camera;
     this.surface = new PixelSurface(renderer, camera.magnify);
     this.itemLayer.visible = false;
@@ -185,6 +209,7 @@ export class Scene {
   draw(field: Field, battle: Battle, overlay: SceneOverlay): void {
     const t0 = performance.now();
     this.itemLayer.visible = false;
+    this.setGroundVisible(field, true);
     const cam = this.camera;
     const { x: camX, y: camY, rootX, rootY, grain } = cam;
     const shapes = this.shapes;
@@ -346,6 +371,92 @@ export class Scene {
     this.surface.render();
     this.buildMs = smooth(this.buildMs, performance.now() - t0);
     return shown;
+  }
+
+  /**
+   * 备战界面的台子：一台或者一排，每台一块地加一个人。
+   *
+   * 选人那一步只有一台（中间那个人），选图那一步是一排（这张图上会遇到的几种敌人）。两者
+   * 走的是同一条路 —— 界面那边只是给出"这一台画在哪儿、多大、走了多远"，画法完全一样。
+   *
+   * 烘出来的那张地面精灵在这里是**关掉**的：它一个纹素有三个世界单位，铺在人背后是一片
+   * 巨大的色块。台子上那块地是现画的（见 figureStage.ts），大小和人配得上。
+   *
+   * 敌人为什么不烘成图片：他们要走要挥。取一次图是一次 GPU 回读，每帧回读五个人是拿不出手
+   * 的开销，而画在画布上本来就是这套渲染最擅长的事，一帧五个人不值一提。
+   */
+  drawStages(field: Field, stages: readonly StageFigure[]): void {
+    const t0 = performance.now();
+    this.itemLayer.visible = false;
+    this.setGroundVisible(field, false);
+
+    this.prim.begin();
+    const shapes = this.shapes;
+    for (const stage of stages) {
+      drawFigureStage(shapes, stage.actor, stage.at, stage.grain, stage.scrollX, stage.scrollY, stage.tileScale);
+    }
+    this.primitives = shapes.primitiveCount;
+    shapes.flushToMesh(this.prim, this.surface.width, this.surface.height);
+    this.prim.end();
+
+    this.drawn = stages.length;
+    this.surface.render();
+    this.buildMs = smooth(this.buildMs, performance.now() - t0);
+  }
+
+  /**
+   * 把一个人画进一张离屏纹理，再取成一张画布 —— 选人列表里那些小头像就是它。
+   *
+   * 为什么不摆一张画好的图：那样列表里的人和中间预览的人就成了两份资产，改了骨架或配色只
+   * 有一份会跟着变。这里画的就是游戏里那个人，同一套 drawCharacter、同一条几何路，只是
+   * 画进了一张 64 见方的纹理里。
+   *
+   * 取不出来（extract 在某些环境里可能没有）就返回 null，列表那边自己退回纯文字。
+   *
+   * @param footY 脚落在纹理的第几行。头像给一个大于 height 的值就是从胸口截断。
+   */
+  renderPortrait(
+    pose: Pose,
+    def: UnitDef,
+    palette: CharacterPalette,
+    width: number,
+    height: number,
+    grain: number,
+    footY: number,
+    facing = 0,
+  ): HTMLCanvasElement | null {
+    const target = RenderTexture.create({ width, height, scaleMode: 'nearest', antialias: false });
+    try {
+      this.prim.begin();
+      const shapes = this.shapes;
+      // 脚落在 footY 上。头像把它放到纹理下沿之外，于是画面正好从胸口往上截断；全身像则
+      // 把它放在纹理里面，一整个人都在。
+      drawCharacter(
+        shapes,
+        pose,
+        new Projector(v2(width * 0.5, footY), facing, Projection.groundSquash, grain),
+        palette,
+        def,
+      );
+      shapes.flushToMesh(this.prim, width, height);
+      this.prim.end();
+      this.renderer.render({ container: this.prim.mesh, target, clear: true });
+      const canvas = this.renderer.extract.canvas(target) as HTMLCanvasElement;
+      return canvas;
+    } catch {
+      return null;
+    } finally {
+      target.destroy(true);
+      // 下一帧要重新攒图元，别把头像那一批留在缓冲里。
+      this.prim.begin();
+      this.prim.end();
+    }
+  }
+
+  /** 地面那两个精灵。人物台和图鉴要把它们收起来，回到战场再放出来。 */
+  private setGroundVisible(field: Field, on: boolean): void {
+    field.ground.sprite.visible = on;
+    field.ground.shadowSprite.visible = on;
   }
 
   /** 第 i 个图鉴精灵，不够就补一个。 */

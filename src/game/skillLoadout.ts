@@ -101,6 +101,21 @@ export class SkillLoadout {
     }
   }
 
+  /**
+   * 整套换掉：备战界面选了谁上场，就把那个角色带的几个技能摆进来。
+   *
+   * 一个一个 setEquipped 是不够的 —— 上一个角色留下的发射技和主动槽还在，装出来的会是两个
+   * 角色的并集。所以先清空可清的三类，再按类别规则装回去。**自动攻击那一栏清不掉**（它不
+   * 允许为空，见 setEquipped），角色没写自动攻击技时就保留原来那个。
+   */
+  apply(ids: readonly SkillId[]): void {
+    this.projectileSkills.clear();
+    this.guardSkill = null;
+    for (let i = 0; i < this.activeSkillSlots.length; i++) this.activeSkillSlots[i] = null;
+    for (const id of ids) this.setEquipped(id, true);
+    this.resetCooldowns();
+  }
+
   toggle(id: SkillId): boolean {
     const skill = skillById(id);
     if (skill.category === 'attack') return this.setEquipped(id, true);

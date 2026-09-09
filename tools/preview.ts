@@ -12,7 +12,8 @@
 import { deflateSync } from 'node:zlib';
 import { writeFileSync } from 'node:fs';
 import { CharacterAnimator, attackDuration, attackImpact } from '../src/characters/animator';
-import { PALETTE_BLUE, PALETTE_HERO, PALETTE_RED, flatPalette, type CharacterPalette } from '../src/characters/palette';
+import { PALETTE_BLUE, PALETTE_HERO, PALETTE_PEASANT, PALETTE_RED, flatPalette, type CharacterPalette } from '../src/characters/palette';
+import { drawFigureStage } from '../src/render/figureStage';
 import { drawCharacter } from '../src/characters/renderer';
 import { Pose, RigSpec } from '../src/characters/rig';
 import { type UnitDef, UnitPresets } from '../src/characters/unitDef';
@@ -1537,4 +1538,108 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   sheet.blit(crop(H - BOTTOM_H, BOTTOM_H), 0, TOP_H + GUTTER);
   writePng('.preview-rain-depth.png', sheet.upscale(2));
   console.log(`降水深度：同一批人同一场雨，上排画在第 ${ROWS[0]} 行、下排第 ${ROWS[1]} 行（16000 那条线在第 500 行）`);
+}
+
+// ---------------------------------------------------------------- 备战界面的台子
+//
+// 选人那一步中间是一台，选图那一步底下一排敌人各占一台，两处走的是同一个 drawFigureStage。
+// 颗粒度就是出货那一档（3.1）—— 备战界面上看到的人，和进游戏之后看到的一模一样大。
+//
+//   上排  同一台的四个走位时刻。人钉在正中不动，草往后流：看流过去之后有没有结块或者留空，
+//         卷回来的那一簇必须落在边角上，而不是凭空出现在中间。
+//   中排  三个角色各站一台。看地块和人的比例（地块宽度 = 身高的 1.5 倍）。
+//   下排  五个敌人各站一台，**出货尺寸**，格子按界面上真正的尺寸画出来（细框只是这张图上
+//         的辅助线，界面上是没有框的）。看的是人和地块在格子里放不放得下。
+{
+  // 上两排是试练地：出货那一档再放大 1.8 倍（1.5 × 1.2），和 main.ts 的 HERO_GRAIN 一致。
+  // 下排是敌人，就是出货那一档本身。
+  const GRAIN = 3.1 * 1.5 * 1.2;
+  const FOE_GRAIN = 3.1;
+  const CELL_W = 170;
+  const CELL_H = 140;
+
+  const flushTo = (shapes: ShapeBatch, canvas: Canvas) => {
+    const sink = new ShapeSink();
+    shapes.flushToMesh(sink);
+    for (const s of sink.shapes) canvas.fillPolygon(s);
+  };
+
+  /** 走了 t 秒、朝着 facing 的一个人，以及这段路累出来的草地偏移。 */
+  const walked = (def: UnitDef, palette: CharacterPalette, facing: number, speed: number, t: number) => {
+    const c = new Character(def, palette, 16);
+    c.facing = facing;
+    c.speed = speed;
+    const steps = Math.max(1, Math.round(t / (1 / 120)));
+    for (let i = 0; i < steps; i++) c.update(1 / 120, true);
+    return { c, sx: Math.cos(facing) * speed * t, sy: Math.sin(facing) * speed * t };
+  };
+
+  const sheet = new Canvas(CELL_W * 4, CELL_H * 2 + 82, [11, 13, 18]);
+
+  const cell = (ox: number, oy: number, def: UnitDef, palette: CharacterPalette, facing: number, speed: number, t: number) => {
+    const shapes = new ShapeBatch();
+    const { c, sx, sy } = walked(def, palette, facing, speed, t);
+    // 选人那一台的地块单独放宽（1.2 × 1.2），人不变 —— 和 main.ts 的 HERO_TILE_ZOOM 一致。
+    drawFigureStage(shapes, c, v2(ox + CELL_W / 2, oy + CELL_H * 0.62), GRAIN, sx, sy, 1.2 * 1.2);
+    flushTo(shapes, sheet);
+  };
+
+  [0, 0.4, 0.8, 1.6].forEach((t, i) => {
+    cell(i * CELL_W, 0, UnitPresets.warlord(), PALETTE_HERO, Math.PI * 0.5, 32, t);
+  });
+
+  const heroes: [string, () => UnitDef][] = [
+    ['双锤武将', UnitPresets.warlord],
+    ['骑士', UnitPresets.knight],
+    ['披风剑士', UnitPresets.hero],
+  ];
+  heroes.forEach(([, make], i) => {
+    cell(i * CELL_W, CELL_H, make(), PALETTE_HERO, Math.PI * 0.5 + 0.38, 0, 0.4);
+  });
+
+  // 下排：格子尺寸取自 setup.css（0.115 / 0.125 乘整框高度），整框高度就是缓冲的 540 行。
+  {
+    const BOX_W = Math.round(540 * 0.115);
+    const BOX_H = Math.round(540 * 0.125);
+    const shapes = new ShapeBatch();
+    const row = CELL_H * 2 + 8;
+    const kinds: [() => UnitDef, CharacterPalette, boolean][] = [
+      [UnitPresets.thug, PALETTE_RED, false],
+      [UnitPresets.spearman, PALETTE_RED, true],
+      [UnitPresets.shieldman, PALETTE_RED, false],
+      [UnitPresets.archer, PALETTE_PEASANT, true],
+      [UnitPresets.elite, PALETTE_RED, false],
+    ];
+    let x = 20;
+    kinds.forEach(([make, palette, swinging], i) => {
+      // 辅助线：界面上这里是没有框的，画出来只为了看人有没有出格。
+      const edge = rgba(58, 66, 84, 255);
+      shapes.bar(v2(x, row), v2(x + BOX_W, row), 1, edge, 0);
+      shapes.bar(v2(x, row + BOX_H), v2(x + BOX_W, row + BOX_H), 1, edge, 0);
+      shapes.bar(v2(x, row), v2(x, row + BOX_H), 1, edge, 0);
+      shapes.bar(v2(x + BOX_W, row), v2(x + BOX_W, row + BOX_H), 1, edge, 0);
+
+      const c = new Character(make(), palette, 16);
+      c.facing = Math.PI * 0.5 + 0.38;
+      c.speed = 16;
+      if (swinging) c.swing(2);
+      for (let k = 0; k < 24; k++) c.update(1 / 120, true);
+      drawFigureStage(
+        shapes,
+        c,
+        v2(Math.round(x + BOX_W / 2), Math.round(row + BOX_H * 0.74)),
+        FOE_GRAIN,
+        i * 3.7,
+        0,
+      );
+      x += BOX_W + 8;
+    });
+    flushTo(shapes, sheet);
+  }
+
+  writePng('.preview-stage.png', sheet.upscale(3));
+  console.log(
+    `备战台子：试练地颗粒度 ${GRAIN.toFixed(2)}（出货 ${FOE_GRAIN} 的 1.8 倍）、敌人 ${FOE_GRAIN}；`
+    + '地块宽度 = 身高 ×1.5；上排走位 4 拍，中排 3 个角色，下排 5 个敌人按界面格子尺寸',
+  );
 }
