@@ -19,6 +19,7 @@ import { type UnitDef, UnitPresets } from '../src/characters/unitDef';
 import { ImpactEffects, weaponImpactPoint } from '../src/effects/impact';
 import { Character } from '../src/game/character';
 import { Battle } from '../src/game/battle';
+import { DEFAULT_SPAWN_TEMPLATE } from '../src/game/waves';
 import { Field } from '../src/game/field';
 import { Debris } from '../src/effects/debris';
 import { v2 } from '../src/core/math';
@@ -1223,4 +1224,79 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
 
   writePng('.preview-collectibles.png', sheet.upscale(2));
   console.log('掉落宝石：弹出 / 悬浮 / 加速吸附 / 拾取闪光，连拍 4 格');
+}
+
+// ---------------------------------------------------------------- 波次密度对照
+//
+// 出兵模板（src/game/waves.ts）每一波都在调三个数：爆兵、密度、全图预算。前两个是节奏，
+// 真正改变**画面上人有多密**的是出兵目标和全图预算，而那件事只能看，不能算 —— 场上从 400
+// 涨到 750 是个百分比，屏幕上是"还能看见草地"和"看不见草地"的区别。
+//
+// 每一格单独开一局，把那一波的参数当成整张模板跑到稳态再拍，所以四格之间的差别只来自这一波
+// 自己的数值，不掺前面几波留下的人。玩家一直在走（和线上的跑步机模型一致）：站着不动时场上
+// 人数是被清场速度压住的，出兵目标根本顶不到，四格会长得一模一样。
+{
+  const STEP = 1 / 60;
+  const SPAN = 150;
+  const GUTTER = 6;
+  const W = Math.round(SPAN * GRAIN);
+  const H = Math.round(SPAN * 0.7 * GRAIN * Projection.groundSquash + 16 * GRAIN);
+  const picks = [1, 3, 5, 8];
+  const sheet = new Canvas(W * picks.length + GUTTER * (picks.length - 1), H, [22, 24, 20]);
+
+  const field3 = new Field(1200, 1200, 20260902);
+  for (let i = 0; i < Field.BAKE_SLICES; i++) field3.bakeSlice(i);
+
+  picks.forEach((waveNumber, col) => {
+    const spec = DEFAULT_SPAWN_TEMPLATE.waves[waveNumber - 1];
+    const b = new Battle(field3);
+    // 只放这一波，'restart' 让它一直续下去：拍的是"这一波稳下来是什么样"。
+    b.setSpawnTemplate({ name: `第${waveNumber}波`, after: 'restart', waves: [spec] });
+    b.player.maxHp = 1e9;
+    b.player.hp = 1e9;
+    const look = () => ({
+      x: b.player.x, y: b.player.y, radius: 220,
+      spawn: { x: b.player.x, y: b.player.y, halfW: 120, halfH: 109 },
+    });
+    b.seed(look());
+    b.autoAttack = true;
+    const walk = (i: number) => ({ facing: Math.sin(i * 0.017) * Math.PI, moving: true, running: false });
+    for (let i = 0; i < Math.round(40 / STEP); i++) b.update(STEP, walk(i), look());
+
+    const cell = new Canvas(W, H, [71, 105, 59]);
+    const shapes = new ShapeBatch();
+    const sink = new ShapeSink();
+    const rootX = W / 2;
+    const rootY = H / 2;
+    const px = b.player.x;
+    const py = b.player.y;
+    const at = (wx: number, wy: number) =>
+      v2(rootX + (wx - px) * GRAIN, rootY + (wy - py) * Projection.groundSquash * GRAIN);
+    for (const e of b.enemies) {
+      drawCharacter(
+        shapes, e.pose,
+        new Projector(at(e.x, e.y), e.facing, Projection.groundSquash, GRAIN),
+        e.palette, e.def, { hurt: e.hurt, lift: e.lift },
+      );
+    }
+    const hp = at(px, py);
+    const off = Math.max(1, Math.round(GRAIN * 0.34));
+    const rimPal = flatPalette(rgba(255, 236, 176, 190));
+    for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+      const p2 = new Projector(v2(hp.x + dx * off, hp.y + dy * off), b.player.facing, Projection.groundSquash, GRAIN, hp.y - 0.5);
+      drawCharacter(shapes, b.player.pose, p2, rimPal, b.player.def, { silhouette: true });
+    }
+    drawCharacter(shapes, b.player.pose, new Projector(hp, b.player.facing, Projection.groundSquash, GRAIN), b.player.palette, b.player.def);
+    b.debris.draw(shapes, px, py, rootX, rootY, GRAIN, () => 1e4);
+    shapes.flushToMesh(sink);
+    for (const shape of sink.shapes) cell.fillPolygon(shape);
+    sheet.blit(cell, col * (W + GUTTER), 0);
+
+    const status = b.waveStatus;
+    console.log(`  第 ${waveNumber} 波：全图预算 ${spec.world}、出兵目标 ${status.crowd}、密度 ${spec.density}/秒`
+      + ` → 稳态场上 ${b.enemies.length}、全图 ${b.worldEnemyCount}`);
+  });
+
+  writePng('.preview-waves.png', sheet);
+  console.log('波次密度对照：第 1 / 3 / 5 / 8 波各跑到稳态，玩家一直在走，同一画幅');
 }

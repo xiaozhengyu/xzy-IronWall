@@ -3,12 +3,14 @@
  *
  *   npm run bench                          默认跑到开局一秒，人还少
  *   WARMUP=3600 FRAMES=300 npm run bench   跑到第六十秒的稳态再量
+ *   WAVE=8 WARMUP=2400 npm run bench       只放第八波，量满编那一档（最贵的一帧）
  *   LITE=1 npm run bench                   敌人按平涂档算（对照 Scene.liteEnemies）
  *
  * 量不到 GPU，也量不到 Pixi 的提交和 DOM，但这两样以外的东西全在这里：世界推进、图元
  * 生成、深度排序（含画面外剔除）、写顶点缓冲。顺序照着 Scene.draw 抄。
  */
 import { Battle } from '../src/game/battle';
+import { DEFAULT_SPAWN_TEMPLATE } from '../src/game/waves';
 import { Field } from '../src/game/field';
 import { Camera } from '../src/render/camera';
 import { Projection } from '../src/render/projection';
@@ -140,6 +142,18 @@ function viewOf() {
   };
 }
 
+/**
+ * 只放某一波。
+ *
+ * 波次是按秒推进的，想量第八波得空跑十八分钟；把那一波当成整张模板（'restart' 让它一直续），
+ * 四十秒就到稳态。量的是"这一波满编时一帧多少钱"，那才是要守的上限。
+ */
+const WAVE = Number(process.env.WAVE ?? 0);
+if (WAVE > 0) {
+  const spec = DEFAULT_SPAWN_TEMPLATE.waves[Math.min(WAVE, DEFAULT_SPAWN_TEMPLATE.waves.length) - 1];
+  battle.setSpawnTemplate({ name: `第${WAVE}波`, after: 'restart', waves: [spec] });
+}
+
 camera.follow(battle.player.x, battle.player.y, field.width, field.height);
 battle.seed(viewOf());
 battle.autoAttack = true;
@@ -226,7 +240,8 @@ const per = (k: string) => (acc[k] / FRAMES).toFixed(2).padStart(7);
 let total = 0;
 for (const k of Object.keys(acc)) total += acc[k];
 const grade = LITE ? '平涂' : '完整';
-console.log(`档位 ${grade}｜预留 ${battle.reserved.length} 人，场上 ${battle.enemies.length} 人，画 ${(drawn / FRAMES).toFixed(0)} 人，图元 ${(prims / FRAMES).toFixed(0)}，顶点 ${(verts / FRAMES).toFixed(0)}，索引 ${(idx / FRAMES).toFixed(0)}`);
+const waveNote = WAVE > 0 ? `第 ${WAVE} 波｜` : '';
+console.log(`${waveNote}档位 ${grade}｜预留 ${battle.reserved.length} 人，场上 ${battle.enemies.length} 人，画 ${(drawn / FRAMES).toFixed(0)} 人，图元 ${(prims / FRAMES).toFixed(0)}，顶点 ${(verts / FRAMES).toFixed(0)}，索引 ${(idx / FRAMES).toFixed(0)}`);
 for (const k of Object.keys(acc)) {
   console.log(`${k.padEnd(16)} ${per(k)} ms   图元 ${((pacc[k] ?? 0) / FRAMES).toFixed(0).padStart(6)}`);
 }

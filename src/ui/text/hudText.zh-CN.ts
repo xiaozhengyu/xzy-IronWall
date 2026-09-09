@@ -12,7 +12,7 @@ export const HUD_TEXT_ZH_CN: HudMessages = {
   wavePanel: '怪物波次',
   waveTitle: '第 {wave} 波',
   nextWaveCountdown: '下一波倒计时 {time}',
-  bossProgress: '已通过 {completed} / {total} 个首领节点',
+  waveProgress: '已打完 {completed} / {total} 波',
   pause: '暂停',
   settings: '设置',
   currencyInfo: '货币信息',

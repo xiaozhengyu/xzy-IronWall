@@ -4,7 +4,7 @@
   grid-template-rows: 23px 14px;
   align-content: center;
   gap: 2px 6px;
-  /* 下方七个节点、连接线和首领图标共 154px，左右各留 10px。 */
+  /* 下方一排波次节点：七颗菱形加末尾那个骷髅，一共八波。连接线可压缩，节点数由模板给。 */
   padding: 8px 10px;
 }
 
@@ -32,7 +32,7 @@
   text-align: center;
 }
 
-.hud-wave-boss-track {
+.hud-wave-track {
   grid-column: 1 / -1;
   position: relative;
   display: flex;
@@ -42,18 +42,18 @@
   min-width: 0;
 }
 
-.hud-wave-boss-connector {
+.hud-wave-connector {
   flex: 0 1 9px;
   height: 1px;
   margin: 0;
   box-shadow: 0 1px 0 #000;
 }
 
-.hud-wave-boss-connector--complete {
+.hud-wave-connector--complete {
   background: linear-gradient(#f1ce72, #9c7226);
 }
 
-.hud-wave-boss-connector--pending {
+.hud-wave-connector--pending {
   background: linear-gradient(#d5d2c9, #716f6b);
 }
 
@@ -68,12 +68,22 @@
   filter: drop-shadow(0 1px 1px #000);
 }
 
-.hud-wave-boss-skull {
+/* 骷髅站的是最后一波的位置，所以它和菱形一样有"到了没有"两档。 */
+.hud-wave-skull {
   display: block;
   width: 14px;
   height: 14px;
   flex: none;
   margin-left: -1px;
   object-fit: contain;
+}
+
+.hud-wave-skull--reached {
   filter: grayscale(0.35) sepia(0.2) brightness(1.18) drop-shadow(0 1px 1px #000);
+}
+
+/* 还没走到：褪成和空菱形一个成色，别让终点看着像已经到了。 */
+.hud-wave-skull--pending {
+  opacity: 0.6;
+  filter: grayscale(1) brightness(0.9) drop-shadow(0 1px 1px #000);
 }

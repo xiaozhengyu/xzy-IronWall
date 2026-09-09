@@ -12,7 +12,7 @@ export const HUD_TEXT_EN: HudMessages = {
   wavePanel: 'MONSTER WAVE',
   waveTitle: 'WAVE {wave}',
   nextWaveCountdown: 'NEXT WAVE IN {time}',
-  bossProgress: '{completed} / {total} BOSS NODES CLEARED',
+  waveProgress: '{completed} / {total} WAVES CLEARED',
   pause: 'PAUSE',
   settings: 'SETTINGS',
   currencyInfo: 'CURRENCY',

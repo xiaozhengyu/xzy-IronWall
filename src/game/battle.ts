@@ -1,6 +1,6 @@
 import { attackDuration } from '../characters/animator';
 import { RigSpec } from '../characters/rig';
-import { PALETTE_HERO, PALETTE_PEASANT, PALETTE_RED, type CharacterPalette } from '../characters/palette';
+import { PALETTE_HERO, type CharacterPalette } from '../characters/palette';
 import { type UnitDef, UnitPresets } from '../characters/unitDef';
 import { clamp } from '../core/math';
 import { Debris } from '../effects/debris';
@@ -15,6 +15,12 @@ import { SpatialGrid } from './grid';
 import { WorldPopulation } from './worldPopulation';
 import { DistantMotion } from './distantMotion';
 import { SkillLoadout, type ActiveSkillSlot } from './skillLoadout';
+import {
+  DEFAULT_SPAWN_TEMPLATE,
+  WaveDirector,
+  type EnemyKind,
+  type SpawnTemplate,
+} from './waves';
 import { Collectibles } from '../world/collectibles';
 import {
   SKILL_HIT_MARGIN,
@@ -190,9 +196,6 @@ const COIN_DROP_CHANCE = 1 / 50;
 
 const SEED_COUNT = 30;
 
-/** 每种兵连续出生多少个再换下一种；和开局人数一致，第一屏天然就是完整的一波。 */
-const ENEMIES_PER_TYPE_WAVE = SEED_COUNT;
-
 /**
  * 开局那一批往视口外再多撒多远。
  *
@@ -202,10 +205,12 @@ const ENEMIES_PER_TYPE_WAVE = SEED_COUNT;
 const SEED_DEPTH = 150;
 
 /**
- * 出兵倍率的上限。
+ * 出兵旋钮的档数，菜单里那个 [− 出兵 xN +]。
  *
- * 这个值现在是**手调的**，菜单里那个 [− 出兵 xN +] 就是它，随游戏进行自动涨是后面做游戏性
- * 时的事，这里不掺和。
+ * 出兵的快慢现在由模板定（waves.ts 的 density 和 surge），这个旋钮退成一个**倍率**：
+ * 顶满（xN = 12）就是模板原速，往下调是按比例放慢，用来在调别的东西时把人海压下去。
+ * 它不再直接等于"一批放几个"，所以调到 x1 不会像以前那样把节奏卡成一个一个挪进来，
+ * 而是整条曲线按 1/12 缩放。
  */
 const MAX_SPAWN_BATCH = 12;
 
@@ -253,13 +258,15 @@ export const MAX_WORLD_ENEMIES = 4000;
  *   1200        723    477   332   12.27 ms      3.63 ms
  *
  * 屏幕上少了 7%（359 → 332），逻辑省了三分之一。少掉的那部分主要是远处排队的：小地图上
- * 红点密度大约减半，人海补上来的节奏也稀一档。附近的进攻者仍由 LOCAL_ENEMY_TARGET 保底。
+ * 红点密度大约减半，人海补上来的节奏也稀一档。附近的进攻者仍由这一波的 crowd 保底。
+ *
+ * 开局铺怪也守这条线：seedWorld 曾经只夹 MAX_WORLD_ENEMIES，实测一铺就是 1538 个（1200
+ * 见方的图除以 28 的间距是 42×42 格，一格一个），要玩家杀上十几秒才掉回预算之内，而那十几
+ * 秒恰好是每条命最吃紧的开头。
  */
 export const TARGET_WORLD_ENEMIES = 1200;
 
 const WORLD_REFILL_RESERVE = 600;
-/** 总量拥挤时仍保障这批附近进攻者；并非额外增加全图上限。 */
-export const LOCAL_ENEMY_TARGET = 600;
 
 /**
  * "重新获得视线"的判定框，同样按出货视口半宽/半高的倍数。
@@ -394,36 +401,9 @@ export function playerPresetDisplayName(index: number): string {
 }
 
 /**
- * 敌人的种类。def 和调色板是共享的只读数据，一百个杂兵指向同一份就够了。
- *
- * 这张表只放杂兵。UnitPresets.knight 是 boss，刻意不在这里 —— 他一个人 120 个图元
- * （杂兵六十上下），而且面甲、盔冠、金护手那些细节是为"这个人不一样"准备的，一屏站
- * 二十个就什么也不说明了。理由写在 unitDef.ts 那条预设上面。
- *
- * 速度是按"多久能走进画面"倒推的，不是按写实的步行速度。视野半径有两百多个世界单位（一个人
- * 才 19 单位高），照真人步速走进来要半分钟 —— 开局一整分钟画面上什么都不会发生。割草游戏里
- * 的杂兵本来也是小跑着扑过来的。
+ * 敌人的种类和每一波出什么，都搬到 waves.ts 了：那边是纯数据，换地图就换一张表，而这里
+ * 只负责把配额变成场上真实的人。
  */
-type EnemyKind = { def: UnitDef; palette: CharacterPalette; speed: number };
-
-const EnemyKinds: EnemyKind[] = [
-  { def: UnitPresets.thug(), palette: PALETTE_RED, speed: 26 },
-  { def: UnitPresets.thug(), palette: PALETTE_PEASANT, speed: 30 },
-  { def: UnitPresets.spearman(), palette: PALETTE_RED, speed: 23 },
-  { def: UnitPresets.shieldman(), palette: PALETTE_RED, speed: 20 },
-  { def: UnitPresets.archer(), palette: PALETTE_PEASANT, speed: 33 },
-];
-
-/**
- * 同类兵种按波进入；两种杂兵只是配色不同，仍放在同一波里。
- * 顺序固定，观察角色时不会被随机混兵打断。
- */
-const EnemyTypeWaves: readonly (readonly EnemyKind[])[] = [
-  [EnemyKinds[0], EnemyKinds[1]],
-  [EnemyKinds[2]],
-  [EnemyKinds[3]],
-  [EnemyKinds[4]],
-];
 
 /**
  * 一道正在往外跑的技能波。
@@ -511,6 +491,26 @@ export interface BattleView {
   visible?: { x: number; y: number; halfW: number; halfH: number };
   /** 出怪框：出货那一档缩放下的视口，中心也按那一档夹过。 */
   spawn: { x: number; y: number; halfW: number; halfH: number };
+}
+
+/** 波次面板和调试面板读的那一份快照。数据都来自出兵模板，见 waves.ts。 */
+export interface WaveStatus {
+  /** 第几波，从 1 数起。 */
+  wave: number;
+  /** 模板一共几波。 */
+  waves: number;
+  /** 距下一波还有几秒。同时就是本波还剩多久。停在最后一波时是 0。 */
+  countdown: number;
+  /** 已经打完几波。面板上点亮这么多个节点。 */
+  cleared: number;
+  /** 本波允许场上同时有多少完整敌人。 */
+  crowd: number;
+  /** 整张模板的首领总数，暂定 0。 */
+  bosses: number;
+  /** 最后一波已经打完，正按它的密度续着出。 */
+  holding: boolean;
+  /** 调试钉住的波次，0 是不钉。见 Battle.pinnedWave。 */
+  pinned: number;
 }
 
 const smooth = (prev: number, now: number): number => prev * 0.9 + now * 0.1;
@@ -790,6 +790,60 @@ export class Battle {
     return this.enemies.length + this.reserved.length;
   }
 
+  /**
+   * 波次面板要的全部东西。每帧读一次，不用它的地方一个字段也不必算。
+   *
+   * countdown 一个数同时是"距下一波"和"本波还剩"—— 它们本来就是同一段时间，面板上只该有
+   * 一个倒计时。
+   */
+  get waveStatus(): WaveStatus {
+    const waves = this.waves;
+    return {
+      wave: waves.waveNumber,
+      waves: waves.waveCount,
+      countdown: waves.countdown,
+      cleared: waves.cleared,
+      crowd: waves.wave.crowd,
+      bosses: waves.bossTotal,
+      holding: waves.holding,
+      pinned: this.pinnedWave,
+    };
+  }
+
+  /** 换出兵模板（换地图）。会立刻从第一波重新开始，不动场上已有的人。 */
+  setSpawnTemplate(template: SpawnTemplate): void {
+    this.waves.setTemplate(template);
+  }
+
+  /**
+   * 跳到第 n 波，并**当场**把屏幕外那片人海补到这一波的预算。调试用。
+   *
+   * 补这一下是这个方法存在的理由：光跳波号的话，人海还是上一波那么厚，要等区域补怪一点点
+   * 涨上来 —— 每两秒最多 64 个，从第一波的 900 涨到第八波的 1200 得四十秒。压力测试的头四十秒
+   * 量的就会是上一波，而那正是要测的那一段。补进去的都是屏幕外的无骨架数据，不会有人凭空
+   * 出现在画面里，之后靠开波爆兵和跑步机补怪自然涌上来。
+   *
+   * 往回跳到预算更低的一波不会当场杀人：多出来的那部分靠玩家清场自然掉回预算。
+   */
+  jumpToWave(waveNumber: number, view: BattleView): void {
+    this.waves.jumpTo(waveNumber);
+    this.pinnedWave = this.waves.waveNumber;
+    this.seedWorld(view);
+  }
+
+  /** 跳到最后一波。菜单里那个「末波压测」。 */
+  jumpToLastWave(view: BattleView): void {
+    this.jumpToWave(this.waves.waveCount, view);
+  }
+
+  /**
+   * 调试时钉住的波次，0 是不钉。跳过波之后就一直是它，重开也不掉回第一波。
+   *
+   * 压力测试必然要死很多次，而清场重来会把波次重置 —— 每死一次都得重按一次末波压测，测的
+   * 就不是那一波了。钉住之后死了重开还在那一波，人海也照那一波的预算重铺。
+   */
+  pinnedWave = 0;
+
   /** 这一局跑了多久，秒。 */
   private clock = 0;
 
@@ -804,8 +858,10 @@ export class Battle {
   private readonly field: Field;
   private readonly worldPopulation: WorldPopulation;
   private spawnTimer = 0;
-  private enemyWaveIndex = 0;
-  private enemiesLeftInWave = ENEMIES_PER_TYPE_WAVE;
+  /** 按模板发号施令的那个人：只管"这一秒该放几个、放什么"，落点仍在这个文件里算。 */
+  private readonly waves = new WaveDirector(DEFAULT_SPAWN_TEMPLATE);
+  /** 爆兵允许把场上堆到多少人。开波那一刻记一次，见 localSpawnRoom。 */
+  private surgeCeiling = 0;
 
   /**
    * 邻居查表。每帧重建一次，分离和"把人推出玩家身体"都走它。
@@ -879,48 +935,73 @@ export class Battle {
   seed(view: BattleView): void {
     this.spawnTimer = 0;
     this.farGroup = 0;
-    this.enemyWaveIndex = 0;
-    this.enemiesLeftInWave = ENEMIES_PER_TYPE_WAVE;
+    this.waves.reset();
+    if (this.pinnedWave > 0) this.waves.jumpTo(this.pinnedWave);
+    this.surgeCeiling = 0;
     // 全部生在视口外，和之后每一个走同一条路：方向均匀一整圈，距离按"沿这个方向走多远才
     // 出画面"算，再往外多撒一段随机纵深（见 SEED_DEPTH）让他们分批到达。
+    //
+    // 留着这一批而不是直接交给第一波的爆兵，是因为只有它带纵深：爆兵和之后的补兵都贴着视口
+    // 边缘生成，一起放会读成一个整齐收缩的圆环。这三十个人是分批走进来的那一层。
     for (let i = 0; i < SEED_COUNT; i++) {
       const angle = Math.random() * Math.PI * 2;
       const cos = Math.cos(angle);
       const sin = Math.sin(angle);
       const r = this.exitDistance(cos, sin, view) + SPAWN_MARGIN + Math.random() * SEED_DEPTH;
-      if (this.place(this.player.x + cos * r, this.player.y + sin * r, view, EnemyTypeWaves[this.enemyWaveIndex])) {
-        this.enemiesLeftInWave--;
-      }
+      this.place(this.player.x + cos * r, this.player.y + sin * r, view, this.waves.pick());
     }
-    if (this.enemiesLeftInWave <= 0) this.advanceEnemyWave();
     this.seedWorld(view);
     this.worldPopulation.reset();
   }
 
-  /** 分格散布全图。每格随机一点，避免扎堆；避开开局视口和实际障碍。 */
+  /**
+   * 分格散布全图。每格随机一点，避免扎堆；避开开局视口和实际障碍。
+   *
+   * 上限是日常预算而不是 MAX_WORLD_ENEMIES 那个兜底：格子数只跟图的大小和间距有关（1200
+   * 见方是 42×42 = 1764 格），和预算完全脱钩，不夹一下就会一铺铺出 1538 个人来，超预算
+   * 28%，还得等玩家杀十几秒才掉回来。
+   *
+   * 夹的办法是**把格子打乱了再填**，不是一行一行扫到数满就 return：格子本来是按行扫的，
+   * 扫到预算停手会让地图下面三分之一一个人也没有，小地图上一眼就看出来。打乱之后停在哪儿
+   * 都是均匀的，而且填够预算才停 —— 树底下没放成的那些格子会由后面的格子补上。
+   */
   private seedWorld(view: BattleView): void {
     const field = this.field;
     const cols = Math.max(1, Math.floor(field.width / WORLD_ENEMY_SPACING));
     const rows = Math.max(1, Math.floor(field.height / WORLD_ENEMY_SPACING));
     const cellW = field.width / cols;
     const cellH = field.height / rows;
-    for (let row = 0; row < rows; row++) {
-      for (let col = 0; col < cols; col++) {
-        if (this.worldEnemyCount >= MAX_WORLD_ENEMIES) return;
-        const kind = EnemyKinds[Math.floor(Math.random() * EnemyKinds.length)];
-        for (let attempt = 0; attempt < 4; attempt++) {
-          const x = (col + 0.25 + Math.random() * 0.5) * cellW;
-          const y = (row + 0.25 + Math.random() * 0.5) * cellH;
-          if (this.placeWorldEnemy(x, y, view, kind)) break;
-        }
+    const budget = this.worldBudget;
+    const order = new Uint32Array(cols * rows);
+    for (let i = 0; i < order.length; i++) order[i] = i;
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const swap = order[i];
+      order[i] = order[j];
+      order[j] = swap;
+    }
+    for (const cell of order) {
+      if (this.worldEnemyCount >= budget) return;
+      const col = cell % cols;
+      const row = (cell - col) / cols;
+      const kind = this.waves.pick();
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const x = (col + 0.25 + Math.random() * 0.5) * cellW;
+        const y = (row + 0.25 + Math.random() * 0.5) * cellH;
+        if (this.placeWorldEnemy(x, y, view, kind)) break;
       }
     }
   }
 
-  /** 开局和持续补怪共用：不占完整怪物槽位，不在可见区生成，不创建 Character。 */
+  /**
+   * 开局和持续补怪共用：不占完整怪物槽位，不在可见区生成，不创建 Character。
+   *
+   * 兵种也按当前这一波的比例摇 —— 远处这些人迟早会走进画面变成完整怪物，用统一的随机会让
+   * 第一波里混进弓手，模板写的配比就白写了。
+   */
   private placeWorldEnemy(
     x: number, y: number, view: BattleView,
-    kind: EnemyKind = EnemyKinds[Math.floor(Math.random() * EnemyKinds.length)],
+    kind: EnemyKind = this.waves.pick(),
   ): Reservation | null {
     if (this.worldEnemyCount >= MAX_WORLD_ENEMIES || this.inActiveArea(x, y, view, DESPAWN_MARGIN)) return null;
     const radius = RigSpec.hipHalfWidth * kind.def.bulk * 1.15;
@@ -966,12 +1047,12 @@ export class Battle {
    * 方向是均匀的一整圈，不做任何"这边在图外就换一边"的挑拣 —— 那正是包围感的来源。距离按
    * **沿这个方向走多远才出画面**算，所以每个方向都恰好在看不见的地方生成，不多走一步。
    */
-  spawn(view: BattleView, kinds: readonly EnemyKind[] = EnemyKinds): boolean {
+  spawn(view: BattleView, kind: EnemyKind = this.waves.pick()): boolean {
     const angle = this.spawnAngle();
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
     const r = this.exitDistance(cos, sin, view) + SPAWN_MARGIN + Math.random() * SPAWN_JITTER;
-    return this.place(this.player.x + cos * r, this.player.y + sin * r, view, kinds);
+    return this.place(this.player.x + cos * r, this.player.y + sin * r, view, kind);
   }
 
   /**
@@ -1148,12 +1229,11 @@ export class Battle {
    * 只夹到"图外一圈"这个大框里，**不**夹回场内 —— 图外生成是有意的，见 SPAWN_OUTSIDE。
    * 落点和树重叠就沿着原方向往外挪一点重试；图外没有树，所以那边一次就成。
    */
-  private place(x: number, y: number, view: BattleView, kinds: readonly EnemyKind[] = EnemyKinds): boolean {
+  private place(x: number, y: number, view: BattleView, kind: EnemyKind = this.waves.pick()): boolean {
     if (this.localSpawnRoom() <= 0) return false;
     // 总量满时只置换远离玩家、也不在实际镜头里的数据。可见怪物和即将进场者不动。
-    if (this.worldEnemyCount >= TARGET_WORLD_ENEMIES && !this.releaseDistantSpawnSlot(view)) return false;
+    if (this.worldEnemyCount >= this.worldBudget && !this.releaseDistantSpawnSlot(view)) return false;
     const field = this.field;
-    const kind = kinds[Math.floor(Math.random() * kinds.length)];
     const e = new Character(kind.def, kind.palette, kind.speed);
 
     const px = this.player.x;
@@ -1182,11 +1262,32 @@ export class Battle {
     return true;
   }
 
-  /** 远处占满预算时，附近不足目标数量仍可以按原批次补兵。 */
+  /**
+   * 这一波的全图人数预算。模板给，但不许突破全局的日常预算。
+   *
+   * 它是"人海有多厚"那个旋钮 —— 屏幕上站着多少人主要看它，而不是看出兵补得多勤。
+   */
+  private get worldBudget(): number {
+    return Math.min(TARGET_WORLD_ENEMIES, this.waves.wave.world);
+  }
+
+  /**
+   * 附近还能再放几个。
+   *
+   * 远处占满预算时，附近不足这一波的 crowd 仍然照常补兵 —— 那部分是从远处调过来的名额
+   * （releaseDistantSpawnSlot），总量不变。crowd 逐波变大，所以这个上限也跟着波次走。
+   *
+   * 爆兵期间用的是另一条线：开波那一刻场上有多少人，再加这一波的爆兵数。不这么记的话开场白
+   * 会被吞掉 —— 开波时场上往往已经比 crowd 多（走进画面的那批不经过出兵），按 crowd 算出来
+   * 的余量是 0，一个人也放不出去。
+   */
   private localSpawnRoom(): number {
+    const target = this.waves.surging
+      ? Math.max(this.waves.wave.crowd, this.surgeCeiling)
+      : this.waves.wave.crowd;
     return Math.max(0, Math.min(this.maxEnemies - this.enemies.length, Math.max(
-      TARGET_WORLD_ENEMIES - WORLD_REFILL_RESERVE - this.worldEnemyCount,
-      LOCAL_ENEMY_TARGET - this.enemies.length,
+      this.worldBudget - WORLD_REFILL_RESERVE - this.worldEnemyCount,
+      target - this.enemies.length,
     )));
   }
 
@@ -1233,7 +1334,7 @@ export class Battle {
     this.movePlayer(dt, input);
     this.advanceEnemyArrows(dt);
     this.syncEnemyVisibility(view);
-    this.worldPopulation.update(dt, () => this.enemyPositions(), TARGET_WORLD_ENEMIES - this.worldEnemyCount,
+    this.worldPopulation.update(dt, () => this.enemyPositions(), this.worldBudget - this.worldEnemyCount,
       (x, y) => this.placeWorldEnemy(x, y, view));
     this.spawnWave(dt, view);
     this.advanceSkillSchedule(dt, view);
@@ -2348,26 +2449,29 @@ export class Battle {
 
   // ---------------------------------------------------------------- 出怪
 
+  /**
+   * 按模板出兵。
+   *
+   * 计时是连续的（模板给的是"每秒几个"），真正放人却仍然按 SPAWN_INTERVAL 一小批一小批地
+   * 放 —— 摊到每一帧一个一个地生，人是"渗"进画面的；攒 0.18 秒再一起放，是一小群一起走进来。
+   * 后者才像一支队伍。
+   */
   private spawnWave(dt: number, view: BattleView): void {
+    // 旋钮是模板速度的倍率，顶满就是原速。见 MAX_SPAWN_BATCH。
+    this.waves.update(dt, this.spawnBatch / MAX_SPAWN_BATCH);
+    if (this.waves.takeWaveStart()) this.surgeCeiling = this.enemies.length + this.waves.wave.surge;
     this.spawnTimer += dt;
     while (this.spawnTimer >= SPAWN_INTERVAL) {
       this.spawnTimer -= SPAWN_INTERVAL;
-      // 一次放一批。批量调大了就是一小群一小群涌上来，不再是一个一个挪进画面。
-      const room = this.localSpawnRoom();
-      // 一个批次不跨兵种波：即使菜单把批量调成 7，也不会在最后一批里混入下一种兵。
-      const batch = Math.min(this.spawnBatch, room, this.enemiesLeftInWave);
-      const kinds = EnemyTypeWaves[this.enemyWaveIndex];
+      const batch = this.waves.take(this.localSpawnRoom());
       for (let i = 0; i < batch; i++) {
-        if (!this.spawn(view, kinds)) break;
-        this.enemiesLeftInWave--;
+        // 每个人各自摇兵种：一批里混着几种兵，才不会读成"这一小队全是盾兵"。
+        // 放不下就把剩下的名额退回去，等下一批 —— 配额是模板承诺的人数，不该被一次失败吃掉。
+        if (!this.spawn(view)) {
+          this.waves.refund(batch - i);
+          break;
+        }
       }
-      if (this.enemiesLeftInWave <= 0) this.advanceEnemyWave();
     }
-  }
-
-  /** 当前兵种的一整波出完后，切到下一种并重新计数。 */
-  private advanceEnemyWave(): void {
-    this.enemyWaveIndex = (this.enemyWaveIndex + 1) % EnemyTypeWaves.length;
-    this.enemiesLeftInWave = ENEMIES_PER_TYPE_WAVE;
   }
 }

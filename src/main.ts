@@ -98,6 +98,7 @@ const menu = new Menu({
       maxHp: battle.player.maxHp,
       invincible: battle.invincible,
       spawnBatch: battle.spawnBatch,
+      wave: battle.waveStatus,
       recycled: battle.recycled,
       restored: battle.restored,
       fps: lastFps,
@@ -285,9 +286,14 @@ function onKeyPressed(code: string): void {
   if (code === 'KeyN') battle.nudgeMaxHp(-1);
   if (code === 'KeyM') battle.nudgeMaxHp(1);
 
-  // 出兵批量：一次涌上来几个。
+  // 出兵批量：模板速度的倍率。
   if (code === 'Semicolon') battle.nudgeSpawnBatch(-1);
   if (code === 'Quote') battle.nudgeSpawnBatch(1);
+
+  // 波次：跳到哪一波，以及一步到末波。都会当场把人海补到那一波的预算，见 jumpToWave。
+  if (code === 'KeyO') battle.jumpToWave(battle.waveStatus.wave - 1, viewOf());
+  if (code === 'KeyP') battle.jumpToWave(battle.waveStatus.wave + 1, viewOf());
+  if (code === 'Backslash') battle.jumpToLastWave(viewOf());
 
   // 人数硬上限。这不是玩法旋钮，是性能兜底 —— 场上有多少人由跑步机自己定，见 DESPAWN_MARGIN。
   if (code === 'Comma') battle.maxEnemies = Math.max(200, battle.maxEnemies - 250);

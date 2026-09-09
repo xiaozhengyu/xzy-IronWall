@@ -288,6 +288,11 @@ export class Hud {
 
   draw(field: Field, battle: Battle, camera: Camera): void {
     this.playerInfo.setHealth(Math.max(0, Math.ceil(battle.player.hp)), battle.player.maxHp);
+    // 波次面板：三个数都自己判重，值没变时一个 DOM 节点也不会碰。
+    const wave = battle.waveStatus;
+    this.waveInfo.setWave(wave.wave);
+    this.waveInfo.setCountdown(wave.countdown);
+    this.waveInfo.setWaveProgress(wave.cleared, wave.waves);
     for (let index = 0; index < battle.skillLoadout.activeSkillSlots.length; index++) {
       const skillId = battle.skillLoadout.activeSkillSlots[index];
       this.quickbar.setSkill(index, skillId);

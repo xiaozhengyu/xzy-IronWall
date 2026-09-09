@@ -10,7 +10,7 @@ export interface HudMessages {
   wavePanel: string;
   waveTitle: string;
   nextWaveCountdown: string;
-  bossProgress: string;
+  waveProgress: string;
   pause: string;
   settings: string;
   currencyInfo: string;

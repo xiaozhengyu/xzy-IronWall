@@ -1,6 +1,7 @@
 import './menu.css';
 import { SkillCategoryRules, type SkillCategory, type SkillId } from '../game/skills';
 import { ACTIVE_SKILL_KEYS, type SkillLoadoutSnapshot } from '../game/skillLoadout';
+import type { WaveStatus } from '../game/battle';
 import { cursorCss } from './cursorImage';
 import { HudText } from './text/hudText';
 import type { WeatherKind } from '../world/weather';
@@ -28,8 +29,10 @@ export interface MenuState {
   /** 生命顶到了"无敌"那一档，显示成文字而不是一串九。 */
   invincible: boolean;
 
-  /** 一个出怪间隔放几个人。菜单里可调。 */
+  /** 出兵速度倍率的档位，顶满是模板原速。菜单里可调。 */
   spawnBatch: number;
+  /** 当前波次快照，出兵模板给的。 */
+  wave: WaveStatus;
   /** 这一局回收掉多少人（走出回收框、看不见了的）。用来看跑步机转得对不对。 */
   recycled: number;
   /** 其中有多少是玩家回头之后按预留位置放回去的。 */
@@ -257,7 +260,12 @@ export class Menu {
     this.spins.grain.textContent = `颗粒度 ${s.grain.toFixed(1)} · 人高 ${s.figurePixels} px`;
     this.spins.magnify.textContent = `放大 ${s.magnify}x · 屏幕 ${s.figureScreen} px`;
     this.spins.hp.textContent = s.invincible ? '生命 无敌' : `生命 ${s.maxHp}`;
+    const wave = s.wave;
     this.spins.spawn.textContent = `出兵 x${s.spawnBatch}`;
+    const pinned = wave.pinned > 0 ? ' · 已钉住' : '';
+    this.spins.wave.textContent = wave.holding
+      ? `第 ${wave.wave}/${wave.waves} 波 · 末波续出 · 出兵目标 ${wave.crowd}${pinned}`
+      : `第 ${wave.wave}/${wave.waves} 波 · 下一波 ${Math.ceil(wave.countdown)}s · 出兵目标 ${wave.crowd}${pinned}`;
     this.spins.enemies.textContent = `完整怪物上限 ${s.maxEnemies}`;
 
     const equipped = this.bridge.skills
@@ -337,7 +345,7 @@ export class Menu {
     const keys = el('div', 'menu-keys');
     keys.innerHTML =
       '<b>按住左键</b> 移动 · <b>Shift</b> 跑 · <b>空格</b> 挥击 · <b>Q/W/E/R</b> 主动技能 · ' +
-      '<b>J</b> 换自动攻击 · <b>滚轮</b> 缩放 · <b>I</b> 物品图鉴 · <b>ESC</b> 暂停';
+      '<b>J</b> 换自动攻击 · <b>O/P</b> 上下一波 · <b>\\</b> 末波压测 · <b>滚轮</b> 缩放 · <b>I</b> 物品图鉴 · <b>ESC</b> 暂停';
     card.appendChild(keys);
   }
 
@@ -363,6 +371,11 @@ export class Menu {
     fight.appendChild(this.spin('hp', 'KeyN', 'KeyM'));
     fight.appendChild(this.spin('spawn', 'Semicolon', 'Quote'));
     fight.appendChild(this.spin('enemies', 'Comma', 'Period'));
+
+    // 波次：想测哪一波就跳哪一波，跳的同时把人海补到那一波的预算，不用干等四十秒。
+    const waves = row(parent, '波次');
+    waves.appendChild(this.spin('wave', 'KeyO', 'KeyP'));
+    waves.appendChild(this.button('末波压测', '\\', 'Backslash'));
 
     // ---- 技能装备
     //
