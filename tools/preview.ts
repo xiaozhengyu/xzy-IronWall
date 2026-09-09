@@ -1335,10 +1335,12 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
     shapes.rect(v2(ATLAS_W * 0.75, ATLAS_H / 2), ATLAS_W * 0.5, ATLAS_H, 0, rgb(198, 204, 206), 0);
     const baseline = 21;
     numbers.clear();
-    numbers.spawn(22, 0, 12345, false, 0);
-    numbers.spawn(72, 0, 67890, false, 0);
-    numbers.spawn(155, 0, 1234, false, 0);
-    numbers.spawn(215, 0, 8888, true, 0); // 重击：字模像素放大一倍
+    numbers.spawn(22, 0, 12345, { z: 0 });
+    numbers.spawn(72, 0, 67890, { z: 0 });
+    numbers.spawn(155, 0, 1234, { z: 0 });
+    numbers.spawn(215, 0, 8888, { crit: true, z: 0 }); // 重击：字模像素放大一倍
+    // 推到淡入刚结束：字模表要的是完全亮起来、还没开始上飘的那一帧。
+    for (let k = 0; k < Math.round(0.13 / STEP); k++) numbers.update(STEP);
     numbers.draw(shapes, 0, 0, 0, baseline, GRAIN);
     flush(shapes, atlas);
   }
@@ -1347,10 +1349,13 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   //
   // 镜头钉在**挨打的那一点**上，不是钉在人身上。所以人往右飞出画格、数字留在原地往上飘，
   // 一眼就能看出这两件事是分开的 —— 镜头跟着人的话，数字看着反而像挂在他头顶。
-  const CELL_W = 152;
+  const CELL_W = 168;
   const CELL_H = 108;
-  const SAMPLES = 5;
-  const SPAN = 0.56;
+  // 取样点故意不等距：前三格挤在最初的 0.13 秒里，那正是淡入那一段 —— 要验的就是"人起飞
+  // 的时候画面上还没有字"，等距取样会把这一段跳过去。
+  const SAMPLE_AT = [0, 0.06, 0.13, 0.24, 0.38, 0.56];
+  const SAMPLES = SAMPLE_AT.length;
+  const SPAN = SAMPLE_AT[SAMPLES - 1];
   const strobe = new Canvas(CELL_W * SAMPLES, CELL_H, [71, 105, 59]);
   {
     const palette = PALETTE_RED;
@@ -1360,16 +1365,16 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
     numbers.clear();
     c.kill(c.x - 1, c.y); // 往右飞
     debris.burst(c.x, c.y, 1, 0, 2, palette);
-    numbers.spawn(c.x, c.y, 268, false);
+    numbers.spawn(c.x, c.y, 268, { dirX: 1, dirY: 0 });
 
     // 一次模拟贯穿五格：五格之间是同一次击杀的五个时刻，不是各掷各的。
     let next = 0;
     for (let i = 0; i <= Math.round(SPAN / STEP); i++) {
       const t = i * STEP;
-      if (next < SAMPLES && t >= (next / (SAMPLES - 1)) * SPAN) {
+      if (next < SAMPLES && t >= SAMPLE_AT[next]) {
         const cell = new Canvas(CELL_W, CELL_H, [71, 105, 59]);
         const shapes = new ShapeBatch();
-        const rootX = 26;
+        const rootX = 48; // 落点靠左，但要给反方向让开的那一步留出地方
         const rootY = CELL_H - 8 * GRAIN;
         const at = v2(
           rootX + c.x * GRAIN,
@@ -1402,13 +1407,13 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   {
     const mob: Character[] = [];
     for (let row = 0; row < 5; row++) {
-      for (let col = 0; col < 11; col++) {
+      for (let col = 0; col < 15; col++) {
         const c = new Character(
           row % 2 === 0 ? UnitPresets.thug() : UnitPresets.shieldman(),
           col % 3 === 0 ? PALETTE_BLUE : PALETTE_RED,
           20,
         );
-        c.x = -48 + col * 9.4 + (row % 2) * 4.7;
+        c.x = -66 + col * 9.4 + (row % 2) * 4.7;
         c.y = -18 + row * 9;
         c.facing = Math.PI * 0.5 + (Math.random() - 0.5) * 0.8;
         for (let k = 0; k < 20; k++) c.update(STEP, true);
@@ -1422,7 +1427,13 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
     for (let i = 0; i < 14; i++) {
       const victim = mob[Math.floor(Math.random() * mob.length)];
       const crit = i % 5 === 0;
-      numbers.spawn(victim.x, victim.y, crit ? 620 + Math.floor(Math.random() * 300) : 130 + Math.floor(Math.random() * 210), crit);
+      const away = Math.random() * Math.PI * 2;
+      numbers.spawn(
+        victim.x,
+        victim.y,
+        crit ? 620 + Math.floor(Math.random() * 300) : 130 + Math.floor(Math.random() * 210),
+        { crit, dirX: Math.cos(away), dirY: Math.sin(away) },
+      );
       for (let k = 0; k < 5; k++) numbers.update(STEP);
     }
 
@@ -1450,9 +1461,10 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
     ATLAS_H + CELL_H + CROWD_H + GUTTER * 2,
     [22, 24, 20],
   );
-  sheet.blit(atlas, 0, 0);
-  sheet.blit(strobe, 0, ATLAS_H + GUTTER);
-  sheet.blit(crowd, 0, ATLAS_H + CELL_H + GUTTER * 2);
+  const mid = (w: number) => Math.round((sheet.width - w) / 2);
+  sheet.blit(atlas, mid(ATLAS_W), 0);
+  sheet.blit(strobe, mid(CELL_W * SAMPLES), ATLAS_H + GUTTER);
+  sheet.blit(crowd, mid(CROWD_W), ATLAS_H + CELL_H + GUTTER * 2);
   writePng('.preview-damage.png', sheet.upscale(2));
-  console.log('扣血数字：字模表 + 一次击杀分帧 5 格（镜头钉在落点）+ 人堆里 14 个数字');
+  console.log(`扣血数字：字模表 + 一次击杀分帧 ${SAMPLES} 格（镜头钉在落点，取样于 ${SAMPLE_AT.join(' / ')} 秒）+ 人堆里 14 个数字`);
 }

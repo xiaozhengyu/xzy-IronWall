@@ -1,4 +1,4 @@
-import { v2 } from '../core/math';
+import { clamp, v2 } from '../core/math';
 import { type Rgba, rgb, rgba } from '../render/color';
 import { Projection } from '../render/projection';
 import type { ShapeBatch } from '../render/shapeBatch';
@@ -20,8 +20,10 @@ import type { ShapeBatch } from '../render/shapeBatch';
  *   所以字模在烘的时候连描边一起烘：描边是字身按八邻域膨胀一圈再挖掉字身，两者一个像素都
  *   不重叠，于是整个数字可以整体半透明地化掉，而不会在接缝处叠出深浅。
  *
- *   **数字脱离人**。人被掀飞，数字留在挨打的那一点往上飘。跟着尸体飞的数字读作绑在人身上的
- *   标签，而这一下的信息属于"这里发生了什么"，不属于那具正在翻滚的尸体。
+ *   **数字给掀飞让路**。人被掀飞，数字留在挨打的那一点往上飘 —— 跟着尸体飞的数字读作绑在
+ *   人身上的标签，而这一下的信息属于"这里发生了什么"，不属于那具正在翻滚的尸体。但"留在
+ *   原地"还不够：头顶那一格正是掀飞前半段轨迹扫过的地方，而被打飞的人本身就是这一下最好看
+ *   的部分。所以数字往击飞的**反方向**让开一步，再淡入登场（见 BACK_OFF / FADE_IN）。
  *
  * 池子定长、定型数组、一个对象都不分配 —— 一次回旋能同时结算上百人，理由和 Debris 一样。
  */
@@ -127,6 +129,26 @@ const RISE = 11;
 /** 左右各飘多少 —— 只为让同一堆里连着炸出来的几个数字不叠在一条竖线上。 */
 const DRIFT = 4;
 
+/**
+ * 往击飞的反方向让开多少个世界单位。
+ *
+ * 人是从落点往外飞的，所以反方向那一侧**一定**是空出来的 —— 这不是赌一个方向，是跟着这一下
+ * 自己的方向走。7 个单位约等于三分之一个身位：够把数字从飞行轨迹上挪开，又还贴着挨打的那
+ * 个人，不至于读成旁边另一个人头上的数。
+ */
+const BACK_OFF = 7;
+
+/**
+ * 淡入多久，秒。
+ *
+ * 这是"压一点点时间"的柔和版：硬压 0.12 秒再瞬间亮起，数字自己会读成闪了一下；淡入则是
+ * 那一段时间里画面上根本没有它，最爆的定格 + 起飞那几帧干干净净，等人飞开了字才浮出来。
+ *
+ * 淡入期间**位置不动**（见 draw 里的 riseT）：一边淡入一边上飘的话，字浮出来时已经飘到半空，
+ * 和挨打的那个人对不上了。
+ */
+const FADE_IN = 0.13;
+
 /** 头顶再往上一点点，别贴着头皮。头顶本身在 18.3（headZ 15.8 + headRadius 2.5）。 */
 const HEAD_Z = 20.5;
 
@@ -139,12 +161,36 @@ const CRIT_BOTTOM = rgb(255, 96, 42);
 /** 描边色。和 PixelSurface 那圈合成描边同一个色温，数字才像和画面烘在一起。 */
 const EDGE = rgb(24, 18, 16);
 
-/** 数字压在所有人之上，但在雨雪（16000）之下 —— 它是场上的事件，不是贴在镜头上的东西。 */
-const DEPTH_EDGE = 15800;
-const DEPTH_FILL = 15802;
+/**
+ * 数字压在场上所有东西之上。读数被谁挡住都等于没有，而人堆里随便一具站得更靠下的尸体
+ * 就能把它吃掉。
+ *
+ * 这个数被两头夹着，所以不能随手写一个"很大的数"：
+ *
+ *   **下界**是人物的深度，也就是屏幕行 × DEPTH_PER_ROW(32)。缓冲有多少行取决于窗口和
+ *   放大倍数（4K 屏 + magnify 1 是两千多行，也就是七万出头），所以早先那个 16000 在大窗口
+ *   下压根不够 —— 贴着屏幕下沿的敌人本来就画在数字上面。
+ *
+ *   **上界**来自 ShapeBatch 的基数排序：它每轮处理 11 位，量化深度（×8）的跨度只要不超过
+ *   2^22 就是两轮。20 万 × 8 = 160 万，仍在两轮之内；再大一个量级就要多排一轮，而排序是
+ *   每帧全场图元都要走的。
+ *
+ * 顺带压过了雨雪那一层（它自己写死 16000）：读数不该被雨点打断。
+ */
+const DEPTH_EDGE = 200000;
+const DEPTH_FILL = 200002;
 
 /** 拆位用的暂存，最多六位。每帧几十个数字，不该为这个分配数组。 */
 const digits = new Int32Array(6);
+
+export interface DamageNumberOptions {
+  crit?: boolean;
+  /** 这个人被掀飞的去向。数字往它的反方向让开一步，见 BACK_OFF。 */
+  dirX?: number;
+  dirY?: number;
+  /** 从多高冒出来，世界单位。默认头顶。 */
+  z?: number;
+}
 
 export class DamageNumbers {
   private readonly x = new Float32Array(CAPACITY);
@@ -170,18 +216,25 @@ export class DamageNumbers {
   /**
    * 在 (x, y) 的头顶弹一个数字出来。
    *
-   * @param crit 重击：字放大一倍、颜色更烫、活得久一点。
-   * @param z    从多高冒出来，世界单位。默认头顶。
+   * @param options.crit      重击：字放大一倍、颜色更烫、活得久一点。
+   * @param options.dirX/dirY 这个人被掀飞的去向（不用是单位向量，这里自己归一）。给了就往
+   *                          它的反方向让开一步，把飞行轨迹让出来；不给就原地起。
+   * @param options.z         从多高冒出来，世界单位。默认头顶。
    */
-  spawn(x: number, y: number, value: number, crit = false, z = HEAD_Z): void {
+  spawn(x: number, y: number, value: number, options: DamageNumberOptions = {}): void {
     if (this.count >= CAPACITY) return;
     const i = this.count++;
-    this.x[i] = x;
-    this.y[i] = y;
-    this.z[i] = z;
+    const crit = options.crit ?? false;
+    // 反方向让开。方向是零向量（贴脸打的那种）时不让，随机漂移仍然会把它错开。
+    const dx = options.dirX ?? 0;
+    const dy = options.dirY ?? 0;
+    const len = Math.hypot(dx, dy);
+    this.x[i] = len > 1e-4 ? x - (dx / len) * BACK_OFF : x;
+    this.y[i] = len > 1e-4 ? y - (dy / len) * BACK_OFF : y;
+    this.z[i] = options.z ?? HEAD_Z;
     this.drift[i] = (Math.random() - 0.5) * 2 * DRIFT;
     this.age[i] = 0;
-    this.life[i] = LIFE * (crit ? 1.25 : 1) * (0.9 + Math.random() * 0.2);
+    this.life[i] = FADE_IN + LIFE * (crit ? 1.25 : 1) * (0.9 + Math.random() * 0.2);
     this.value[i] = Math.max(0, Math.round(value));
     this.crit[i] = crit ? 1 : 0;
   }
@@ -217,10 +270,16 @@ export class DamageNumbers {
     const base = Math.max(1, Math.min(4, Math.round(scale / 3)));
 
     for (let i = 0; i < this.count; i++) {
-      const t = this.age[i] / this.life[i];
+      const age = this.age[i];
+      const life = this.life[i];
+      const t = age / life;
+      // 上飘从淡入结束才开始算 —— 淡入这一段人还在飞，数字定在原地浮出来。
+      const riseT = clamp((age - FADE_IN) / Math.max(life - FADE_IN, 1e-4), 0, 1);
       // 起手窜得快、末尾几乎停住。匀速上升读作一个飘走的气球，而这一下是被打出来的。
-      const ease = 1 - (1 - t) * (1 - t);
-      const alpha = t < FADE_FROM ? 255 : Math.round(255 * (1 - (t - FADE_FROM) / (1 - FADE_FROM)));
+      const ease = 1 - (1 - riseT) * (1 - riseT);
+      const fadeIn = clamp(age / FADE_IN, 0, 1);
+      const fadeOut = t < FADE_FROM ? 1 : 1 - (t - FADE_FROM) / (1 - FADE_FROM);
+      const alpha = Math.round(255 * fadeIn * fadeOut);
       if (alpha <= 3) continue;
 
       const wx = this.x[i] + this.drift[i] * ease;

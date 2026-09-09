@@ -1637,7 +1637,8 @@ export class Battle {
     // 是为了让画面先长出这一层：等伤害真的算出来了，把 rollDamage 换成那个数就行，特效这
     // 一侧一行都不用改。
     const roll = rollDamage(power);
-    this.damageNumbers.spawn(e.x, e.y, roll.value, roll.crit);
+    // dx/dy 就是这个人被掀飞的去向 —— 数字拿它往反方向让开，把飞行轨迹留给画面。
+    this.damageNumbers.spawn(e.x, e.y, roll.value, { crit: roll.crit, dirX: dx, dirY: dy });
   }
 
   /**
