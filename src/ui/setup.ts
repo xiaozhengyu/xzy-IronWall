@@ -35,12 +35,24 @@ const CATEGORY_ICONS: Record<SkillCategory, HudIconName> = {
   active: 'fire',
 };
 
-export interface SetupMarker {
-  /** 已经归一化到 0..1 的地图坐标。界面不认识世界单位。 */
+/**
+ * 地图上的一个点位。
+ *
+ * 坐标是**框内的比例**（0..1），不是像素。渲染那边算位置用的是缓冲像素，而 DOM 上一个像素
+ * 是另一回事（画布被等比放大到窗口上），两者的数值差着一个缩放系数 —— 传比例就没有这笔账。
+ */
+export interface MapPin {
   u: number;
   v: number;
+  /** 空串 = 只画一个点，不写字。缩小到点位挤在一起时就这么办。 */
   label: string;
   kind: 'start' | 'camp';
+  /** 目标在视野之外：这一枚贴在框边上，画成一个指向它的箭头。 */
+  edge: boolean;
+  /** 贴边时箭头指向哪儿，弧度，屏幕坐标系（x 向右、y 向下）。 */
+  angle: number;
+  /** 名字摆在点的左边。贴着右半边框的时候要，否则字会顶出框外。 */
+  flip: boolean;
 }
 
 export interface SetupBridge {
@@ -51,10 +63,8 @@ export interface SetupBridge {
    * 每次调用给一张**新的**画布 —— 一张画布只能挂在 DOM 的一个地方，而头像列表里和底栏都要用。
    */
   portrait(hero: HeroDef): HTMLCanvasElement | null;
-  /** 地图缩略图。同上，每次给一张新的。 */
+  /** 地图缩略图，左栏列表卡片用。同上，每次给一张新的。 */
   mapImage(map: GameMapDef): HTMLCanvasElement | null;
-  /** 地图上要标出来的点。 */
-  markers(map: GameMapDef): SetupMarker[];
   /** 选中的角色变了 —— 主循环拿它换中间那个模型。 */
   onHeroChange(hero: HeroDef): void;
   /** 选中的地图变了 —— 主循环拿它换底下那排敌人。 */
@@ -149,6 +159,16 @@ export class SetupScreen {
   readonly heroStage = el('div', 'setup-stage-hero');
   /** 地图详图。 */
   private readonly stageMap = el('div', 'setup-stage-map');
+  /**
+   * 地图那个框。**建一次就一直用**，不跟着重建 —— 拖动和滚轮的监听挂在它身上，每次重建
+   * 都会把监听丢掉。框里没有图：地图是画在画布上的（见 Scene.drawMapView），这个框只负责
+   * 占位、描边，以及装点位。
+   */
+  readonly mapFrame = el('div', 'setup-map-frame');
+  private readonly mapBox = el('div', 'setup-map-box');
+  private readonly mapPins = el('div', 'setup-map-pins');
+  /** 点位元素池。每帧都要摆位置，反复 new 是白扔。 */
+  private readonly pinNodes: HTMLElement[] = [];
   /**
    * 底下那排敌人的空框，按 map.foes 的顺序。
    *
@@ -392,27 +412,15 @@ export class SetupScreen {
     // 中间那张详图：底图是真的烘出来的这块地，标记点是真的坐标。
     this.stageMap.replaceChildren();
 
-    // 上半：详图。底图是真的烘出来的这块地，标记点是真的坐标。
-    const box = el('div', 'setup-map-box');
-    const frame = el('div', 'setup-map-frame');
-    const image = this.bridge.mapImage(map);
-    if (image) frame.appendChild(image);
-    for (const marker of this.bridge.markers(map)) {
-      const dot = el('span', `setup-marker ${marker.kind}`);
-      dot.style.left = `${marker.u * 100}%`;
-      dot.style.top = `${marker.v * 100}%`;
-      dot.appendChild(el('i'));
-      dot.appendChild(el('span', 'setup-marker-k', marker.label));
-      frame.appendChild(dot);
-    }
-    box.appendChild(frame);
-    this.stageMap.appendChild(box);
+    // 上半：详图。框是常驻的，地图本身画在画布上，框里只有点位。
+    this.stageMap.appendChild(this.mapBox);
 
     const legend = el('div', 'setup-legend');
     legend.appendChild(el('span', 'setup-legend-i start'));
     legend.appendChild(el('span', undefined, '进入位置'));
     legend.appendChild(el('span', 'setup-legend-i camp'));
     legend.appendChild(el('span', undefined, '营地'));
+    legend.appendChild(el('span', 'setup-legend-t', '左键拖动 · 滚轮缩放'));
     this.stageMap.appendChild(legend);
 
     // 下半：这张图上会遇到谁。**框是空的** —— 人由画布画在框里，因为他们要走要挥，
@@ -429,6 +437,37 @@ export class SetupScreen {
       this.foeSlots.push(frame);
     }
     this.stageMap.appendChild(roster);
+  }
+
+  /**
+   * 把这一帧的点位摆上去。
+   *
+   * 元素池按最大用量长，多出来的收起来不删 —— 拖动地图时这个函数每帧都跑一次，反复建删
+   * DOM 是最容易在拖动里做出卡顿的地方。
+   */
+  setMapPins(pins: readonly MapPin[]): void {
+    for (let i = 0; i < pins.length; i++) {
+      const pin = pins[i];
+      let node = this.pinNodes[i];
+      if (!node) {
+        node = el('span', 'setup-pin');
+        node.appendChild(el('i', 'setup-pin-mark'));
+        node.appendChild(el('span', 'setup-pin-k'));
+        this.pinNodes.push(node);
+        this.mapPins.appendChild(node);
+      }
+      node.hidden = false;
+      node.className = `setup-pin ${pin.kind}${pin.edge ? ' edge' : ''}${pin.flip ? ' flip' : ''}`;
+      node.style.left = `${pin.u * 100}%`;
+      node.style.top = `${pin.v * 100}%`;
+      const mark = node.firstElementChild as HTMLElement;
+      // 贴边指引才转向；框里的点位是一个正方块，转了反而看不出是同一种东西。
+      mark.style.transform = pin.edge ? `rotate(${pin.angle}rad)` : '';
+      const label = node.lastElementChild as HTMLElement;
+      label.textContent = pin.label;
+      label.hidden = pin.label === '';
+    }
+    for (let i = pins.length; i < this.pinNodes.length; i++) this.pinNodes[i].hidden = true;
   }
 
   // ---------------------------------------------------------------- 底栏
@@ -495,6 +534,9 @@ export class SetupScreen {
     const colLeft = el('div', 'setup-col l');
     colLeft.appendChild(this.list);
     body.appendChild(colLeft);
+
+    this.mapFrame.appendChild(this.mapPins);
+    this.mapBox.appendChild(this.mapFrame);
 
     const colMid = el('div', 'setup-col m');
     const stageHead = el('div', 'setup-stage-head');

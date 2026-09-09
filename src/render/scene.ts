@@ -1,4 +1,4 @@
-import { Container, RenderTexture, Sprite, type Renderer } from 'pixi.js';
+import { Container, Graphics, RenderTexture, Sprite, type Renderer } from 'pixi.js';
 import { RigSpec } from '../characters/rig';
 import { drawAegisDome } from '../effects/aegisDome';
 import { drawDharmaAspect } from '../effects/dharmaAspect';
@@ -51,6 +51,28 @@ export interface StageFigure {
   /** 只放大地块，不动人。不给就是 1。 */
   tileScale?: number;
 }
+
+/**
+ * 选图那一步那张地图的视口：镜头在哪儿、多大、画在缓冲的哪个矩形里。
+ *
+ * 矩形由界面那边量出来（DOM 摆框，画布跟着框走），镜头由拖动和滚轮改。
+ */
+export interface MapView {
+  rect: { x: number; y: number; w: number; h: number };
+  camX: number;
+  camY: number;
+  /** 每世界单位多少缓冲像素。和打仗时的 grain 是同一个量。 */
+  grain: number;
+}
+
+/**
+ * 地图预览里，一屏窄到多少个世界单位才开始画草石和树。
+ *
+ * 500 大约是"能看出这一带长什么样"的分界：再远，一棵树不到一个像素，画出来只是给整片林地
+ * 加一层噪点，而底图本来就把林地烘成了深一档的绿；再近，玩家已经在看局部地形了，树是那时候
+ * 最有信息量的东西。它同时也是性能闸门 —— 整幅两千多棵树没必要每帧都算一遍。
+ */
+const MAP_DETAIL_SPAN = 500;
 
 /** 每帧从外面传进来的、不属于世界本身的东西。 */
 export interface SceneOverlay {
@@ -141,6 +163,19 @@ export class Scene {
   private readonly itemSprites: Sprite[] = [];
 
   /**
+   * 地面精灵和地图预览共用的一层。
+   *
+   * 单独裹一个容器是为了**遮罩**：选图那一步要把真实地图画在界面上那个框里，而画布是整块的，
+   * 不裁的话地面会铺满整屏、从框边溢出去。打仗时这一层不带遮罩（mask = null），一分开销
+   * 都不多付。
+   */
+  private readonly worldGround = new Container();
+  /** 地图预览那一层的图元（树、草石、营地）。和战场那一批分开，因为它要跟着遮罩走。 */
+  private readonly mapPrim = new PrimitiveMesh(120_000);
+  /** 遮罩本体：一个矩形。只有选图那一步用得上。 */
+  private readonly mapClip = new Graphics();
+
+  /**
    * 敌人走平涂档（见 characters/renderer.ts 的 lite）。
    *
    * 只给敌人，玩家永远画全 —— 他就一个，省不出什么，而他是玩家在人海里唯一要找的东西，
@@ -172,6 +207,11 @@ export class Scene {
     this.surface = new PixelSurface(renderer, camera.magnify);
     this.itemLayer.visible = false;
     this.surface.units.addChild(this.prim.mesh, this.itemLayer);
+    this.worldGround.addChild(this.mapPrim.mesh);
+    // 遮罩本体要挂在显示树上（Pixi 要靠它算变换），但它不会被画到颜色缓冲里 —— 被当成
+    // 遮罩用的对象自动排除在正常绘制之外。所以这里**不能**把它设成 visible = false：那样
+    // 连模板缓冲那一遍也会被跳过。不用的时候把几何清空就够了，见 clearMapClip。
+    this.surface.ground.addChild(this.worldGround, this.mapClip);
   }
 
   /** 挂到 stage 上的那个精灵：放大后的整帧。 */
@@ -181,7 +221,8 @@ export class Scene {
 
   /** 地面的两个精灵不参与批次，直接挂在不描边的那一层上。 */
   attachField(field: Field): void {
-    this.surface.ground.addChild(field.ground.sprite, field.ground.shadowSprite);
+    this.worldGround.addChildAt(field.ground.sprite, 0);
+    this.worldGround.addChildAt(field.ground.shadowSprite, 1);
   }
 
   /**
@@ -210,6 +251,7 @@ export class Scene {
     const t0 = performance.now();
     this.itemLayer.visible = false;
     this.setGroundVisible(field, true);
+    this.clearMapClip();
     const cam = this.camera;
     const { x: camX, y: camY, rootX, rootY, grain } = cam;
     const shapes = this.shapes;
@@ -385,10 +427,13 @@ export class Scene {
    * 敌人为什么不烘成图片：他们要走要挥。取一次图是一次 GPU 回读，每帧回读五个人是拿不出手
    * 的开销，而画在画布上本来就是这套渲染最擅长的事，一帧五个人不值一提。
    */
-  drawStages(field: Field, stages: readonly StageFigure[]): void {
+  drawStages(field: Field, stages: readonly StageFigure[], map: MapView | null = null): void {
     const t0 = performance.now();
     this.itemLayer.visible = false;
-    this.setGroundVisible(field, false);
+    // 地面精灵只在画地图预览时露出来 —— 台子上那块地是现画的，不用它。
+    this.setGroundVisible(field, map !== null);
+    if (map) this.drawMapView(field, map);
+    else this.clearMapClip();
 
     this.prim.begin();
     const shapes = this.shapes;
@@ -402,6 +447,59 @@ export class Scene {
     this.drawn = stages.length;
     this.surface.render();
     this.buildMs = smooth(this.buildMs, performance.now() - t0);
+  }
+
+  /**
+   * 选图那一步中间那张地图：**就是战场本身**，不是一张烘好的缩略图。
+   *
+   * 地面走的是游戏里那张烘出来的底图精灵（GroundSurface.layout，和打仗时同一个调用）；
+   * 草石、树、营地走的是 Terrain/Props 自己的绘制，和打仗时同一批函数、同一个批次。所以
+   * 玩家在这里看到的地形边界、林地位置、营地位置，和进去之后看到的是同一份数据。
+   *
+   * **细节按缩放分档**。整幅看的时候一屏 1200 个世界单位，把两千多棵树全画出来既没必要
+   * （一棵树不到一个像素）又拖帧；底图那张纹理本身已经把林地画成了深一档的绿。放大到能看清
+   * 地形之后才铺草石和树 —— 玩家这时候关心的正是"这一带长什么样"。
+   *
+   * 遮罩是必须的：画布是整块的，而这张图只该出现在界面那个框里。
+   */
+  private drawMapView(field: Field, map: MapView): void {
+    const { rect, camX, camY, grain } = map;
+    const rootX = rect.x + rect.w * 0.5;
+    const rootY = rect.y + rect.h * 0.5;
+
+    // 遮罩比框小一圈：框自己那条 1 像素的边归 DOM 画，地图不该盖在上面。
+    this.mapClip.clear();
+    this.mapClip.rect(rect.x + 1, rect.y + 1, Math.max(0, rect.w - 2), Math.max(0, rect.h - 2));
+    this.mapClip.fill(0xffffff);
+    this.worldGround.mask = this.mapClip;
+
+    field.ground.update(camX, camY, rect.w * 0.5 / grain, rect.h * 0.5 / grain);
+    field.ground.layout(camX, camY, rootX, rootY, grain, this.surface.width, this.surface.height);
+    // 云影那张图是按整屏铺的，套在这个框上就是一块盖住地图的灰纱，直接收起来。
+    field.ground.shadowSprite.visible = false;
+
+    this.mapPrim.begin();
+    const spanX = rect.w * 0.5 / grain;
+    const spanY = rect.h * 0.5 / (grain * Projection.groundSquash);
+    if (spanX * 2 <= MAP_DETAIL_SPAN) {
+      const shapes = this.shapes;
+      field.terrain.drawDetail(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
+      field.terrain.drawScatter(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
+      field.terrain.drawTrees(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
+      field.props.draw(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
+      shapes.flushToMesh(this.mapPrim, this.surface.width, this.surface.height);
+    }
+    this.mapPrim.end();
+  }
+
+  /** 把遮罩摘掉。打仗和人物台都要走这一步，否则地面会被上一次那个框裁着。 */
+  private clearMapClip(): void {
+    if (this.worldGround.mask === null) return;
+    this.worldGround.mask = null;
+    // 几何清空：万一某个版本的 Pixi 在摘掉遮罩之后又把它当普通图形画出来，画的也是空的。
+    this.mapClip.clear();
+    this.mapPrim.begin();
+    this.mapPrim.end();
   }
 
   /**

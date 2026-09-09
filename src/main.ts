@@ -10,9 +10,9 @@ import { ACTIVE_SKILL_CODES, type ActiveSkillSlot } from './game/skillLoadout';
 import { Field } from './game/field';
 import { ItemCatalog } from './items/catalog';
 import { ItemSheet } from './items/renderer';
-import { v2 } from './core/math';
+import { clamp, v2 } from './core/math';
 import { Camera } from './render/camera';
-import type { StageFigure } from './render/scene';
+import type { MapView, StageFigure } from './render/scene';
 import { Projection } from './render/projection';
 import { Scene } from './render/scene';
 import { Props } from './world/props';
@@ -21,7 +21,7 @@ import type { WeatherKind } from './world/weather';
 import { Controls } from './ui/controls';
 import { Hud } from './ui/hud';
 import { Menu } from './ui/menu';
-import { SetupScreen, type SetupMarker, type SetupStep } from './ui/setup';
+import { SetupScreen, type MapPin, type SetupStep } from './ui/setup';
 import './style.css';
 
 /**
@@ -352,7 +352,7 @@ app.ticker.add((ticker) => {
       drawHeroStage();
     } else if (setup.showsFoeStage) {
       updateFoes(dt);
-      drawFoeStage();
+      drawMapStep();
     }
     return;
   }
@@ -378,7 +378,7 @@ addEventListener('resize', () => {
   if (state === 'setup' || state === 'entering') {
     scene.resize(app.screen.width, app.screen.height, app.renderer.resolution);
     if (setup.showsHeroStage) drawHeroStage();
-    else if (setup.showsFoeStage) drawFoeStage();
+    else if (setup.showsFoeStage) drawMapStep();
     return;
   }
   if (state === 'paused') {
@@ -597,7 +597,24 @@ function updateFoes(dt: number): void {
   });
 }
 
-function drawFoeStage(): void {
+/**
+ * 选图那一步的一帧：地图 + 底下那排敌人 + 地图上的点位。
+ *
+ * 顺序是**先量后写**：量框的位置会逼浏览器立刻算一遍布局，而写点位的位置又会把布局作废。
+ * 两者交替着来，每一帧都要多算好几遍版 —— 拖动地图时那就是看得见的卡顿。所以框的尺寸这一
+ * 帧只量一次，点位最后一起写。
+ */
+function drawMapStep(): void {
+  const map = setup.currentMap;
+  const rect = mapRect();
+  if (rect.w <= 0 || rect.h <= 0) return;
+  if (mapCam.grain <= 0) resetMapCam(map);
+  clampMapCam(map, rect);
+  drawFoeStage(mapViewOf(rect));
+  setup.setMapPins(mapPinsOf(map, rect));
+}
+
+function drawFoeStage(map: MapView | null = null): void {
   const slots = setup.foeSlots;
   const stages: StageFigure[] = [];
   for (let i = 0; i < foeActors.length && i < slots.length; i++) {
@@ -611,7 +628,7 @@ function drawFoeStage(): void {
       scrollY: foeScroll[i].y,
     });
   }
-  scene.drawStages(field, stages);
+  scene.drawStages(field, stages, map);
 }
 
 /** 一个角色的头像。列表和底栏都要，画一次存着，见 SetupScreen.portraitOf。 */
@@ -650,6 +667,24 @@ function mapImageData(map: GameMapDef): ImageData | null {
   return mapPixels.get(map.id) ?? null;
 }
 
+/**
+ * 这张地图上的营地。
+ *
+ * Props.place 是确定性的（同一份地形、同一个种子摆在同一处），所以这里摆出来的就是进去
+ * 之后看到的那几处。存一份是因为点位每帧都要算一遍，而摆营地要在地形上试探几百次。
+ */
+const mapPropsCache = new Map<string, Props>();
+
+function mapProps(map: GameMapDef): Props {
+  let props = mapPropsCache.get(map.id);
+  if (!props) {
+    props = new Props();
+    props.place(terrainOf(map), 4);
+    mapPropsCache.set(map.id, props);
+  }
+  return props;
+}
+
 /** 每次给一张新画布：一张画布只能挂在 DOM 的一个地方，而缩略图和详图都要用。 */
 function mapCanvas(map: GameMapDef): HTMLCanvasElement | null {
   const pixels = mapImageData(map);
@@ -662,21 +697,130 @@ function mapCanvas(map: GameMapDef): HTMLCanvasElement | null {
 }
 
 /**
- * 地图上标出来的点，坐标归一化到 0..1。
+ * 地图预览的镜头：看着世界的哪一点、多大。
  *
- * 营地是**真的**营地坐标：Props.place 是确定性的（同一份地形、同一个种子摆在同一处），
- * 所以这里重新摆一遍拿到的就是进去之后看到的那几处。
+ * 和战斗那个 Camera 是两回事，所以单独存一份：那个跟着玩家走、有出怪视口和回收框；这个只
+ * 被拖动和滚轮改，唯一的约束是别把镜头拖到地图外面去。
  */
-function mapMarkers(map: GameMapDef): SetupMarker[] {
-  const props = new Props();
-  props.place(terrainOf(map), 4);
-  const marks: SetupMarker[] = [
-    { u: 0.5, v: 0.5, label: '进入位置', kind: 'start' },
+const mapCam = { x: 0, y: 0, grain: 1, dragX: 0, dragY: 0, dragging: false };
+
+/** 地图能缩到多小、放到多大。放大的上限就是出货那一档 —— 再大也不会比进游戏看到的更真。 */
+const MAP_ZOOM_MAX = Camera.DEFAULT_GRAIN;
+const MAP_ZOOM_STEP = 1.18;
+
+/** 点位挤到多近就不写字了，缓冲像素。 */
+const PIN_LABEL_GAP = 52;
+/** 再近就连点都合并掉。 */
+const PIN_MERGE_GAP = 14;
+/** 贴边指引离框边留多少，缓冲像素。 */
+const PIN_EDGE_INSET = 13;
+
+/** 地图框在缓冲里的矩形。DOM 摆框，画布跟着框走。 */
+function mapRect() {
+  return boxToBuffer(setup.mapFrame);
+}
+
+/** 整幅刚好铺满框时的颗粒度。缩放的下限就是它 —— 再缩就是在框里看一张越来越小的邮票。 */
+function mapFitGrain(map: GameMapDef, rect: { w: number; h: number }): number {
+  return Math.min(rect.w / map.width, rect.h / (map.height * Projection.groundSquash));
+}
+
+/**
+ * 把镜头夹回地图里。
+ *
+ * 视野比地图大的那一档（缩到底时）直接钉在正中：那时候"拖动"没有任何意义，让它纹丝不动比
+ * 让它在框里滑来滑去清楚得多。
+ */
+function clampMapCam(map: GameMapDef, rect: { w: number; h: number }): void {
+  const halfW = rect.w * 0.5 / mapCam.grain;
+  const halfH = rect.h * 0.5 / (mapCam.grain * Projection.groundSquash);
+  mapCam.x = halfW * 2 >= map.width ? map.width * 0.5 : clamp(mapCam.x, halfW, map.width - halfW);
+  mapCam.y = halfH * 2 >= map.height ? map.height * 0.5 : clamp(mapCam.y, halfH, map.height - halfH);
+}
+
+/** 回到整幅。换地图、进这一步时都从这儿起步。 */
+function resetMapCam(map: GameMapDef): void {
+  const rect = mapRect();
+  if (rect.w <= 0) return; // 这一步还没显示出来，量不到框；显示时会再走一次。
+  mapCam.grain = mapFitGrain(map, rect);
+  mapCam.x = map.width * 0.5;
+  mapCam.y = map.height * 0.5;
+  mapCam.dragging = false;
+}
+
+function mapViewOf(rect: MapView['rect']): MapView {
+  return { rect, camX: mapCam.x, camY: mapCam.y, grain: mapCam.grain };
+}
+
+/**
+ * 这一帧地图上要摆哪些点位。
+ *
+ * 三件事在这里一起决定，因为它们互相牵扯：
+ *
+ *   **在不在视野里**。在框里的画一个点；被拖出去的不是丢掉，而是贴到框边上画成一个指向它的
+ *   箭头 —— 玩家放大之后仍然知道营地在哪个方向。
+ *
+ *   **写不写名字**。缩到整幅时几处营地会挤成一团，四个"营地"叠在一起谁也读不出来。所以按
+ *   屏幕距离贪心地筛一遍：太近的不写字，再近的连点都并掉。留下来的那些字一定是看得清的。
+ *
+ *   **名字摆哪边**。贴着框右半边的点，字要摆到点的左边去，否则顶出框外。
+ */
+function mapPinsOf(map: GameMapDef, rect: { w: number; h: number }): MapPin[] {
+  const spots: { x: number; y: number; label: string; kind: 'start' | 'camp' }[] = [
+    { x: map.width * 0.5, y: map.height * 0.5, label: '进入位置', kind: 'start' },
   ];
-  for (const prop of props.list) {
-    marks.push({ u: prop.x / map.width, v: prop.y / map.height, label: '营地', kind: 'camp' });
-  }
-  return marks;
+  for (const prop of mapProps(map).list) spots.push({ x: prop.x, y: prop.y, label: '营地', kind: 'camp' });
+
+  const pins: MapPin[] = [];
+  const placed: { x: number; y: number; labelled: boolean }[] = [];
+  const cx = rect.w * 0.5;
+  const cy = rect.h * 0.5;
+  spots.forEach((spot, index) => {
+    const x = cx + (spot.x - mapCam.x) * mapCam.grain;
+    const y = cy + (spot.y - mapCam.y) * Projection.groundSquash * mapCam.grain;
+    const inside = x >= PIN_EDGE_INSET && x <= rect.w - PIN_EDGE_INSET
+      && y >= PIN_EDGE_INSET && y <= rect.h - PIN_EDGE_INSET;
+
+    if (!inside) {
+      // 贴边指引：从框中心朝目标射一条线，落在框内缘上的那一点就是它该待的地方。
+      const dx = x - cx;
+      const dy = y - cy;
+      const k = Math.min(
+        Math.abs(dx) < 1e-3 ? Infinity : (cx - PIN_EDGE_INSET) / Math.abs(dx),
+        Math.abs(dy) < 1e-3 ? Infinity : (cy - PIN_EDGE_INSET) / Math.abs(dy),
+      );
+      const ex = cx + dx * k;
+      const ey = cy + dy * k;
+      pins.push({
+        u: ex / rect.w,
+        v: ey / rect.h,
+        // 进入位置一直写字（只有一个，不会挤）；营地贴边时只留箭头，四个"营地"沿着框边排开
+        // 反而更乱。
+        label: spot.kind === 'start' ? spot.label : '',
+        kind: spot.kind,
+        edge: true,
+        angle: Math.atan2(dy, dx),
+        flip: ex > cx,
+      });
+      return;
+    }
+
+    // 太近的先并掉，只留先来的那一个。第一个是进入位置，所以它永远留得住。
+    if (placed.some((p) => Math.hypot(p.x - x, p.y - y) < PIN_MERGE_GAP)) return;
+    const crowded = placed.some((p) => p.labelled && Math.hypot(p.x - x, p.y - y) < PIN_LABEL_GAP);
+    const labelled = index === 0 || !crowded;
+    placed.push({ x, y, labelled });
+    pins.push({
+      u: x / rect.w,
+      v: y / rect.h,
+      label: labelled ? spot.label : '',
+      kind: spot.kind,
+      edge: false,
+      angle: 0,
+      flip: x > cx,
+    });
+  });
+  return pins;
 }
 
 /** 换角色：形象 + 那一套默认技能。数值还没有，所以只有这两样。 */
@@ -719,23 +863,24 @@ const setup = new SetupScreen(
     maps: GameMaps,
     portrait: heroPortrait,
     mapImage: mapCanvas,
-    markers: mapMarkers,
     onHeroChange: (hero) => {
       preview.def = heroUnitDef(hero);
       drawHeroStage();
     },
     onMapChange: (map) => {
       syncFoeActors(map);
-      drawFoeStage();
+      resetMapCam(map);
+      drawMapStep();
     },
     onStepChange: (step: SetupStep) => {
       if (step === 'hero') {
         drawHeroStage();
         return;
       }
-      // 选图那一步画布上换成底下那排敌人。人物台的那块地必须擦掉，不然它会从详图边上露出来。
+      // 选图那一步画布上换成地图加底下那排敌人。人物台那块地必须擦掉，不然会从地图边上露出来。
       syncFoeActors(setup.currentMap);
-      drawFoeStage();
+      resetMapCam(setup.currentMap);
+      drawMapStep();
     },
     onStart: enterMap,
   },
@@ -755,8 +900,54 @@ setup.heroStage.addEventListener('mousedown', (event) => {
   stage.moving = true;
 });
 addEventListener('mouseup', (event) => {
-  if (event.button === 0) stage.moving = false;
+  if (event.button === 0) {
+    stage.moving = false;
+    mapCam.dragging = false;
+  }
 });
+
+// 地图框：左键拖动看别处，滚轮缩放。
+//
+// 缩放**以光标为锚**：光标底下那一点在缩放前后落在同一个像素上。以框心为锚的话，玩家想看
+// 角落里那处营地时得先放大再把它拖回来，每一次都要两步。
+setup.mapFrame.addEventListener('mousedown', (event) => {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  mapCam.dragging = true;
+  mapCam.dragX = event.clientX;
+  mapCam.dragY = event.clientY;
+});
+setup.mapFrame.addEventListener('mousemove', (event) => {
+  if (!mapCam.dragging) return;
+  const view = app.canvas.getBoundingClientRect();
+  const kx = camera.viewWidth / Math.max(1, view.width);
+  const ky = camera.viewHeight / Math.max(1, view.height);
+  // 拖的是地图不是镜头，所以镜头往反方向走。
+  mapCam.x -= ((event.clientX - mapCam.dragX) * kx) / mapCam.grain;
+  mapCam.y -= ((event.clientY - mapCam.dragY) * ky) / (mapCam.grain * Projection.groundSquash);
+  mapCam.dragX = event.clientX;
+  mapCam.dragY = event.clientY;
+});
+setup.mapFrame.addEventListener(
+  'wheel',
+  (event) => {
+    event.preventDefault();
+    const rect = mapRect();
+    const view = app.canvas.getBoundingClientRect();
+    const px = ((event.clientX - view.left) / Math.max(1, view.width)) * camera.viewWidth - rect.x - rect.w * 0.5;
+    const py = ((event.clientY - view.top) / Math.max(1, view.height)) * camera.viewHeight - rect.y - rect.h * 0.5;
+    // 缩放前光标指着世界的哪一点。
+    const worldX = mapCam.x + px / mapCam.grain;
+    const worldY = mapCam.y + py / (mapCam.grain * Projection.groundSquash);
+    const fit = mapFitGrain(setup.currentMap, rect);
+    const next = mapCam.grain * (event.deltaY <= 0 ? MAP_ZOOM_STEP : 1 / MAP_ZOOM_STEP);
+    mapCam.grain = clamp(next, fit, MAP_ZOOM_MAX);
+    // 缩放后把那一点挪回光标底下。
+    mapCam.x = worldX - px / mapCam.grain;
+    mapCam.y = worldY - py / (mapCam.grain * Projection.groundSquash);
+  },
+  { passive: false },
+);
 
 // ---------------------------------------------------------------- 开场
 
