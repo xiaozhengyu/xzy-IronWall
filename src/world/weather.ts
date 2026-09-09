@@ -1,6 +1,7 @@
 import { clamp, lerp, v2, type Vec2 } from '../core/math';
 import { type Rgba, rgb, rgba } from '../render/color';
 import { Projection } from '../render/projection';
+import { Projector } from '../render/projector';
 import type { ShapeBatch } from '../render/shapeBatch';
 
 /**
@@ -21,6 +22,10 @@ export type WeatherKind = 'clear' | 'rain' | 'snow';
 const MAX_DROPS = 420;
 /** 下落物按这个边长的世界方格平铺，镜头周围铺 2x2 块。 */
 const DROP_TILE = 520;
+
+/** 雨滴雪片那一层，和落地的水点。两者只差一档：水点是落在地上的记号，该在雨丝之下。 */
+const DEPTH_PRECIP = Projector.DEPTH_OVERLAY + 10;
+const DEPTH_SPLASH = Projector.DEPTH_OVERLAY;
 const CLOUD_GRID = 16;
 
 const SNOW_GROUND = rgb(220, 226, 232);
@@ -309,12 +314,13 @@ export class Weather {
       const gxs = rootX + (wx - camX) * scale;
       const gys = rootY + (wy - camY) * Projection.groundSquash * scale;
 
-      // 所有东西都落在所有东西前面：降水在镜头和世界之间，不参与排序。
+      // 所有东西都落在所有东西前面：降水在镜头和世界之间，不参与排序。深度取
+      // DEPTH_OVERLAY 那一档，见它自己的注释 —— 原来写死的 16000 只压得住第 500 行以上的人。
       const sy = gys - d.height * Projection.heightSquash * scale;
 
       if (this.kind === 'snow') {
         const size = Math.max(1, 1.4 * scale * d.speed);
-        shapes.rect(v2(gxs, sy), size, size, 0, SNOW_INK, 16000);
+        shapes.rect(v2(gxs, sy), size, size, 0, SNOW_INK, DEPTH_PRECIP);
         continue;
       }
 
@@ -322,12 +328,12 @@ export class Weather {
       // "它现在在哪"一起画出来才是雨。被风斜到看得出来 —— 大风里画成近乎垂直的雨，
       // 正是让天气看起来是画上去而不是刮过去的那个细节。
       const len = (5 + d.speed * 5) * Math.max(scale, 0.5);
-      shapes.bar(v2(gxs, sy), v2(gxs - dir.x * push * len * 1.9, sy + len), Math.max(0.9, scale * 0.8), RAIN_INK, 16000);
+      shapes.bar(v2(gxs, sy), v2(gxs - dir.x * push * len * 1.9, sy + len), Math.max(0.9, scale * 0.8), RAIN_INK, DEPTH_PRECIP);
 
       // 落地前最后一段在地上留一个点。没有水花的雨看着像从世界旁边落过去，而不是落到世界上。
       if (d.height < 26) {
         const k = 1 - d.height / 26;
-        shapes.rect(v2(gxs, gys), 3 * scale, 1, 0, rgba(SPLASH_INK.r, SPLASH_INK.g, SPLASH_INK.b, Math.round(SPLASH_INK.a * k)), 15990);
+        shapes.rect(v2(gxs, gys), 3 * scale, 1, 0, rgba(SPLASH_INK.r, SPLASH_INK.g, SPLASH_INK.b, Math.round(SPLASH_INK.a * k)), DEPTH_SPLASH);
       }
     }
   }

@@ -1,6 +1,7 @@
 import { clamp, v2 } from '../core/math';
 import { type Rgba, rgb, rgba } from '../render/color';
 import { Projection } from '../render/projection';
+import { Projector } from '../render/projector';
 import type { ShapeBatch } from '../render/shapeBatch';
 
 /**
@@ -162,23 +163,12 @@ const CRIT_BOTTOM = rgb(255, 96, 42);
 const EDGE = rgb(24, 18, 16);
 
 /**
- * 数字压在场上所有东西之上。读数被谁挡住都等于没有，而人堆里随便一具站得更靠下的尸体
- * 就能把它吃掉。
- *
- * 这个数被两头夹着，所以不能随手写一个"很大的数"：
- *
- *   **下界**是人物的深度，也就是屏幕行 × DEPTH_PER_ROW(32)。缓冲有多少行取决于窗口和
- *   放大倍数（4K 屏 + magnify 1 是两千多行，也就是七万出头），所以早先那个 16000 在大窗口
- *   下压根不够 —— 贴着屏幕下沿的敌人本来就画在数字上面。
- *
- *   **上界**来自 ShapeBatch 的基数排序：它每轮处理 11 位，量化深度（×8）的跨度只要不超过
- *   2^22 就是两轮。20 万 × 8 = 160 万，仍在两轮之内；再大一个量级就要多排一轮，而排序是
- *   每帧全场图元都要走的。
- *
- * 顺带压过了雨雪那一层（它自己写死 16000）：读数不该被雨点打断。
+ * 数字压在场上所有东西之上，连降水也压过 —— 读数被谁挡住都等于没有，而人堆里随便一具站得
+ * 更靠下的尸体、或者一场雨，都能把它吃掉。为什么是 DEPTH_OVERLAY 而不是随手一个大数，见
+ * 那个常量自己的注释。
  */
-const DEPTH_EDGE = 200000;
-const DEPTH_FILL = 200002;
+const DEPTH_EDGE = Projector.DEPTH_OVERLAY + 20000;
+const DEPTH_FILL = DEPTH_EDGE + 2;
 
 /** 拆位用的暂存，最多六位。每帧几十个数字，不该为这个分配数组。 */
 const digits = new Int32Array(6);

@@ -12,6 +12,25 @@ export class Projector {
    */
   static readonly DEPTH_PER_ROW = 32;
 
+  /**
+   * 排在"所有按屏幕行排序的东西"之上的那一档。想画在全场之前的东西从它起步。
+   *
+   * 不能随手写一个"很大的数"，这个值被两头夹着：
+   *
+   *   **下界**是最靠下那一行的人，也就是缓冲行数 × DEPTH_PER_ROW。缓冲有多少行跟着窗口和
+   *   放大倍数走 —— 1080p 配 magnify 2 是 540 行、一万七千多，4K 配 magnify 1 是两千多行、
+   *   七万出头。所以一万六只够到第 500 行：屏幕底下那一带的人反过来压住了本该在最前面的
+   *   东西，而这个毛病只在大窗口、只在画面下缘出现，肉眼很难注意到（见
+   *   tools/preview.ts 的 .preview-rain-depth.png）。
+   *
+   *   **上界**来自 ShapeBatch 的基数排序：它每轮处理 11 位，量化深度（×8）的跨度不超过
+   *   2^22 就是两轮。18 万 × 8 = 144 万，仍在两轮之内；再大一个量级，每帧全场图元就要多排
+   *   一轮，而那是每一帧都要付的。
+   *
+   * 用它的人各自往上错开一点点：降水 +10，扣血数字 +20000（读数不该被雨点打断）。
+   */
+  static readonly DEPTH_OVERLAY = 180000;
+
   private readonly root: Vec2;
   private readonly sin: number;
   private readonly cos: number;

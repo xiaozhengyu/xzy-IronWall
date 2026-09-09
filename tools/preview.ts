@@ -1468,3 +1468,73 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   writePng('.preview-damage.png', sheet.upscale(2));
   console.log(`扣血数字：字模表 + 一次击杀分帧 ${SAMPLES} 格（镜头钉在落点，取样于 ${SAMPLE_AT.join(' / ')} 秒）+ 人堆里 14 个数字`);
 }
+
+// ---------------------------------------------------------------- 降水压不压得住人
+//
+// 降水那一层写的是"在镜头和世界之间，不参与排序"，可它给的深度是一个**常数**，而人物的
+// 深度是屏幕行 × DEPTH_PER_ROW(32)。两者一比，常数就变成了一条横在画面上的线：线以上的
+// 人被雨压住（对），线以下的人反过来压住雨（错）。
+//
+// 一张图同时给出线的两侧：上下两排是同一批人、同一场雨，唯一的区别是画在缓冲的第几行。
+// 上排在 16000 / 32 = 第 500 行**之上**，下排在它之下。改对了两排该长得一模一样。
+{
+  const W = 420;
+  const H = 640;
+  const rain = new Weather();
+  rain.kind = 'rain';
+  rain.intensity = 1;
+  // 让雨先下一会儿：初始高度是随机撒的，落一秒之后才是稳定的雨幕。
+  for (let i = 0; i < 60; i++) rain.update(1 / 60);
+
+  const tall = new Canvas(W, H, [71, 105, 59]);
+  const shapes = new ShapeBatch();
+  const ROWS = [112, 604];
+  // 排成密不透风的一堵人：雨点是稀的，人稀的话两者根本碰不上，这张图就什么也说明不了。
+  for (const row of ROWS) {
+    for (let i = 0; i < 15; i++) {
+      const c = new Character(UnitPresets.shieldman(), i % 2 === 0 ? PALETTE_BLUE : PALETTE_RED, 20);
+      c.facing = Math.PI * 0.5;
+      for (let k = 0; k < 20; k++) c.update(1 / 120, true);
+      drawCharacter(
+        shapes,
+        c.pose,
+        new Projector(v2(14 + i * 28, row), c.facing, Projection.groundSquash, GRAIN),
+        c.palette,
+        c.def,
+      );
+    }
+  }
+  // 雨叠四帧。一帧的雨太稀，落在人身上的只有零星几滴，看不出规律；四帧叠起来是同一场雨的
+  // 四个瞬间，密度够读，而每一滴仍然是真正画出来的那一滴。
+  for (let f = 0; f < 4; f++) {
+    rain.draw(shapes, 0, 0, W / 2, H / 2, GRAIN);
+    rain.update(1 / 30);
+  }
+  const sink = new ShapeSink();
+  shapes.flushToMesh(sink);
+  for (const s of sink.shapes) tall.fillPolygon(s);
+
+  /** 从整幅里裁一条横带出来：两排离得很远，中间那四百行没有内容，不值得出图。 */
+  const crop = (y0: number, h: number): Canvas => {
+    const out = new Canvas(W, h, [0, 0, 0]);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < W; x++) {
+        const si = ((y0 + y) * W + x) * 3;
+        const di = (y * W + x) * 3;
+        out.data[di] = tall.data[si];
+        out.data[di + 1] = tall.data[si + 1];
+        out.data[di + 2] = tall.data[si + 2];
+      }
+    }
+    return out;
+  };
+
+  const TOP_H = 118;
+  const BOTTOM_H = 112;
+  const GUTTER = 4;
+  const sheet = new Canvas(W, TOP_H + BOTTOM_H + GUTTER, [22, 24, 20]);
+  sheet.blit(crop(48, TOP_H), 0, 0);
+  sheet.blit(crop(H - BOTTOM_H, BOTTOM_H), 0, TOP_H + GUTTER);
+  writePng('.preview-rain-depth.png', sheet.upscale(2));
+  console.log(`降水深度：同一批人同一场雨，上排画在第 ${ROWS[0]} 行、下排第 ${ROWS[1]} 行（16000 那条线在第 500 行）`);
+}
