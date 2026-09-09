@@ -21,6 +21,7 @@ import { Character } from '../src/game/character';
 import { Battle } from '../src/game/battle';
 import { DEFAULT_SPAWN_TEMPLATE } from '../src/game/waves';
 import { Field } from '../src/game/field';
+import { DamageNumbers } from '../src/effects/damageNumbers';
 import { Debris } from '../src/effects/debris';
 import { v2 } from '../src/core/math';
 import { Projection } from '../src/render/projection';
@@ -1299,4 +1300,159 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
 
   writePng('.preview-waves.png', sheet);
   console.log('波次密度对照：第 1 / 3 / 5 / 8 波各跑到稳态，玩家一直在走，同一画幅');
+}
+
+// ---------------------------------------------------------------- 扣血数字
+//
+// 三行看三件事，因为这一层的毛病各出在各的地方：
+//
+//   上排 字模   十个数字摊开，一半压在草地上、一半压在亮甲色的板子上，右边再来一个重击档。
+//               看的是烘出来的点阵和描边本身：笔画是不是一像素、亮字压在亮底上还断不断。
+//   中排 连拍   一次击杀按真实世界坐标频闪。人往右飞，数字留在挨打的那一点往上飘 ——
+//               这一排要验的就是"数字不跟着尸体走"，单帧看不出来。
+//   下排 人堆   几十个人挤在一起时同时炸出十来个数字。看的是可读性：数字压不压得住人，
+//               以及一次群杀会不会糊成一片噪点。
+{
+  const STEP = 1 / 120;
+  const numbers = new DamageNumbers();
+
+  /** 把攒好的图元刷进一张画布。三行都走这一条路。 */
+  const flush = (shapes: ShapeBatch, canvas: Canvas) => {
+    const sink = new ShapeSink();
+    shapes.flushToMesh(sink);
+    for (const s of sink.shapes) canvas.fillPolygon(s);
+  };
+
+  // --- 上排：字模表 -------------------------------------------------------
+  //
+  // z 传 0，于是数字的底边正好落在 rootY 上 —— 摆字模表要的是精确落位，不是头顶那个偏移。
+  const ATLAS_W = 760;
+  const ATLAS_H = 30;
+  const atlas = new Canvas(ATLAS_W, ATLAS_H, [71, 105, 59]);
+  {
+    const shapes = new ShapeBatch();
+    // 右半边铺一块亮甲色：亮字压在亮底上是描边唯一真正要扛的场面。
+    shapes.rect(v2(ATLAS_W * 0.75, ATLAS_H / 2), ATLAS_W * 0.5, ATLAS_H, 0, rgb(198, 204, 206), 0);
+    const baseline = 21;
+    numbers.clear();
+    numbers.spawn(22, 0, 12345, false, 0);
+    numbers.spawn(72, 0, 67890, false, 0);
+    numbers.spawn(155, 0, 1234, false, 0);
+    numbers.spawn(215, 0, 8888, true, 0); // 重击：字模像素放大一倍
+    numbers.draw(shapes, 0, 0, 0, baseline, GRAIN);
+    flush(shapes, atlas);
+  }
+
+  // --- 中排：一次击杀的分帧 -----------------------------------------------
+  //
+  // 镜头钉在**挨打的那一点**上，不是钉在人身上。所以人往右飞出画格、数字留在原地往上飘，
+  // 一眼就能看出这两件事是分开的 —— 镜头跟着人的话，数字看着反而像挂在他头顶。
+  const CELL_W = 152;
+  const CELL_H = 108;
+  const SAMPLES = 5;
+  const SPAN = 0.56;
+  const strobe = new Canvas(CELL_W * SAMPLES, CELL_H, [71, 105, 59]);
+  {
+    const palette = PALETTE_RED;
+    const c = new Character(UnitPresets.thug(), palette, 20);
+    c.facing = Math.PI * 0.5; // 面朝镜头，被从左边打过来
+    const debris = new Debris();
+    numbers.clear();
+    c.kill(c.x - 1, c.y); // 往右飞
+    debris.burst(c.x, c.y, 1, 0, 2, palette);
+    numbers.spawn(c.x, c.y, 268, false);
+
+    // 一次模拟贯穿五格：五格之间是同一次击杀的五个时刻，不是各掷各的。
+    let next = 0;
+    for (let i = 0; i <= Math.round(SPAN / STEP); i++) {
+      const t = i * STEP;
+      if (next < SAMPLES && t >= (next / (SAMPLES - 1)) * SPAN) {
+        const cell = new Canvas(CELL_W, CELL_H, [71, 105, 59]);
+        const shapes = new ShapeBatch();
+        const rootX = 26;
+        const rootY = CELL_H - 8 * GRAIN;
+        const at = v2(
+          rootX + c.x * GRAIN,
+          rootY + (c.y * Projection.groundSquash - c.lift * Projection.heightSquash) * GRAIN,
+        );
+        drawCharacter(
+          shapes,
+          c.pose,
+          new Projector(at, c.facing, Projection.groundSquash, GRAIN),
+          palette,
+          c.def,
+          { lift: c.lift, hurt: c.hurt },
+        );
+        debris.draw(shapes, 0, 0, rootX, rootY, GRAIN, () => 1e4);
+        numbers.draw(shapes, 0, 0, rootX, rootY, GRAIN);
+        flush(shapes, cell);
+        strobe.blit(cell, next * CELL_W, 0);
+        next++;
+      }
+      c.update(STEP, true);
+      debris.update(STEP);
+      numbers.update(STEP);
+    }
+  }
+
+  // --- 下排：人堆里的可读性 -----------------------------------------------
+  const CROWD_W = CELL_W * SAMPLES;
+  const CROWD_H = 152;
+  const crowd = new Canvas(CROWD_W, CROWD_H, [71, 105, 59]);
+  {
+    const mob: Character[] = [];
+    for (let row = 0; row < 5; row++) {
+      for (let col = 0; col < 11; col++) {
+        const c = new Character(
+          row % 2 === 0 ? UnitPresets.thug() : UnitPresets.shieldman(),
+          col % 3 === 0 ? PALETTE_BLUE : PALETTE_RED,
+          20,
+        );
+        c.x = -48 + col * 9.4 + (row % 2) * 4.7;
+        c.y = -18 + row * 9;
+        c.facing = Math.PI * 0.5 + (Math.random() - 0.5) * 0.8;
+        for (let k = 0; k < 20; k++) c.update(STEP, true);
+        mob.push(c);
+      }
+    }
+
+    // 一次群杀：每隔几帧再炸一个，于是同一张图上各个数字各在各的年纪 —— 刚弹出来的、
+    // 飘到一半的、正在化掉的都有，这才是实战里一眼扫过去的样子。
+    numbers.clear();
+    for (let i = 0; i < 14; i++) {
+      const victim = mob[Math.floor(Math.random() * mob.length)];
+      const crit = i % 5 === 0;
+      numbers.spawn(victim.x, victim.y, crit ? 620 + Math.floor(Math.random() * 300) : 130 + Math.floor(Math.random() * 210), crit);
+      for (let k = 0; k < 5; k++) numbers.update(STEP);
+    }
+
+    const shapes = new ShapeBatch();
+    const rootX = CROWD_W / 2;
+    const rootY = CROWD_H - 12 * GRAIN;
+    for (const c of mob) {
+      const at = v2(rootX + c.x * GRAIN, rootY + c.y * Projection.groundSquash * GRAIN);
+      drawCharacter(
+        shapes,
+        c.pose,
+        new Projector(at, c.facing, Projection.groundSquash, GRAIN),
+        c.palette,
+        c.def,
+        { lift: c.lift, hurt: c.hurt },
+      );
+    }
+    numbers.draw(shapes, 0, 0, rootX, rootY, GRAIN);
+    flush(shapes, crowd);
+  }
+
+  const GUTTER = 4;
+  const sheet = new Canvas(
+    Math.max(ATLAS_W, CELL_W * SAMPLES, CROWD_W),
+    ATLAS_H + CELL_H + CROWD_H + GUTTER * 2,
+    [22, 24, 20],
+  );
+  sheet.blit(atlas, 0, 0);
+  sheet.blit(strobe, 0, ATLAS_H + GUTTER);
+  sheet.blit(crowd, 0, ATLAS_H + CELL_H + GUTTER * 2);
+  writePng('.preview-damage.png', sheet.upscale(2));
+  console.log('扣血数字：字模表 + 一次击杀分帧 5 格（镜头钉在落点）+ 人堆里 14 个数字');
 }

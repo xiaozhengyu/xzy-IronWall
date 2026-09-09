@@ -3,6 +3,7 @@ import { RigSpec } from '../characters/rig';
 import { PALETTE_HERO, type CharacterPalette } from '../characters/palette';
 import { type UnitDef, UnitPresets } from '../characters/unitDef';
 import { clamp } from '../core/math';
+import { DamageNumbers } from '../effects/damageNumbers';
 import { Debris } from '../effects/debris';
 import { ImpactEffects, frontRadius, weaponImpactPoint, type ShockwaveOptions } from '../effects/impact';
 import { SKY_BLADE_LENGTH, SKY_BLADE_WIDTH } from '../effects/skyBlade';
@@ -562,6 +563,21 @@ interface Reservation extends EnemyMover {
   maxHp: number;
 }
 
+/**
+ * 占位的伤害数：**不是**结算出来的，见 slay 里的调用点。
+ *
+ * 之所以按 power 分档而不是随便掷一个数：这一层要检的是"平砍和技能在画面上分不分得出来"，
+ * 而那个差别正是数字的量级和重击的比例。两档之间留出一个明显的空档（平砍最多 90，技能最
+ * 少 130），否则一眼扫过去两种打击的数字混在一起，这一层就白加了。
+ */
+function rollDamage(power: number): { value: number; crit: boolean } {
+  const skill = power >= 2;
+  // 重击在技能上更容易出，让大招那一下偶尔炸出一个特别烫的数。
+  const crit = Math.random() < (skill ? 0.18 : 0.09);
+  const base = skill ? 130 + Math.random() * 210 * (power - 1) : 34 + Math.random() * 56;
+  return { value: Math.round(base * (crit ? 2.4 : 1)), crit };
+}
+
 export class Battle {
   readonly player: Character;
   readonly enemies: Character[] = [];
@@ -569,6 +585,8 @@ export class Battle {
   readonly effects = new ImpactEffects();
   /** 打碎溅出来的血珠和甲片。同上：谁放出来的归战斗管，画它的是 Scene。 */
   readonly debris = new Debris();
+  /** 头顶飘起来的扣血数字。数值还没接上，见 rollDamage。 */
+  readonly damageNumbers = new DamageNumbers();
   /** 地图上的掉落物。数值结算尚未接入，目前只负责生成、落地和吸附。 */
   readonly collectibles = new Collectibles();
   /** 当前一局实际拾取的宝石数，HUD 用于循环进度；暂不参与升级或奖励。 */
@@ -908,6 +926,7 @@ export class Battle {
     this.resetSkillRuntime();
     this.enemyArrows.length = 0;
     this.debris.clear();
+    this.damageNumbers.clear();
     this.collectibles.clear();
     this.collectedGems = 0;
     this.collectedCoins = 0;
@@ -1351,6 +1370,7 @@ export class Battle {
 
     this.effects.update(dt);
     this.debris.update(dt);
+    this.damageNumbers.update(dt);
     this.collectibles.update(dt, player);
     this.collectedGems += this.collectibles.collected.gem;
     this.collectedCoins += this.collectibles.collected.coin;
@@ -1612,6 +1632,12 @@ export class Battle {
       dy /= len;
     }
     this.debris.burst(e.x, e.y, dx, dy, power, e.palette);
+
+    // 扣血数字。目前**没有接数值** —— 场上是碰到就死，掉血量根本不存在。这里掷出来的数只
+    // 是为了让画面先长出这一层：等伤害真的算出来了，把 rollDamage 换成那个数就行，特效这
+    // 一侧一行都不用改。
+    const roll = rollDamage(power);
+    this.damageNumbers.spawn(e.x, e.y, roll.value, roll.crit);
   }
 
   /**

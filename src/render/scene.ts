@@ -268,6 +268,10 @@ export class Scene {
       Math.round(cam.worldToScreen(camX, worldY).y) * Projector.DEPTH_PER_ROW,
     );
 
+    // 扣血数字压在所有人和碎片之上。它是读数，被谁挡住都等于没有 —— 而人堆里随便一具
+    // 站得更靠下的尸体就能把它吃掉。
+    battle.damageNumbers.draw(shapes, camX, camY, rootX, rootY, grain);
+
     // 溅起来的水珠画在人之后：它们是被脚踢起来的，该压在鞋面上。
     field.footsteps.drawSplashes(shapes, camX, camY, rootX, rootY, grain);
     // 落下的雨雪在所有东西之前 —— 它在镜头和世界之间，不参与排序。
