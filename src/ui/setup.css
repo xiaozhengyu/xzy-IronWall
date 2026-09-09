@@ -2,8 +2,11 @@
  * 备战界面。和暂停面板同一套配色和字体 —— 这两块是玩家在同一个游戏里看到的两块界面，
  * 长得不像会读成两个软件。
  *
- * 布局只有一条硬规则：左中右 22% / 48% / 30%，右下角主按钮固定在同一个位置。两步之间只换
- * 内容不换骨架，玩家的视线路径因此始终是「左边挑 → 中间看 → 右下角按」。
+ * 一条贯穿全文件的规则：**底色加在内容块上，不加在栏上，更不加在根上。**
+ *
+ * 这一屏有三处东西是画在画布上的（左栏的人物、中栏的地图、右栏的敌人），而这一层 DOM 盖在
+ * 画布之上。给栏或者根加半透明底色，看到的就是"人被一块颜色蒙住了" —— 这个坑踩过两次。
+ * 所以列表、信息块、底栏各自上底色，画布那三块留空。
  */
 
 .setup {
@@ -23,21 +26,10 @@
   color: #cdd5e4;
   user-select: none;
   /*
-   * 整个界面框的高度。要和画布对齐的元素按它取尺寸，而不是写死像素 —— 画布是一张固定
-   * 960×540 的缓冲，写死像素的话，窗口一大，框里的人就跟着缩水（框是 CSS 像素，人是缓冲
-   * 像素，两者只有按这个比例给才同步）。
+   * 整框的高度。要和画布对齐的元素按它取尺寸，而不是写死像素 —— 画布是一张固定 960×540 的
+   * 缓冲，写死像素的话窗口一大，框里的人就跟着缩水。
    */
   --frame-h: min(100vh, 56.25vw);
-  /*
-   * 中间那一栏必须**完全透明**。
-   *
-   * 原来这里给了 0.22 的一层暗色，想着"压一压背景"，结果压的是人 —— 模型画在画布上，而这
-   * 一层盖在画布之上，于是那个人整个蒙着一层灰，一眼就看得出被什么东西挡着。左右两栏才是
-   * 需要底色的地方，中间只借画布。
-   */
-  background:
-    linear-gradient(90deg, rgba(11, 13, 18, 0.94) 0%, rgba(11, 13, 18, 0.9) 20%, rgba(11, 13, 18, 0) 30%,
-      rgba(11, 13, 18, 0) 68%, rgba(11, 13, 18, 0.9) 76%, rgba(11, 13, 18, 0.94) 100%);
 }
 
 .setup[hidden] {
@@ -48,8 +40,7 @@
  * hidden 要能压住 display。
  *
  * 浏览器自带的 [hidden] { display: none } 权重最低，任何一条给了 display 的类选择器都会把它
- * 顶掉 —— 于是 el.hidden = true 的元素照样画在那儿。这一条踩过：从选图返回选人时，地图详图
- * 和人物模型叠在了一起。
+ * 顶掉 —— 于是 el.hidden = true 的元素照样画在那儿。
  */
 .setup [hidden] {
   display: none !important;
@@ -59,18 +50,11 @@
 
 .setup-top {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 20px 10px;
-  background: rgba(11, 13, 18, 0.9);
-  border-bottom: 1px solid #232a38;
-}
-
-.setup-top-l {
-  display: flex;
   align-items: baseline;
   gap: 14px;
+  padding: 10px 20px 8px;
+  background: rgba(11, 13, 18, 0.9);
+  border-bottom: 1px solid #232a38;
 }
 
 .setup-brand {
@@ -79,49 +63,9 @@
   color: #f0e6d2;
 }
 
-.setup-back,
-.setup-swap {
-  padding: 3px 10px;
-  font: inherit;
-  font-size: 12px;
-  color: #cdd5e4;
-  background: #171b24;
-  border: 1px solid #2b3242;
-  cursor: pointer;
-}
-
-.setup-back:hover,
-.setup-swap:hover {
-  border-color: #46536d;
-  color: #f0e6d2;
-}
-
-.setup-steps {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.setup-lead {
   font-size: 12px;
   color: #6f7a90;
-}
-
-.setup-step {
-  padding: 3px 10px;
-  font: inherit;
-  font-size: 12px;
-  color: #6f7a90;
-  background: transparent;
-  border: 1px solid transparent;
-  cursor: pointer;
-}
-
-.setup-step:disabled {
-  cursor: default;
-}
-
-.setup-step.on {
-  color: #f0e6d2;
-  background: #1b2130;
-  border-color: #3a4459;
 }
 
 /* ---------------------------------------------------------------- 三栏 */
@@ -129,52 +73,57 @@
 .setup-body {
   flex: 1;
   display: flex;
+  gap: 10px;
   min-height: 0;
+  padding: 10px;
 }
 
+/*
+ * 三栏宽度是**锁死**的。
+ *
+ * 只写 width 是不够的：flex 子项的默认最小宽度是 min-content，内容一宽就把栏顶开 —— 表现
+ * 是"选了技能多的那个角色，左栏自己变宽了"。flex: none 关掉伸缩、min-width: 0 关掉那条自动
+ * 最小宽度，栏宽才真的只由这一个百分比决定。
+ */
 .setup-col {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  gap: 8px;
+  min-width: 0;
   min-height: 0;
-  overflow-y: auto;
 }
 
 .setup-col.l {
-  width: 22%;
-  padding: 12px;
-  border-right: 1px solid #232a38;
+  width: 30%;
 }
 
 .setup-col.m {
-  width: 48%;
-  display: flex;
-  flex-direction: column;
-  padding: 12px 16px;
-  overflow: hidden;
+  width: 44%;
 }
 
 .setup-col.r {
-  width: 30%;
-  padding: 12px 16px;
-  background: rgba(11, 13, 18, 0.92);
-  border-left: 1px solid #232a38;
+  width: 26%;
 }
 
-/* ---- 左栏列表 */
+/* ---------------------------------------------------------------- 左：带谁去 */
 
 .setup-list {
+  flex: none;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .setup-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px;
+  padding: 6px 8px;
   font: inherit;
   text-align: left;
   color: #cdd5e4;
-  background: #12151c;
+  background: rgba(18, 21, 28, 0.92);
   border: 1px solid #2b3242;
   cursor: pointer;
 }
@@ -184,7 +133,7 @@
 }
 
 .setup-item.on {
-  background: #1b2130;
+  background: rgba(27, 33, 48, 0.95);
   border-color: #c8a45c;
   box-shadow: inset 2px 0 0 #c8a45c;
 }
@@ -193,6 +142,13 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+.setup-item-k,
+.setup-item-v {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .setup-item-k {
@@ -204,31 +160,21 @@
   color: #6f7a90;
 }
 
-/* 头像和缩略图都是最近邻放大的像素画，别让浏览器插值糊掉。 */
-.setup-face,
-.setup-thumb {
+.setup-face {
   flex: none;
   display: grid;
   place-items: center;
+  width: 36px;
+  height: 36px;
   overflow: hidden;
   color: #6f7a90;
   background: #0b0d12;
   border: 1px solid #2b3242;
 }
 
-.setup-face {
-  width: 40px;
-  height: 40px;
-}
-
-.setup-thumb {
-  width: 54px;
-  height: 34px;
-}
-
+/* 头像和缩略图都是最近邻放大的像素画，别让浏览器插值糊掉。 */
 .setup-face canvas,
-.setup-thumb canvas,
-.setup-map-frame canvas {
+.setup-strip-thumb canvas {
   display: block;
   width: 100%;
   height: 100%;
@@ -236,56 +182,82 @@
   image-rendering: pixelated;
 }
 
-/* ---- 中栏 */
-
-.setup-stage-head {
-  flex: none;
-  text-align: center;
+/* 人物台：透明，只占地方。人画在底下的画布上。 */
+.setup-stage {
+  flex: 1;
+  min-height: 0;
 }
 
-.setup-stage-k {
-  margin: 0;
-  font-size: 17px;
-  font-weight: normal;
-  letter-spacing: 0.14em;
+.setup-tags {
+  flex: none;
+  padding: 8px 10px;
+  background: rgba(11, 13, 18, 0.92);
+  border: 1px solid #232a38;
+}
+
+.setup-tags-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.setup-tags-k {
   color: #f0e6d2;
 }
 
-.setup-stage-lead {
-  margin: 2px 0 0;
+.setup-tags-v {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
+  color: #97a1b5;
+}
+
+.setup-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.setup-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  font-size: 12px;
+  color: #cdd5e4;
+  background: #12151c;
+  border: 1px solid #2b3242;
+}
+
+.setup-chip-icon {
+  width: 12px;
+  height: 12px;
+  image-rendering: pixelated;
+}
+
+.setup-stats {
+  display: flex;
+  gap: 14px;
+  margin-top: 6px;
+  padding-top: 6px;
+  font-size: 12px;
+  border-top: 1px solid #232a38;
+}
+
+.setup-stat-k {
   color: #6f7a90;
 }
 
-/*
- * 试练地。**一个像素的底色都不能有** —— 人画在画布上，这块 div 盖在画布之上，给它任何
- * 底色或边框，看到的都是"人被一块颜色挡住了"。它在这里只有两个作用：占住中栏那块地方，
- * 以及当鼠标的活动范围（光标出了这个框就不再控制朝向）。
- *
- * 名字也不写在这儿 —— 左边列表里那一项已经写着他的名字，而且是选中态，同一个名字摆两遍
- * 只会让人以为是两件事。
- *
- * 宽高给百分比而不是像素：整个界面是一个 16:9 的框，百分比在任何窗口尺寸下都落在同一处，
- * 而画布那边是按这个框**量**出来的（见 main.ts 的 boxToBuffer），所以两边永远对得上。
- */
-.setup-stage-hero {
-  position: relative;
-  align-self: center;
-  width: 68%;
-  aspect-ratio: 4 / 3;
-  margin: auto 0;
+.setup-stat-v {
+  margin-left: 5px;
+  color: #cdd5e4;
 }
 
-/* 地图详图在上，这张图上会遇到谁在下。 */
-.setup-stage-map {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  min-height: 0;
-  padding: 8px 0 0;
-}
+/* ---------------------------------------------------------------- 中：去哪儿 */
 
 .setup-map-box {
   flex: 1;
@@ -293,7 +265,6 @@
   align-items: flex-start;
   justify-content: center;
   min-height: 0;
-  width: 100%;
 }
 
 .setup-map-frame {
@@ -302,10 +273,7 @@
   max-height: 100%;
   aspect-ratio: 20 / 11;
   height: 100%;
-  /*
-   * 框里**没有图**：地图是画在画布上的（Scene.drawMapView），画布在这一层底下，所以这里
-   * 只能是透明的。给它任何底色，看到的都是"地图被一块颜色盖住了"。
-   */
+  /* 框里没有图：地图画在画布上，这一层只能是透明的。 */
   border: 1px solid #2b3242;
   overflow: hidden;
   cursor: grab;
@@ -380,53 +348,6 @@
   border-left-color: #d9822b;
 }
 
-.setup-legend-t {
-  margin-left: 12px;
-  color: #5c6577;
-}
-
-/* ---- 这张图上会遇到谁 */
-
-/*
- * 底下那排敌人：一人一块空地方，人和他脚下那块地都由画布画在里面（他们要走要挥，烘成图片
- * 就动不了了）。这些格子和试练地一样**不能有底色和边框**，理由同上。
- *
- * 尺寸按整个界面框的高度取，不是按父容器：父容器的高度会随着地图详图一起变，而这排格子的
- * 大小该是稳定的 —— 画布上那几个人是固定颗粒度画的，格子跟着变就会时松时紧。
- */
-.setup-foes {
-  flex: none;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  padding-bottom: 6px;
-}
-
-.setup-foe {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  font-size: 11px;
-  color: #97a1b5;
-}
-
-.setup-foe-frame {
-  width: calc(var(--frame-h) * 0.115);
-  height: calc(var(--frame-h) * 0.125);
-}
-
-.setup-foe.boss .setup-foe-k {
-  color: #e8b45a;
-}
-
-
-
-
-
-
 .setup-legend {
   flex: none;
   display: flex;
@@ -451,102 +372,130 @@
   background: #d9822b;
 }
 
-/* ---- 右栏 */
+.setup-legend-t {
+  margin-left: auto;
+  color: #5c6577;
+}
+
+/*
+ * 底下那条地图列表。
+ *
+ * 卡片不描边：几张缩略图并排本来就分得开，再各套一个框，整条列表读起来是几个按钮而不是
+ * 一排地方。选中的靠亮度和底下那条线区分。
+ */
+.setup-strip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.setup-strip-arrow {
+  flex: none;
+  width: 20px;
+  padding: 10px 0;
+  font: inherit;
+  font-size: 15px;
+  color: #6f7a90;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.setup-strip-arrow:hover {
+  color: #f0e6d2;
+}
+
+.setup-strip-track {
+  flex: 1;
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.setup-strip-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 2px 0 3px;
+  font: inherit;
+  font-size: 11px;
+  color: #6f7a90;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.setup-strip-card:hover {
+  opacity: 0.85;
+}
+
+.setup-strip-card.on {
+  color: #f0e6d2;
+  border-bottom-color: #c8a45c;
+  opacity: 1;
+}
+
+.setup-strip-thumb {
+  width: 100%;
+  aspect-ratio: 20 / 11;
+  overflow: hidden;
+  background: #0b0d12;
+}
+
+.setup-strip-k {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+/* ---------------------------------------------------------------- 右：会遇到什么 */
+
+.setup-col-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: rgba(11, 13, 18, 0.92);
+  border: 1px solid #232a38;
+}
 
 .setup-detail-head {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .setup-detail-k {
   margin: 0;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: normal;
   color: #f0e6d2;
 }
 
 .setup-detail-v {
-  margin: 4px 0 0;
+  margin: 3px 0 0;
   font-size: 12px;
   color: #97a1b5;
 }
 
 .setup-block {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .setup-block-k {
-  margin: 0 0 6px;
-  padding-bottom: 4px;
+  margin: 0 0 5px;
+  padding-bottom: 3px;
   font-size: 12px;
   font-weight: normal;
   letter-spacing: 0.1em;
   color: #6f7a90;
   border-bottom: 1px solid #232a38;
-}
-
-.setup-skill-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.setup-skill-k {
-  flex: none;
-  width: 68px;
-  font-size: 12px;
-  color: #6f7a90;
-}
-
-.setup-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.setup-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 7px;
-  font: inherit;
-  font-size: 12px;
-  color: #cdd5e4;
-  background: #12151c;
-  border: 1px solid #2b3242;
-  cursor: pointer;
-}
-
-.setup-chip:hover {
-  border-color: #46536d;
-}
-
-.setup-chip.on {
-  color: #f0e6d2;
-  border-color: #c8a45c;
-}
-
-.setup-chip-icon {
-  width: 12px;
-  height: 12px;
-  image-rendering: pixelated;
-}
-
-.setup-skill-note {
-  margin-top: 6px;
-  padding: 6px 8px;
-  font-size: 12px;
-  background: #12151c;
-  border-left: 2px solid #c8a45c;
-}
-
-.setup-skill-name {
-  margin-right: 6px;
-  color: #f0e6d2;
-}
-
-.setup-skill-text {
-  color: #97a1b5;
 }
 
 .setup-line {
@@ -557,6 +506,7 @@
 }
 
 .setup-line-k {
+  flex: none;
   color: #6f7a90;
 }
 
@@ -565,50 +515,90 @@
   text-align: right;
 }
 
-.setup-goal {
-  margin: 0;
-  font-size: 12px;
-  color: #f0e6d2;
+.setup-weather {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
 }
+
+.setup-weather-b {
+  flex: 1;
+  padding: 3px 0;
+  font: inherit;
+  font-size: 12px;
+  color: #97a1b5;
+  background: #12151c;
+  border: 1px solid #2b3242;
+  cursor: pointer;
+}
+
+.setup-weather-b:hover {
+  border-color: #46536d;
+}
+
+.setup-weather-b.on {
+  color: #1a1206;
+  background: #c8a45c;
+  border-color: #e0c07a;
+}
+
+/*
+ * 出兵人物：一人一块空地方，人和他脚下那块地都由画布画在里面（他们要走要挥，烘成图片就
+ * 动不了了）。**不能有底色和边框**，理由见文件顶上那段。
+ *
+ * 尺寸按整框高度取，不是按父容器：父容器会随右栏内容多少而变，而画布上那几个人是按固定
+ * 颗粒度画的，框跟着变就会时松时紧。这一栏窄，五个人排不下一行，所以让它自己折行。
+ */
+.setup-foe-section {
+  flex: none;
+}
+
+.setup-foes {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 4px 6px;
+  margin-top: 4px;
+}
+
+.setup-foe {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: #97a1b5;
+}
+
+.setup-foe-frame {
+  width: calc(var(--frame-h) * 0.115);
+  height: calc(var(--frame-h) * 0.115);
+}
+
+.setup-foe.boss .setup-foe-k {
+  color: #e8b45a;
+}
+
+/* ---- 底下：开始 */
 
 .setup-foot {
-  margin: 6px 0 0;
-  font-size: 11px;
-  color: #5c6577;
-}
-
-/* ---------------------------------------------------------------- 底栏 */
-
-.setup-bottom {
+  flex: none;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 10px 20px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px 10px;
   background: rgba(11, 13, 18, 0.92);
-  border-top: 1px solid #232a38;
+  border: 1px solid #232a38;
 }
 
 .setup-summary {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.setup-summary-v {
+  font-size: 12px;
   color: #f0e6d2;
-}
-
-.setup-hint {
-  font-size: 11px;
-  color: #6f7a90;
+  text-align: center;
 }
 
 .setup-main {
-  flex: none;
-  min-width: 148px;
-  padding: 9px 18px;
+  padding: 9px 0;
   font: inherit;
   font-size: 14px;
   letter-spacing: 0.08em;

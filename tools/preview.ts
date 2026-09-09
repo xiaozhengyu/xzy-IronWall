@@ -13,7 +13,7 @@ import { deflateSync } from 'node:zlib';
 import { writeFileSync } from 'node:fs';
 import { CharacterAnimator, attackDuration, attackImpact } from '../src/characters/animator';
 import { PALETTE_BLUE, PALETTE_HERO, PALETTE_PEASANT, PALETTE_RED, flatPalette, type CharacterPalette } from '../src/characters/palette';
-import { drawFigureStage } from '../src/render/figureStage';
+import { drawFigureStage, spawnStageSkill, STAGE_TILE_RADIUS, type StageSkillShape } from '../src/render/figureStage';
 import { drawCharacter } from '../src/characters/renderer';
 import { Pose, RigSpec } from '../src/characters/rig';
 import { type UnitDef, UnitPresets } from '../src/characters/unitDef';
@@ -1588,13 +1588,30 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
     cell(i * CELL_W, 0, UnitPresets.warlord(), PALETTE_HERO, Math.PI * 0.5, 32, t);
   });
 
-  const heroes: [string, () => UnitDef][] = [
-    ['双锤武将', UnitPresets.warlord],
-    ['骑士', UnitPresets.knight],
-    ['披风剑士', UnitPresets.hero],
+  // 中排：三个角色各放一次自己的招。形状走的是线上那一份 spawnStageSkill，所以图上验过的
+  // 长度和形状就是玩家看到的 —— 弧不能扫出台子太多，旁边就是别的界面。
+  const heroes: [() => UnitDef, StageSkillShape][] = [
+    [UnitPresets.warlord, 'fan'],
+    [UnitPresets.knight, 'ring'],
+    [UnitPresets.hero, 'wave'],
   ];
-  heroes.forEach(([, make], i) => {
-    cell(i * CELL_W, CELL_H, make(), PALETTE_HERO, Math.PI * 0.5 + 0.38, 0, 0.4);
+  heroes.forEach(([make, shape], i) => {
+    const shapes = new ShapeBatch();
+    const anchor = v2(i * CELL_W + CELL_W / 2, CELL_H + CELL_H * 0.62);
+    const c = new Character(make(), PALETTE_HERO, 16);
+    c.facing = Math.PI * 0.5 + 0.38;
+    c.swing(0);
+    const effects = new ImpactEffects();
+    // 先走到挥击的落点附近再放弧，姿势和弧才对得上。
+    for (let k = 0; k < 26; k++) c.update(1 / 120, true);
+    spawnStageSkill(effects, c, shape, STAGE_TILE_RADIUS * 1.2 * 1.2);
+    // 推到弧跑了四成 —— 起手那一帧弧还没张开，末尾又快化没了。
+    for (let k = 0; k < 20; k++) {
+      c.update(1 / 120, true);
+      effects.update(1 / 120);
+    }
+    drawFigureStage(shapes, c, anchor, GRAIN, 0, 0, 1.2 * 1.2, effects);
+    flushTo(shapes, sheet);
   });
 
   // 下排：格子尺寸取自 setup.css（0.115 / 0.125 乘整框高度），整框高度就是缓冲的 540 行。

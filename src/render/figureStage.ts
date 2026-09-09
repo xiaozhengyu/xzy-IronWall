@@ -1,4 +1,6 @@
 import { drawCharacter } from '../characters/renderer';
+import type { ImpactEffects } from '../effects/impact';
+import { weaponImpactPoint } from '../effects/impact';
 import { RigSpec } from '../characters/rig';
 import type { Character } from '../game/character';
 import { v2, type Vec2 } from '../core/math';
@@ -165,6 +167,8 @@ function drawStageTile(
  * @param scroll    走过的路，世界单位。人不动，草按它的反方向流 —— 见 drawStageTile。
  * @param tileScale 只放大**地块**，不动人。选人那一台用它把地放宽一点：那是玩家唯一会盯着
  *                  看的一块地，人还在上面走，地宽一点草才流得开。
+ * @param effects   这一台自己的冲击弧。台子的局部世界原点就是 at，所以镜头传 (0, 0)。
+ *                  演示放招时用得上 —— 只播一个挥手动作是看不出"放了个技能"的。
  */
 export function drawFigureStage(
   shapes: ShapeBatch,
@@ -174,6 +178,7 @@ export function drawFigureStage(
   scrollX = 0,
   scrollY = 0,
   tileScale = 1,
+  effects: ImpactEffects | null = null,
 ): void {
   drawStageTile(shapes, at, STAGE_TILE_RADIUS * tileScale, grain, scrollX, scrollY);
   drawCharacter(
@@ -184,4 +189,85 @@ export function drawFigureStage(
     actor.def,
     { lift: actor.lift },
   );
+  // 弧和人在同一个批次里，所以谁压谁由深度说了算 —— 和打仗时是同一套排序。
+  if (effects) effects.draw(shapes, 0, 0, at.x, at.y, grain);
+}
+
+/**
+ * 台子上那一下技能的形状。
+ *
+ * 三种：一片扇面（横扫那路）、一整圈（回旋）、一道推出去的窄波（破空）。选人界面唯一能把
+ * "这个人打起来什么样"说清楚的就是这个，三个人放同一道弧等于白放。
+ */
+export type StageSkillShape = 'fan' | 'ring' | 'wave';
+
+/**
+ * 台子上那道弧的粗细和落点白闪，都比战场上小得多。
+ *
+ * ImpactEffects 的粗细是**按颗粒度**给的（thickness × scale），而这台子的颗粒度是出货那一档
+ * 的一倍八 —— 照搬战场的 weight，一道弧能有四十几个像素粗，糊住整个人。半径也只有战场的
+ * 三分之一，所以脱离的火花（sparks）一律关掉：它的长度是按世界单位给的，在这么小的弧上
+ * 是一圈比弧本身还长的直刺，读作海胆而不是刀光。
+ */
+const STAGE_ARC_WEIGHT = 0.5;
+const STAGE_ARC_FLASH = 0.4;
+
+/**
+ * 在台子上放一道弧。
+ *
+ * 长度按**地块**给，不按兵种的攻击距离：武将的攻击距离是 34 个世界单位，在预览那个放大倍数
+ * 下一道弧能扫出台子、盖到旁边的界面上去 —— 而这里要说的是形状，不是够多远。
+ *
+ * 放在这个文件里是为了让离线出图和线上走同一份：形状各写一份的话，图上验过的和玩家看到的
+ * 迟早不是一回事。
+ */
+export function spawnStageSkill(
+  effects: ImpactEffects,
+  actor: Character,
+  shape: StageSkillShape,
+  reach: number,
+): void {
+  if (shape === 'ring') {
+    effects.spawn(0, 0, actor.facing, {
+      span: Math.PI * 2,
+      from: 2,
+      to: reach * 0.85,
+      weight: STAGE_ARC_WEIGHT * 1.1,
+      life: 0.5,
+      overhead: true,
+      style: 'ring',
+      sparks: 0,
+      flash: STAGE_ARC_FLASH,
+      tint: rgb(255, 214, 130),
+    });
+    return;
+  }
+  const at = weaponImpactPoint(actor.pose, actor.def, 0, 0, actor.facing);
+  if (shape === 'wave') {
+    effects.spawn(at.x, at.y, actor.facing, {
+      span: 0.9,
+      from: 2,
+      to: reach * 1.15,
+      weight: STAGE_ARC_WEIGHT * 0.9,
+      life: 0.55,
+      overhead: true,
+      style: 'surge',
+      sparks: 0,
+      flash: STAGE_ARC_FLASH,
+      tint: rgb(214, 236, 255),
+    });
+    return;
+  }
+  effects.spawn(at.x, at.y, actor.facing, {
+    span: 1.6,
+    from: 1.2,
+    to: reach,
+    weight: STAGE_ARC_WEIGHT,
+    life: 0.42,
+    overhead: true,
+    style: 'slash',
+    sparks: 0,
+    flash: STAGE_ARC_FLASH,
+    tint: rgb(255, 226, 142),
+  });
 }

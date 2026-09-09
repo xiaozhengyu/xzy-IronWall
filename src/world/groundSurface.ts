@@ -138,6 +138,17 @@ export class GroundSurface {
   }
 
   /**
+   * 用当前天气一次烘完地表。只给备战地图切天气用；正式游戏里的天气变化仍由 update 分帧烘。
+   */
+  bakeWeatherNow(): void {
+    this.terrain.bakeRows(this.data, this.weather, 0, this.texHeight);
+    this.bakedKey = this.weatherKey();
+    this.pendingKey = this.bakedKey;
+    this.bakingRow = -1;
+    this.source.update();
+  }
+
+  /**
    * 每帧调。必要时推进一片重烘，并刷新云影。
    *
    * @param camX/camY 镜头中心的世界坐标，云影的格点铺在镜头周围。

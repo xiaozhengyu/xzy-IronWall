@@ -4,6 +4,7 @@ import { drawAegisDome } from '../effects/aegisDome';
 import { drawDharmaAspect } from '../effects/dharmaAspect';
 import { SKY_BLADE_LENGTH, drawSkyBlade, heavenSplitBlade, skyArrowBlade } from '../effects/skyBlade';
 import { drawCharacter, drawSkeleton } from '../characters/renderer';
+import type { ImpactEffects } from '../effects/impact';
 import type { Pose } from '../characters/rig';
 import type { UnitDef } from '../characters/unitDef';
 import type { CharacterPalette } from '../characters/palette';
@@ -50,6 +51,8 @@ export interface StageFigure {
   scrollY: number;
   /** 只放大地块，不动人。不给就是 1。 */
   tileScale?: number;
+  /** 这一台自己的冲击弧。演示放招时才有。 */
+  effects?: ImpactEffects | null;
 }
 
 /**
@@ -342,7 +345,7 @@ export class Scene {
     // 溅起来的水珠画在人之后：它们是被脚踢起来的，该压在鞋面上。
     field.footsteps.drawSplashes(shapes, camX, camY, rootX, rootY, grain);
     // 落下的雨雪在所有东西之前 —— 它在镜头和世界之间，不参与排序。
-    field.weather.draw(shapes, camX, camY, rootX, rootY, grain);
+    field.weather.draw(shapes, camX, camY, rootX, rootY, grain, cam.halfW, cam.halfH);
 
     this.primitives = shapes.primitiveCount; // flush 之后计数会清零
     shapes.flushToMesh(this.prim, this.surface.width, this.surface.height);
@@ -438,7 +441,16 @@ export class Scene {
     this.prim.begin();
     const shapes = this.shapes;
     for (const stage of stages) {
-      drawFigureStage(shapes, stage.actor, stage.at, stage.grain, stage.scrollX, stage.scrollY, stage.tileScale);
+      drawFigureStage(
+        shapes,
+        stage.actor,
+        stage.at,
+        stage.grain,
+        stage.scrollX,
+        stage.scrollY,
+        stage.tileScale,
+        stage.effects ?? null,
+      );
     }
     this.primitives = shapes.primitiveCount;
     shapes.flushToMesh(this.prim, this.surface.width, this.surface.height);
@@ -467,9 +479,21 @@ export class Scene {
     const rootX = rect.x + rect.w * 0.5;
     const rootY = rect.y + rect.h * 0.5;
 
-    // 遮罩比框小一圈：框自己那条 1 像素的边归 DOM 画，地图不该盖在上面。
+    // 遮罩取 UI 框与真实地图投影的交集。缩到整幅时，地图上下可能留黑边；雨雪是地图里的天气，
+    // 不该落进那两条空白。放大或拖到边缘后，地图投影覆盖整框，这里自然退化成原来的框遮罩。
+    const mapLeft = rootX - camX * grain;
+    const mapTop = rootY - camY * Projection.groundSquash * grain;
+    const clipLeft = Math.max(rect.x + 1, mapLeft);
+    const clipTop = Math.max(rect.y + 1, mapTop);
+    const clipRight = Math.min(rect.x + rect.w - 1, mapLeft + field.width * grain);
+    const clipBottom = Math.min(rect.y + rect.h - 1, mapTop + field.height * Projection.groundSquash * grain);
     this.mapClip.clear();
-    this.mapClip.rect(rect.x + 1, rect.y + 1, Math.max(0, rect.w - 2), Math.max(0, rect.h - 2));
+    this.mapClip.rect(
+      clipLeft,
+      clipTop,
+      Math.max(0, clipRight - clipLeft),
+      Math.max(0, clipBottom - clipTop),
+    );
     this.mapClip.fill(0xffffff);
     this.worldGround.mask = this.mapClip;
 
@@ -479,16 +503,19 @@ export class Scene {
     field.ground.shadowSprite.visible = false;
 
     this.mapPrim.begin();
+    const shapes = this.shapes;
     const spanX = rect.w * 0.5 / grain;
     const spanY = rect.h * 0.5 / (grain * Projection.groundSquash);
     if (spanX * 2 <= MAP_DETAIL_SPAN) {
-      const shapes = this.shapes;
       field.terrain.drawDetail(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
       field.terrain.drawScatter(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
       field.terrain.drawTrees(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
       field.props.draw(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
-      shapes.flushToMesh(this.mapPrim, this.surface.width, this.surface.height);
     }
+    // 地图预览也展示真实的雨雪前景。它和地图细节写进同一个 mapPrim，因此既压在地形之上，
+    // 又只受 mapClip 裁切，不会落到人物台、敌人栏或其它 UI 区域。
+    field.weather.draw(shapes, camX, camY, rootX, rootY, grain, spanX, spanY);
+    shapes.flushToMesh(this.mapPrim, this.surface.width, this.surface.height);
     this.mapPrim.end();
   }
 

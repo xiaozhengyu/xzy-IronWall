@@ -3,6 +3,8 @@ import { RigSpec } from './characters/rig';
 import { PALETTE_HERO } from './characters/palette';
 import { Battle, HUMAN_PACE, PLAYER_RUN_SPEED, PLAYER_SPEED, PlayerPresets, playerPresetDisplayName } from './game/battle';
 import { Character } from './game/character';
+import { ImpactEffects } from './effects/impact';
+import { skillById } from './game/skills';
 import { GameMaps, type GameMapDef } from './game/maps';
 import { Roster, heroUnitDef, type HeroDef } from './game/roster';
 import { Skills } from './game/skills';
@@ -13,6 +15,7 @@ import { ItemSheet } from './items/renderer';
 import { clamp, v2 } from './core/math';
 import { Camera } from './render/camera';
 import type { MapView, StageFigure } from './render/scene';
+import { STAGE_TILE_RADIUS, spawnStageSkill, type StageSkillShape } from './render/figureStage';
 import { Projection } from './render/projection';
 import { Scene } from './render/scene';
 import { Props } from './world/props';
@@ -21,7 +24,7 @@ import type { WeatherKind } from './world/weather';
 import { Controls } from './ui/controls';
 import { Hud } from './ui/hud';
 import { Menu } from './ui/menu';
-import { SetupScreen, type MapPin, type SetupStep } from './ui/setup';
+import { SetupScreen, type MapPin } from './ui/setup';
 import './style.css';
 
 /**
@@ -344,16 +347,9 @@ let lastFps = 0;
  * if 的话，暂停时改一档颗粒度、拖一下窗口，画面就再也刷不出来了。
  */
 app.ticker.add((ticker) => {
-  // 备战界面：世界冻着，动的只有中间那一块 —— 选人时是试练地上那个人，选图时是底下那排敌人。
+  // 备战界面：世界冻着，动的只有三块 —— 台子上那个人、地图上的天气、右边那排敌人。
   if (state === 'setup' || state === 'entering') {
-    const dt = Math.min(ticker.deltaMS / 1000, 1 / 20);
-    if (setup.showsHeroStage) {
-      updatePreview(dt);
-      drawHeroStage();
-    } else if (setup.showsFoeStage) {
-      updateFoes(dt);
-      drawMapStep();
-    }
+    if (setup.showsStages) drawSetupScreen(Math.min(ticker.deltaMS / 1000, 1 / 20));
     return;
   }
   if (state !== 'playing') return;
@@ -377,8 +373,7 @@ app.ticker.add((ticker) => {
 addEventListener('resize', () => {
   if (state === 'setup' || state === 'entering') {
     scene.resize(app.screen.width, app.screen.height, app.renderer.resolution);
-    if (setup.showsHeroStage) drawHeroStage();
-    else if (setup.showsFoeStage) drawMapStep();
+    if (setup.showsStages) drawSetupScreen(0);
     return;
   }
   if (state === 'paused') {
@@ -473,22 +468,89 @@ const HERO_TILE_ZOOM = 1.2 * 1.2;
 const PREVIEW_TURN = 0.38;
 
 /**
- * 站在试练地上的那个人。
+ * 台子上那个人，以及他的动作脚本。
  *
- * 用一个真的 Character 而不是自己搭一份姿势：待机的呼吸、走和跑的步态、武器怎么握、披风
- * 怎么甩，全在 CharacterAnimator 里，重写一份迟早和场上那个人长得不一样。走和跑的速度也
- * 直接用战斗那两档 —— 这里试出来的手感就是进去之后的手感。
+ * 用一个真的 Character 而不是自己搭一份姿势：待机的呼吸、走跑的步态、武器怎么握、披风怎么
+ * 甩，全在 CharacterAnimator 里，重写一份迟早和场上那个人长得不一样。
+ *
+ * 动作原来是鼠标驱动的（按住走、Shift 跑）。合并成一屏之后中栏的地图也要收鼠标，两处抢一个
+ * 光标只会互相打架；而且选人这件事本来就该是"他自己演给你看"，不是"你先学会怎么操作他"。
  */
-const preview = new Character(heroUnitDef(Roster[0]), PALETTE_HERO, HUMAN_PACE);
-preview.facing = Math.PI * 0.5;
+const preview = {
+  actor: new Character(heroUnitDef(Roster[0]), PALETTE_HERO, HUMAN_PACE),
+  /** 这一台自己的冲击弧。和战斗那套 ImpactEffects 是同一份代码，只是活在台子的局部坐标里。 */
+  effects: new ImpactEffects(),
+  beat: 0,
+  clock: 0,
+  /** 走过的路。人不动，草按它的反方向流。 */
+  scrollX: 0,
+  scrollY: 0,
+  /** 朝向的基准，摆动加在它上面。 */
+  facing: Math.PI * 0.5,
+};
+preview.actor.facing = preview.facing;
 
 /**
- * 光标在试练地上的位置（缓冲像素）、按住了没有，以及走过的路。
+ * 一轮把这个人会的几件事各演一遍：站着、走、跑、挥两下、放一次招。
  *
- * aiming 只在光标**落在那个框里**的时候为真。整屏都能转向的话，玩家在右栏读技能说明时，
- * 中间那个人会跟着鼠标转圈 —— 那不是他在做的事。
+ * 每一拍的时长按动作自己的节奏给 —— 挥击那两拍要留够武器抡完的时间，放招那一拍要留够弧
+ * 跑完的时间，否则下一拍会把上一拍打断，看着像抽搐。
  */
-const stage = { x: 0, y: 0, aiming: false, moving: false, scrollX: 0, scrollY: 0 };
+const PREVIEW_SCRIPT: { act: 'idle' | 'walk' | 'run' | 'attack' | 'skill'; time: number }[] = [
+  { act: 'idle', time: 1.5 },
+  { act: 'walk', time: 2.4 },
+  { act: 'idle', time: 0.7 },
+  { act: 'run', time: 2.0 },
+  { act: 'attack', time: 1.0 },
+  { act: 'attack', time: 1.0 },
+  { act: 'skill', time: 1.8 },
+];
+
+/** 走跑时朝向慢慢摆一点。一直朝同一个方向走，草流成一条直线，读起来像贴图在滚。 */
+const PREVIEW_SWAY = 0.5;
+
+/**
+ * 放一道给这个角色看的弧。
+ *
+ * 形状按他自己的自动攻击技来 —— 横扫是一片扇面、回旋是一整圈、破空是一道推出去的窄波。
+ * 这是选人界面唯一能把"这个人打起来什么样"说清楚的地方，三个人放同一道弧就白放了。
+ */
+function spawnPreviewSkill(): void {
+  const attack = setup.currentHero.skills
+    .map((id) => skillById(id))
+    .find((skill) => skill.category === 'attack');
+  const shape: StageSkillShape = attack?.id === 'spin' ? 'ring' : attack?.id === 'wave' ? 'wave' : 'fan';
+  spawnStageSkill(preview.effects, preview.actor, shape, STAGE_TILE_RADIUS * HERO_TILE_ZOOM);
+}
+
+/** 推进一拍。走完最后一拍绕回第一拍。 */
+function advancePreview(dt: number): void {
+  const actor = preview.actor;
+  preview.clock += dt;
+  let beat = PREVIEW_SCRIPT[preview.beat];
+  if (preview.clock >= beat.time) {
+    preview.clock = 0;
+    preview.beat = (preview.beat + 1) % PREVIEW_SCRIPT.length;
+    beat = PREVIEW_SCRIPT[preview.beat];
+    if (beat.act === 'attack') actor.swing(0);
+    if (beat.act === 'skill') {
+      actor.swing(0);
+      spawnPreviewSkill();
+    }
+  }
+
+  const running = beat.act === 'run';
+  const moving = running || beat.act === 'walk';
+  actor.speed = moving ? (running ? PLAYER_RUN_SPEED : PLAYER_SPEED) : 0;
+  if (moving) {
+    // 摆动只在走跑时加：站着和挥击时朝向必须是死的，一边挥一边转身读起来像被人推了一下。
+    actor.facing = preview.facing + Math.sin(preview.clock * 1.1) * PREVIEW_SWAY;
+    preview.scrollX += Math.cos(actor.facing) * actor.speed * dt;
+    preview.scrollY += Math.sin(actor.facing) * actor.speed * dt;
+  }
+  actor.update(dt, true);
+  preview.effects.update(dt);
+}
 
 /**
  * 把一个 DOM 框换算成缓冲坐标。
@@ -516,47 +578,17 @@ function stageAnchor() {
   return v2(Math.round(box.x + box.w * 0.5), Math.round(box.y + box.h * 0.62));
 }
 
-/** 把一次鼠标事件换算成缓冲坐标。和 Controls.syncCursor 是同一笔换算。 */
-function trackStagePointer(event: MouseEvent): void {
-  const view = app.canvas.getBoundingClientRect();
-  stage.x = ((event.clientX - view.left) / Math.max(1, view.width)) * camera.viewWidth;
-  stage.y = ((event.clientY - view.top) / Math.max(1, view.height)) * camera.viewHeight;
-  stage.aiming = true;
-}
-
-/**
- * 试练地上的一帧：转向、走、跑。
- *
- * 和战斗里那套输入是同一个形状 —— 朝向跟着光标，按住左键往那个方向走，Shift 是跑。区别只有
- * 一处：**人不动，草动**。走的距离累加到 scroll 上，草丛按它的反方向流过去。
- *
- * 跑步状态直接读 Controls：它的键盘监听挂在 window 上，备战界面盖着画布也照样收得到 Shift。
- */
-function updatePreview(dt: number): void {
-  const anchor = stageAnchor();
-  if (stage.aiming) {
-    const dx = stage.x - anchor.x;
-    // 屏幕纵向是被压扁过的，除回去才是地面上的方向 —— 和 Camera.aimAngle 同一笔账。
-    const dy = (stage.y - anchor.y) / Projection.groundSquash;
-    if (Math.hypot(dx, dy) > 1) preview.facing = Math.atan2(dy, dx);
-  }
-  preview.speed = stage.moving ? (controls.running ? PLAYER_RUN_SPEED : PLAYER_SPEED) : 0;
-  stage.scrollX += Math.cos(preview.facing) * preview.speed * dt;
-  stage.scrollY += Math.sin(preview.facing) * preview.speed * dt;
-  preview.update(dt, true);
-}
-
-function drawHeroStage(): void {
-  scene.drawStages(field, [
-    {
-      actor: preview,
-      at: stageAnchor(),
-      grain: HERO_GRAIN,
-      scrollX: stage.scrollX,
-      scrollY: stage.scrollY,
-      tileScale: HERO_TILE_ZOOM,
-    },
-  ]);
+/** 台子那一台的绘制参数。三块画布内容（人、地图、敌人）在同一帧里一起交出去。 */
+function heroStageFigure(): StageFigure {
+  return {
+    actor: preview.actor,
+    at: stageAnchor(),
+    grain: HERO_GRAIN,
+    scrollX: preview.scrollX,
+    scrollY: preview.scrollY,
+    tileScale: HERO_TILE_ZOOM,
+    effects: preview.effects,
+  };
 }
 
 /**
@@ -598,23 +630,39 @@ function updateFoes(dt: number): void {
 }
 
 /**
- * 选图那一步的一帧：地图 + 底下那排敌人 + 地图上的点位。
+ * 备战界面的一帧：台子上那个人、地图、右边那排敌人，外加地图上的点位。
+ *
+ * 三块画在同一张画布上，所以只能一起交出去（一次 drawStages）。
  *
  * 顺序是**先量后写**：量框的位置会逼浏览器立刻算一遍布局，而写点位的位置又会把布局作废。
  * 两者交替着来，每一帧都要多算好几遍版 —— 拖动地图时那就是看得见的卡顿。所以框的尺寸这一
  * 帧只量一次，点位最后一起写。
+ *
+ * @param dt 0 表示只重画不推进（改窗口尺寸时走这一条）。
  */
-function drawMapStep(): void {
+function drawSetupScreen(dt: number): void {
   const map = setup.currentMap;
+  if (dt > 0) {
+    advancePreview(dt);
+    updateFoes(dt);
+    // 天气得自己走：积雪和地面湿度是慢慢累出来的，没人推它就永远停在 0，切了雪地图也不会白。
+    field.weather.update(dt);
+  }
+
+  const stages: StageFigure[] = [heroStageFigure(), ...foeStageFigures()];
   const rect = mapRect();
-  if (rect.w <= 0 || rect.h <= 0) return;
+  if (rect.w <= 0 || rect.h <= 0) {
+    scene.drawStages(field, stages);
+    return;
+  }
   if (mapCam.grain <= 0) resetMapCam(map);
   clampMapCam(map, rect);
-  drawFoeStage(mapViewOf(rect));
+  scene.drawStages(field, stages, mapViewOf(rect));
   setup.setMapPins(mapPinsOf(map, rect));
 }
 
-function drawFoeStage(map: MapView | null = null): void {
+/** 右栏那几个敌人各自的绘制参数。格子由 CSS 排版，画布按量出来的框画人。 */
+function foeStageFigures(): StageFigure[] {
   const slots = setup.foeSlots;
   const stages: StageFigure[] = [];
   for (let i = 0; i < foeActors.length && i < slots.length; i++) {
@@ -628,7 +676,7 @@ function drawFoeStage(map: MapView | null = null): void {
       scrollY: foeScroll[i].y,
     });
   }
-  scene.drawStages(field, stages, map);
+  return stages;
 }
 
 /** 一个角色的头像。列表和底栏都要，画一次存着，见 SetupScreen.portraitOf。 */
@@ -644,27 +692,39 @@ function heroPortrait(hero: HeroDef): HTMLCanvasElement | null {
 /**
  * 这张地图对应的地形。
  *
- * 就是当前这块场地时直接用它 —— 生成一份地形要几十毫秒，而这一份已经烘在画面上了。
- * 换成别的图时才现生成一份，那时它本来就还没存在。
+ * 按**尺寸和种子**存，不按地图 id —— 那三条记录目前指着同一块地，按 id 存就会生成三份
+ * 一模一样的地形（每份要跑几十毫秒、占几兆内存）。是不是同一块地由参数说了算，和它在
+ * 目录里叫什么名字无关。
+ *
+ * 就是当前那块场地时连生成都省了：那一份已经烘在画面上了。
  */
+const terrainCache = new Map<string, Terrain>();
+
 function terrainOf(map: GameMapDef): Terrain {
   if (map.width === field.width && map.height === field.height && map.seed === FIELD_SEED) {
     return field.terrain;
   }
-  return new Terrain(map.width, map.height, map.seed);
+  const key = `${map.width}x${map.height}#${map.seed}`;
+  let terrain = terrainCache.get(key);
+  if (!terrain) {
+    terrain = new Terrain(map.width, map.height, map.seed);
+    terrainCache.set(key, terrain);
+  }
+  return terrain;
 }
 
 /** 地图底图烘一次就存着：一张四百乘二百二的 RGBA，烘一次几十毫秒。 */
 const mapPixels = new Map<string, ImageData | null>();
 
 function mapImageData(map: GameMapDef): ImageData | null {
-  if (!mapPixels.has(map.id)) {
+  const key = mapKey(map);
+  if (!mapPixels.has(key)) {
     // 天气传 null：卡片上该是这块地本来的样子，不该跟着局内下不下雪变。
     const baked = terrainOf(map).bakeGround(null);
     const pixels = new ImageData(new Uint8ClampedArray(baked.data), baked.texWidth, baked.texHeight);
-    mapPixels.set(map.id, pixels);
+    mapPixels.set(key, pixels);
   }
-  return mapPixels.get(map.id) ?? null;
+  return mapPixels.get(key) ?? null;
 }
 
 /**
@@ -675,12 +735,18 @@ function mapImageData(map: GameMapDef): ImageData | null {
  */
 const mapPropsCache = new Map<string, Props>();
 
+/** 和地形同一个键：营地是从地形上摆出来的，同一块地就是同一批营地。 */
+function mapKey(map: GameMapDef): string {
+  return `${map.width}x${map.height}#${map.seed}`;
+}
+
 function mapProps(map: GameMapDef): Props {
-  let props = mapPropsCache.get(map.id);
+  const key = mapKey(map);
+  let props = mapPropsCache.get(key);
   if (!props) {
     props = new Props();
     props.place(terrainOf(map), 4);
-    mapPropsCache.set(map.id, props);
+    mapPropsCache.set(key, props);
   }
   return props;
 }
@@ -836,14 +902,18 @@ function applyHero(hero: HeroDef): void {
  * 而"正在进入"那一层是 DOM，得等浏览器画一帧才出现。顺序反过来的话玩家盯着的是一个卡住
  * 不动的选图界面。
  */
-function enterMap(hero: HeroDef, map: GameMapDef): void {
+function enterMap(hero: HeroDef, map: GameMapDef, weather: WeatherKind): void {
   state = 'entering';
   requestAnimationFrame(() =>
     setTimeout(() => {
       applyHero(hero);
-      field.weather.kind = map.weather;
-      // 换地图本来还要重烘地面（Field 就是宽、高、种子三个数），但目前只有一张图，而它正是
-      // 启动时烘好的那一份。加第二张图时，这里要多一步重建 Field 并重跑烘制那一段进度条。
+      // 天气用备战界面上选的那一档，不是地图自己写的默认值 —— 玩家刚在右栏点过，
+      // 而且地图预览已经按那一档重烘过了，进去再换回来会是"我选的没作数"。
+      field.weather.kind = weather;
+      // 换地图本来还要重烘地面（Field 就是宽、高、种子三个数），但三张图现在指着同一块地，
+      // 而它正是启动时烘好的那一份。真加一块新地时，这里要多一步重建 Field 并重跑烘制那段
+      // 进度条 —— map.seed / width / height 就是那一步要读的东西。
+      void map;
       battle.reset(viewOf());
       layout();
       // 零步长跑一次，让每个人先把姿势搭出来 —— 和开场那一次是同一个道理。
@@ -864,47 +934,29 @@ const setup = new SetupScreen(
     portrait: heroPortrait,
     mapImage: mapCanvas,
     onHeroChange: (hero) => {
-      preview.def = heroUnitDef(hero);
-      drawHeroStage();
+      preview.actor.def = heroUnitDef(hero);
+      // 换人从头演一遍：不重置的话新角色可能正好接在"放招"那一拍上，一上来就抡一下。
+      preview.beat = 0;
+      preview.clock = 0;
+      preview.actor.attack = -1;
+      drawSetupScreen(0);
     },
     onMapChange: (map) => {
       syncFoeActors(map);
       resetMapCam(map);
-      drawMapStep();
+      drawSetupScreen(0);
     },
-    onStepChange: (step: SetupStep) => {
-      if (step === 'hero') {
-        drawHeroStage();
-        return;
-      }
-      // 选图那一步画布上换成地图加底下那排敌人。人物台那块地必须擦掉，不然会从地图边上露出来。
-      syncFoeActors(setup.currentMap);
-      resetMapCam(setup.currentMap);
-      drawMapStep();
+    onWeatherChange: (kind) => {
+      // 备战地图展示稳定后的天气：地表直接积到目标状态，并当场整片重烘。局内自然天气仍使用
+      // Weather.update + GroundSurface.update 的渐变过程。
+      field.weather.settle(kind);
+      field.ground.bakeWeatherNow();
+      drawSetupScreen(0);
     },
     onStart: enterMap,
   },
   menu.text,
 );
-
-// 试练地的鼠标**只挂在那个框上**：光标出了框就不再转向，也不该在读右栏技能说明的时候
-// 把中间那个人拽得团团转。松手挂在 window 上 —— 按下之后拖出框外再松手，也得停下来。
-setup.heroStage.addEventListener('mousemove', (event) => trackStagePointer(event));
-setup.heroStage.addEventListener('mouseleave', () => {
-  stage.aiming = false;
-  stage.moving = false;
-});
-setup.heroStage.addEventListener('mousedown', (event) => {
-  if (event.button !== 0) return;
-  trackStagePointer(event);
-  stage.moving = true;
-});
-addEventListener('mouseup', (event) => {
-  if (event.button === 0) {
-    stage.moving = false;
-    mapCam.dragging = false;
-  }
-});
 
 // 地图框：左键拖动看别处，滚轮缩放。
 //
@@ -917,6 +969,20 @@ setup.mapFrame.addEventListener('mousedown', (event) => {
   mapCam.dragX = event.clientX;
   mapCam.dragY = event.clientY;
 });
+/*
+ * 松手就停，别的什么条件都没有。
+ *
+ * 这一条挂在 window 上而不是那个框上：按住之后拖出框外再松手是很常见的一下，只听框自己的
+ * mouseup 就会漏掉，于是地图从此粘着鼠标走 —— 表现是"地图锁定了鼠标"。切走窗口（alt-tab）
+ * 时同理，那时候连 mouseup 都不会来。
+ */
+addEventListener('mouseup', (event) => {
+  if (event.button === 0) mapCam.dragging = false;
+});
+addEventListener('blur', () => {
+  mapCam.dragging = false;
+});
+
 setup.mapFrame.addEventListener('mousemove', (event) => {
   if (!mapCam.dragging) return;
   const view = app.canvas.getBoundingClientRect();

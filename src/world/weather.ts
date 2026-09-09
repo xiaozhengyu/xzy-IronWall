@@ -77,6 +77,20 @@ export class Weather {
     for (let i = 0; i < MAX_DROPS; i++) this.drops.push(this.newDrop(true));
   }
 
+  /**
+   * 立即落到一种天气已经稳定后的地表状态。
+   *
+   * 局内仍走 update 的缓慢积雪、变湿和消退；备战地图切天气时用这一条，让预览当场展示玩家
+   * 最终会看到的雪地或湿地，而不是在选图界面里等十几秒。
+   */
+  settle(kind: WeatherKind): void {
+    this.kind = kind;
+    this.snowCover = kind === 'snow' ? this.intensity : 0;
+    this.wetness = kind === 'rain' ? this.intensity : 0;
+    // 雨和雪的出生高度不同。重新铺一遍下落物，切换后第一帧就是完整、均匀的降水层。
+    for (let i = 0; i < this.drops.length; i++) this.drops[i] = this.newDrop(true);
+  }
+
   private rand(): number {
     this.seed = (this.seed * 1664525 + 1013904223) >>> 0;
     return this.seed / 0x100000000;
@@ -279,16 +293,28 @@ export class Weather {
    * 画成同一片下落场在世界对齐的格子上铺开的四块。它会重复，而这个密度下没人看得出来；
    * 换来的是每一滴属于地图上的一个位置，于是平移镜头是从雨里穿过去，而不是把雨拖着走。
    */
-  draw(shapes: ShapeBatch, camX: number, camY: number, rootX: number, rootY: number, scale: number): void {
+  draw(
+    shapes: ShapeBatch,
+    camX: number,
+    camY: number,
+    rootX: number,
+    rootY: number,
+    scale: number,
+    halfW = DROP_TILE * 0.5,
+    halfH = DROP_TILE * 0.5,
+  ): void {
     if (this.kind === 'clear' || this.intensity <= 0.01) return;
 
     const active = Math.floor(MAX_DROPS * clamp(this.intensity, 0, 1));
-    const originX = Math.floor(camX / DROP_TILE - 0.5) * DROP_TILE;
-    const originY = Math.floor(camY / DROP_TILE - 0.5) * DROP_TILE;
-
-    for (let ty = 0; ty < 2; ty++) {
-      for (let tx = 0; tx < 2; tx++) {
-        this.drawTile(shapes, active, originX + tx * DROP_TILE, originY + ty * DROP_TILE, camX, camY, rootX, rootY, scale);
+    // 战斗镜头通常只跨 2×2 块；整图预览会跨到 3×3。按真实视野求首尾块，地图缩放或拖动后
+    // 也不会在右侧、下方露出没有降水的空区。
+    const firstX = Math.floor((camX - halfW) / DROP_TILE);
+    const lastX = Math.floor((camX + halfW) / DROP_TILE);
+    const firstY = Math.floor((camY - halfH) / DROP_TILE);
+    const lastY = Math.floor((camY + halfH) / DROP_TILE);
+    for (let ty = firstY; ty <= lastY; ty++) {
+      for (let tx = firstX; tx <= lastX; tx++) {
+        this.drawTile(shapes, active, tx * DROP_TILE, ty * DROP_TILE, camX, camY, rootX, rootY, scale);
       }
     }
   }

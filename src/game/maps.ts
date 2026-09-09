@@ -57,10 +57,15 @@ export interface GameMapDef {
   weather: WeatherKind;
 }
 
-export const GameMaps: GameMapDef[] = [
-  {
-    id: 'proving',
-    name: '演武荒原',
+/**
+ * 一张图的全部内容。三条记录目前指着**同一块地**（同一个种子），只是名字不同 —— 中间那条
+ * 横向列表要先摆出来看设计，而这个工程只有一块测试场地。真加第二块地时，改的是 seed 和
+ * 那几行文案，界面一行都不用动。
+ */
+function provingGround(id: string, name: string): GameMapDef {
+  return {
+    id,
+    name,
     tag: '林地',
     blurb: '四面合围的一块平地，边上是围死的树墙，中间散着几处水塘和踩出来的土路。',
     terrain: '草地为主，几片林地和水塘，土路穿过中央',
@@ -80,7 +85,13 @@ export const GameMaps: GameMapDef[] = [
     height: 1200,
     seed: 20260902,
     weather: 'clear',
-  },
+  };
+}
+
+export const GameMaps: GameMapDef[] = [
+  provingGround('proving', '演武荒原'),
+  provingGround('proving-north', '演武荒原 · 北'),
+  provingGround('proving-south', '演武荒原 · 南'),
 ];
 
 export function mapById(id: string): GameMapDef {
