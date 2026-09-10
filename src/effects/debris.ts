@@ -17,19 +17,39 @@ import type { ShapeBatch } from '../render/shapeBatch';
  *         让一次重击在画面上留下痕迹的东西。
  *
  * 定长的池子 + 定型数组，一个对象都不分配：一次回旋能同时杀掉上百人，如果每个人溅十几个
- * 粒子对象出来，光是这一下产生的垃圾就够卡一帧。满了就直接丢掉新的 —— 场面已经足够乱，
- * 少几片没人看得出来，掉帧所有人都看得出来。
+ * 粒子对象出来，光是这一下产生的垃圾就够卡一帧。快满的时候大家一起少溅一点（见 CAPACITY
+ * 上那段），而不是让排在后面的人一片都分不到 —— 场面已经足够乱，每人少几片没人看得出来，
+ * 掉帧和"有人没碎"所有人都看得出来。
  */
 
 /**
  * 池子容量。
  *
- * 一次回旋能同时杀上百人，每人溅三十来片，峰值就是三千多。给满会让一次群杀之后场上飘着
- * 三千个方块，既没必要也拖帧；给 2600 是让**大部分**那一下能完整炸出来，尾巴上少几片没人
- * 数得清。满了直接丢新的（和血泊相反：血泊满了覆盖最旧的，因为它是留在地上的记号，而碎片
- * 一瞬即逝）。
+ * 2600 是按"尾巴上少几片没人数得清"定的，而那个判断错在**尾巴不是随机的**。
+ *
+ * 破空的杀伤摊在 0.55 秒里：波一路往前推，前排先死、后排后死，先溅的血（活 0.42 秒）在后排
+ * 溅之前就化掉了，池子始终有富余，每个人都完整炸开。回旋不是 —— 它在**同一帧**里把身周
+ * 五十来人一起结算，每人四十七片就是两千三，加上上一刀还没落地的甲片直接顶到天花板。于是
+ * 先被遍历到的那些人炸得很漂亮，排在后面的人一片都没有，而"排在后面"指的是敌人数组里的
+ * 次序，跟玩家看哪儿毫无关系。玩家看到的就是：同一圈里有人碎了、有人只是躺下了。
+ *
+ * 所以这里改了两件事：容量抬到 4400（放得下一次满员回旋，加一刀的余量），以及满员时按比例
+ * 缩水而不是先到先得（见 burst 里的 share）。少几片和一片都没有是两回事。
  */
-const CAPACITY = 2600;
+const CAPACITY = 4400;
+
+/**
+ * 池子还剩多少比例时开始缩水，以及缩到最少剩几成。
+ *
+ * 不等到装满才管：那时最后几个人已经什么都分不到了。从还剩四成起就一起匀着少溅一点，
+ * 于是一次群杀里每个人都碎，只是碎得没有单杀那么阔气 —— 这正是眼睛能接受的那种"少"。
+ */
+const SHARE_FROM = 0.4;
+const SHARE_FLOOR = 0.3;
+
+/** 甲片里有多大比例是"大块"。打在人身上是一成，炸出来的那一蓬要高得多（见 blast）。 */
+const BIG_SHARD_CHANCE = 0.1;
+const BLAST_BIG_CHANCE = 0.3;
 
 const KIND_BLOOD = 0;
 const KIND_SHARD = 1;
@@ -84,37 +104,109 @@ export class Debris {
   burst(x: number, y: number, dirX: number, dirY: number, power: number, palette: CharacterPalette): void {
     // 数量翻了一倍多。原来一次技能命中是 14 血 + 6 片，在满屏都是人的画面里几乎看不出
     // "炸开了" —— 十几个小方块散在一个人身上，读作被打了一下，不是被打碎了。
-    const blood = Math.round(9 + 11 * power);
-    const shards = Math.round(power >= 2 ? 8 + 8 * (power - 1) : 2);
+    const room = 1 - this.count / CAPACITY;
+    const share = room >= SHARE_FROM ? 1 : Math.max(SHARE_FLOOR, room / SHARE_FROM);
 
-    for (let i = 0; i < blood; i++) this.emit(x, y, dirX, dirY, power, KIND_BLOOD, palette);
-    for (let i = 0; i < shards; i++) this.emit(x, y, dirX, dirY, power, KIND_SHARD, palette);
+    const blood = Math.round((9 + 11 * power) * share);
+    // 甲片是"碎了"的唯一证据，所以再挤也保底一片：血谁挨一下都会飙，只有甲片说得出这一下
+    // 把人打散了。
+    const full = power >= 2 ? 8 + 8 * (power - 1) : 2;
+    const shards = Math.max(power >= 2 ? 1 : 0, Math.round(full * share));
+
+    const heading = Math.atan2(dirY, dirX);
+    const boost = 0.7 + 0.5 * power;
+    for (let i = 0; i < blood; i++) {
+      // 方向：以打击方向为中心撒开一个很宽的扇面，再各自掷一个速度。
+      this.emit(
+        x, y,
+        heading + (Math.random() - 0.5) * 3.0,
+        (26 + Math.random() * 46) * boost,
+        34 + Math.random() * 52,
+        BIG_SHARD_CHANCE,
+        KIND_BLOOD,
+        palette,
+      );
+    }
+    for (let i = 0; i < shards; i++) {
+      this.emit(
+        x, y,
+        heading + (Math.random() - 0.5) * 2.2,
+        (18 + Math.random() * 30) * boost,
+        34 + Math.random() * 52,
+        BIG_SHARD_CHANCE,
+        KIND_SHARD,
+        palette,
+      );
+    }
   }
 
+  /**
+   * 原地炸开一蓬：不朝哪个方向，而是从一点甩向四面八方。
+   *
+   * 为什么 burst 顶不上这件事。burst 是**打在某个人身上**的，一次回旋杀掉身周五十人，就是
+   * 五十蓬各自四十来片、摊在一个半径四十多个单位的圈上 —— 每一处都很稀，合起来也只是"一圈
+   * 人身上各掉了点东西"，读不出中间发生过一次爆炸。而玩家按下回旋看到的应该是**脚下炸了**：
+   * 有东西从他站的地方飞出来，飞得比那圈人还远。这一蓬就是那些东西。
+   *
+   * 所以它的速度和抛高都比 burst 高一大截（飞出去约两倍于判定半径），大块的比例也调高 ——
+   * 爆炸物要看得清是"一块东西"，一堆小点只会读成灰。
+   */
+  blast(x: number, y: number, power: number, palette: CharacterPalette): void {
+    const room = 1 - this.count / CAPACITY;
+    const share = room >= SHARE_FROM ? 1 : Math.max(SHARE_FLOOR, room / SHARE_FROM);
+    // 甲片给得比血多一倍：爆炸物要能认出是"一块东西"，血只是一片红雾。
+    const blood = Math.round(34 * power * 0.5 * share);
+    const shards = Math.round(70 * power * 0.5 * share);
+
+    for (let i = 0; i < blood; i++) {
+      this.emit(
+        x, y,
+        Math.random() * Math.PI * 2,
+        70 + Math.random() * 90,
+        60 + Math.random() * 70,
+        BLAST_BIG_CHANCE,
+        KIND_BLOOD,
+        palette,
+      );
+    }
+    for (let i = 0; i < shards; i++) {
+      this.emit(
+        x, y,
+        Math.random() * Math.PI * 2,
+        90 + Math.random() * 110,
+        70 + Math.random() * 80,
+        BLAST_BIG_CHANCE,
+        KIND_SHARD,
+        palette,
+      );
+    }
+  }
+
+  /**
+   * @param angle 甩出去的地面方向，弧度。撒开由调用方掷 —— 扇面和整圈的分布不是同一件事。
+   * @param speed 水平初速，世界单位每秒。
+   * @param lift  竖直初速。它和重力一起决定这一片在空中待多久，也就决定它能飞多远。
+   */
   private emit(
     x: number,
     y: number,
-    dirX: number,
-    dirY: number,
-    power: number,
+    angle: number,
+    speed: number,
+    lift: number,
+    bigChance: number,
     kind: number,
     palette: CharacterPalette,
   ): void {
     if (this.count >= CAPACITY) return;
     const i = this.count++;
 
-    // 方向：以打击方向为中心撒开一个很宽的扇面，再各自掷一个速度。
-    const spread = kind === KIND_BLOOD ? 1.5 : 1.1;
-    const a = Math.atan2(dirY, dirX) + (Math.random() - 0.5) * 2 * spread;
-    const speed = (kind === KIND_BLOOD ? 26 + Math.random() * 46 : 18 + Math.random() * 30) * (0.7 + 0.5 * power);
-
     this.x[i] = x;
     this.y[i] = y;
     // 从胸口高度溅出来，不是从脚下 —— 从地面冒出来的血读作地上的水坑被踩了一脚。
     this.z[i] = 7 + Math.random() * 5;
-    this.vx[i] = Math.cos(a) * speed;
-    this.vy[i] = Math.sin(a) * speed;
-    this.vz[i] = 34 + Math.random() * 52;
+    this.vx[i] = Math.cos(angle) * speed;
+    this.vy[i] = Math.sin(angle) * speed;
+    this.vz[i] = lift;
     this.age[i] = 0;
     this.kind[i] = kind;
 
@@ -128,9 +220,9 @@ export class Debris {
       this.tint[i] = Math.random() < 0.5 ? BLOOD : BLOOD_DARK;
     } else {
       this.life[i] = SHARD_LIFE * (0.75 + Math.random() * 0.5);
-      // 大小拉开档次，还有一成是**大块**。清一色的小方块读作噪点；中间混几块明显更大的，
-      // 眼睛才会把它读成"从这人身上崩下来的东西"。
-      const big = Math.random() < 0.1;
+      // 大小拉开档次，其中一部分是**大块**。清一色的小方块读作噪点；中间混几块明显更大的，
+      // 眼睛才会把它读成"从这人身上崩下来的东西"。爆炸那一蓬把这个比例调高（见 blast）。
+      const big = Math.random() < bigChance;
       this.size[i] = big ? 2.1 + Math.random() * 1.3 : 0.8 + Math.random() * 1.0;
       // 甲片是片不是块：长宽比拉开，再给一个自转。翻着飞的薄片比不动的方块像碎片得多，
       // 而这里的代价只是每片多存两个数 —— rect 本来就收一个旋转角。

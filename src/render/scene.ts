@@ -366,7 +366,9 @@ export class Scene {
     shapes.flushToMesh(this.prim, this.surface.width, this.surface.height);
     this.prim.end();
 
-    this.surface.render();
+    // 扭曲不进批次：它拧的是整帧合成之后的画面，而不是往画面上再加东西（见 warpField.ts）。
+    // 所以它是唯一一个跨过 ShapeBatch、直接交给 PixelSurface 的效果。
+    this.surface.render(battle.warp.collect(camX, camY, rootX, rootY, grain));
     this.buildMs = smooth(this.buildMs, performance.now() - t0);
   }
 

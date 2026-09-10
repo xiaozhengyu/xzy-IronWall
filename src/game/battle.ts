@@ -5,6 +5,7 @@ import { type UnitDef, UnitPresets } from '../characters/unitDef';
 import { clamp } from '../core/math';
 import { DamageNumbers } from '../effects/damageNumbers';
 import { Debris } from '../effects/debris';
+import { WarpField } from '../effects/warpField';
 import { ImpactEffects, frontRadius, weaponImpactPoint, type ShockwaveOptions } from '../effects/impact';
 import { SKY_BLADE_LENGTH, SKY_BLADE_WIDTH } from '../effects/skyBlade';
 import { Character } from './character';
@@ -596,6 +597,11 @@ export class Battle {
   readonly effects = new ImpactEffects();
   /** 打碎溅出来的血珠和甲片。同上：谁放出来的归战斗管，画它的是 Scene。 */
   readonly debris = new Debris();
+  /**
+   * 砸在地上的扭曲。和上面两个一样是"招式放出来的东西"，只是画它的不是 ShapeBatch 而是
+   * 合成阶段的一道滤镜（见 effects/warpField.ts）。
+   */
+  readonly warp = new WarpField();
   /** 头顶飘起来的扣血数字。数值还没接上，见 rollDamage。 */
   readonly damageNumbers = new DamageNumbers();
   /** 地图上的掉落物。数值结算尚未接入，目前只负责生成、落地和吸附。 */
@@ -981,6 +987,7 @@ export class Battle {
     this.resetSkillRuntime();
     this.enemyArrows.length = 0;
     this.debris.clear();
+    this.warp.clear();
     this.damageNumbers.clear();
     this.collectibles.clear();
     this.collectedGems = 0;
@@ -1426,6 +1433,7 @@ export class Battle {
 
     this.effects.update(dt);
     this.debris.update(dt);
+    this.warp.update(dt);
     this.damageNumbers.update(dt);
     this.collectibles.update(dt, player);
     this.collectedGems += this.collectibles.collected.gem;
@@ -1769,6 +1777,24 @@ export class Battle {
             });
           }
         }
+        // 扇面正中也砸一个洞，比回旋小、比回旋短。
+        //
+        // 圆心不在脚下而在身前六成距离处：横扫的力气是甩出去的，洞跟着落点走才对得上眼睛看到
+        // 的那一下；摆在脚下会读成"他自己脚底炸了"。
+        //
+        // 旋进取负 = 画面上顺时针，和这一刀本身的走向一致：applySlash 的手从身体右后绕到左前
+        // （animator.ts），换算到屏幕上正好是顺时针。反着拧会让人觉得画面在跟招式较劲。
+        //
+        // depth 0.17 不是"变弱了"：重映射从钟形衰减换成球面 pow 之后（warpFilter.ts），
+        // 同一个数字对应的位移大了约两倍半。0.17 是按峰值位移反解出来的，横扫看到的深浅
+        // 和换之前一样。
+        const holeAt = reach * 0.6;
+        this.warp.spawn(
+          player.x + Math.cos(player.facing) * holeAt,
+          player.y + Math.sin(player.facing) * holeAt,
+          reach * 0.62,
+          { life: 0.34, depth: 0.17, swirl: -0.95, dark: 0.4, rim: 0.4, open: 0.62 },
+        );
         for (const e of this.enemies) {
           if (!e.alive) continue;
           if (inSector(player, e, reach, arc)) this.slay(e, player.x, player.y, skill.power);
@@ -1945,11 +1971,60 @@ export class Battle {
       velocityX: options.velocityX,
       velocityY: options.velocityY,
     });
+    // 环推开的同时，脚下憋出一个球：四周先被抽向中心，缩到最紧，然后炸开。
+    //
+    // squash 给 1（正圆），不按地面压扁。压扁了它就又躺回地上去了，读作一摊水；这一下要读作
+    // 一个**悬在那儿的球**被憋爆，所以它在画面上必须是正圆。
+    //
+    // 半径给判定半径本身，不除 SKILL_HIT_MARGIN：那个余量是为了让"擦到就死"更宽容，而球是
+    // 表现，它该罩住整个真正会死人的范围 —— 球里站着的人全都要跟着被抽进去，才读得出这一圈
+    // 是有力气的。
+    //
+    // 旋进方向和横扫那个坑一样是顺时针（炸开时自动翻向，见 shapeSphere）。回旋本身没有专属
+    // 动画（挥击动作跟着武器走，见 animator.ts 的 applyAttack），所以没有"这一招自己的转向"
+    // 可对；那就对角色的转向 —— 他每一刀都是顺时针抡的，脚下的球跟着往同一边绞。
+    //
+    // 上一版给到 depth 0.62 / burst 0.8，球里整片画面都在动 —— 人和草一起变形，那读作画面坏了，
+    // 不是有个球在那儿。球该靠的是**缩放**和**边缘**，不是把里面搅烂。所以现在分成两份：
+    //
+    //   内部  depth 0.12 / burst 0.15，峰值位移约 3~4 像素（人是 38 像素高）。只够读出
+    //         "这一块在收、在放"，认不出单个东西被拧了。
+    //   边缘  edge 0.09 压在光圈那一圈上，约 7 像素 —— 和横扫那个坑的峰值同一个量级。
+    //         扭曲看得见的地方就这一条带。
+    //
+    // 缩放行程也收窄了：0.72 → 1.1，原来是 0.5 → 1.2。
+    this.warp.spawn(x, y, reach, {
+      life: 0.5,
+      depth: 0.12,
+      burst: 0.15,
+      edge: 0.09,
+      swirl: -0.55,
+      dark: 0.34,
+      flash: 0.4,
+      rim: 0.62,
+      shrink: 0.72,
+      grow: 1.1,
+      squash: 1,
+    });
+    const hit = (e: Character): boolean =>
+      e.alive && (e.x - x) * (e.x - x) + (e.y - y) * (e.y - y) <= (reach + e.radius) * (reach + e.radius);
+
+    // 从中心真的甩出东西来。
+    //
+    // 光靠每个死者身上溅的那一蓬凑不出"爆炸"：一次回旋杀掉身周五十人，碎片就摊在一个半径
+    // 四十多个单位的圈上，每一处都很稀，合起来只是"一圈人身上各掉了点东西"。爆炸得有东西从
+    // **中心**飞出来，而且飞得比那圈人还远 —— 见 Debris.blast。
+    //
+    // 材质取圈里的一个人，不取玩家：飞出来的是被炸碎的**他们**，用玩家的甲色会让一蓬金片从
+    // 他脚下喷出来，读作他自己碎了。一个人都没打到就不炸 —— 空地上炸出一蓬血是假的。
+    //
+    // 而且要**赶在结算之前**炸。碎片池快满时会按比例缩水（Debris 里的 share），排在五十个
+    // 人身上那些小蓬后面去分剩下的话，最该被看见的这一蓬反而是被削得最狠的那个。
+    const caught = this.enemies.find(hit);
+    if (caught) this.debris.blast(x, y, power, caught.palette);
+
     for (const e of this.enemies) {
-      if (!e.alive) continue;
-      const dx = e.x - x;
-      const dy = e.y - y;
-      if (dx * dx + dy * dy <= (reach + e.radius) * (reach + e.radius)) this.slay(e, x, y, power);
+      if (hit(e)) this.slay(e, x, y, power);
     }
   }
 
