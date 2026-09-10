@@ -1430,7 +1430,8 @@ export class Battle {
     this.collectibles.update(dt, player);
     this.collectedGems += this.collectibles.collected.gem;
     this.collectedCoins += this.collectibles.collected.coin;
-    field.update(dt, this.actors());
+    // 玩家作为地表反馈焦点：雪印、水波和水珠不能被同一帧的大量敌人特效覆盖。
+    field.update(dt, this.actors(), player);
 
     // 玩家倒下了。
     //

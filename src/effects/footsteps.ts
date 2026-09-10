@@ -19,6 +19,11 @@ import type { Weather } from '../world/weather';
 const MAX_PRINTS = 420;
 const MAX_RIPPLES = 160;
 const MAX_DROPS = 480;
+// 玩家和人群各占一段固定容量。白岭雪原的大湖会让几百个敌人同时踩水；共用环形池时，
+// 后处理的敌人能在同一帧覆盖玩家刚生成的反馈。独立池既保住玩家效果，也避免池满后扫描槽位。
+const FOCUS_PRINTS = 96;
+const FOCUS_RIPPLES = 16;
+const FOCUS_DROPS = 48;
 /** 雪印留多久。它是"持续"的那一种：雪地上的脚印不会自己消失，只会被新雪盖住。 */
 const PRINT_LIFE = 48;
 
@@ -54,14 +59,15 @@ interface Drop {
 }
 
 export class FootstepEffects {
-  private readonly prints: Print[] = [];
-  private readonly ripples: Ripple[] = [];
-  private readonly drops: Drop[] = [];
+  /** 0 是人群池，1 是玩家池；两边相加仍等于原来的总容量。 */
+  private readonly prints: [Print[], Print[]] = [[], []];
+  private readonly ripples: [Ripple[], Ripple[]] = [[], []];
+  private readonly drops: [Drop[], Drop[]] = [[], []];
 
   // 池子满了之后从哪里开始覆盖。
-  private printAt = 0;
-  private rippleAt = 0;
-  private dropAt = 0;
+  private readonly printAt = [0, 0];
+  private readonly rippleAt = [0, 0];
+  private readonly dropAt = [0, 0];
 
   /** 每个单位上一帧的步态相位。跨越检测要用。 */
   private readonly phase = new WeakMap<Character, number>();
@@ -73,19 +79,29 @@ export class FootstepEffects {
   }
 
   get count(): number {
-    return this.prints.length + this.ripples.length + this.drops.length;
+    return (
+      this.prints[0].length + this.prints[1].length +
+      this.ripples[0].length + this.ripples[1].length +
+      this.drops[0].length + this.drops[1].length
+    );
   }
 
   reset(): void {
-    this.prints.length = 0;
-    this.ripples.length = 0;
-    this.drops.length = 0;
-    this.printAt = 0;
-    this.rippleAt = 0;
-    this.dropAt = 0;
+    for (const pool of this.prints) pool.length = 0;
+    for (const pool of this.ripples) pool.length = 0;
+    for (const pool of this.drops) pool.length = 0;
+    this.printAt.fill(0);
+    this.rippleAt.fill(0);
+    this.dropAt.fill(0);
   }
 
-  update(actors: Iterable<Character>, dt: number, terrain: Terrain, weather: Weather): void {
+  update(
+    actors: Iterable<Character>,
+    dt: number,
+    terrain: Terrain,
+    weather: Weather,
+    focus: Character | null = null,
+  ): void {
     this.age(dt);
 
     for (const man of actors) {
@@ -98,12 +114,18 @@ export class FootstepEffects {
       if (!man.alive || man.speed < 1.25) continue;
 
       // 相位 0 开始左脚的支撑段，0.5 开始右脚的。跨过这两个瞬间各产生一次触地。
-      if (now < before) this.contact(man, man.pose.footL, terrain, weather);
-      if (before < 0.5 && now >= 0.5) this.contact(man, man.pose.footR, terrain, weather);
+      if (now < before) this.contact(man, man.pose.footL, terrain, weather, man === focus);
+      if (before < 0.5 && now >= 0.5) this.contact(man, man.pose.footR, terrain, weather, man === focus);
     }
   }
 
-  private contact(man: Character, localFoot: { x: number; y: number; z: number }, terrain: Terrain, weather: Weather): void {
+  private contact(
+    man: Character,
+    localFoot: { x: number; y: number; z: number },
+    terrain: Terrain,
+    weather: Weather,
+    focus: boolean,
+  ): void {
     // 脚是身体局部坐标（x 右、y 前），转到世界用的基和 Projector.ground 完全相同。
     const sin = Math.sin(man.facing);
     const cos = Math.cos(man.facing);
@@ -112,25 +134,27 @@ export class FootstepEffects {
 
     const water = clamp(terrain.standingWater(wx, wy, weather), 0, 1);
     if (water > 0.14) {
-      this.addRipple(wx, wy, water);
-      this.addDrops(wx, wy, man, water);
+      this.addRipple(wx, wy, water, focus);
+      this.addDrops(wx, wy, man, water, focus);
     } else if (weather.snowCover > 0.12) {
-      this.addPrint(wx, wy, man.facing, weather.snowCover);
+      this.addPrint(wx, wy, man.facing, weather.snowCover, focus);
     }
   }
 
-  private addPrint(x: number, y: number, facing: number, strength: number): void {
+  private addPrint(x: number, y: number, facing: number, strength: number, focus: boolean): void {
+    const group = focus ? 1 : 0;
     push(
-      this.prints,
-      MAX_PRINTS,
-      (i) => (this.printAt = i),
-      this.printAt,
+      this.prints[group],
+      focus ? FOCUS_PRINTS : MAX_PRINTS - FOCUS_PRINTS,
+      (i) => (this.printAt[group] = i),
+      this.printAt[group],
       { x, y, facing, age: 0, strength: clamp(strength, 0.25, 1), long: 1.45, wide: 0.68 },
     );
   }
 
-  private addRipple(x: number, y: number, strength: number): void {
-    push(this.ripples, MAX_RIPPLES, (i) => (this.rippleAt = i), this.rippleAt, {
+  private addRipple(x: number, y: number, strength: number, focus: boolean): void {
+    const group = focus ? 1 : 0;
+    push(this.ripples[group], focus ? FOCUS_RIPPLES : MAX_RIPPLES - FOCUS_RIPPLES, (i) => (this.rippleAt[group] = i), this.rippleAt[group], {
       x,
       y,
       age: 0,
@@ -139,14 +163,15 @@ export class FootstepEffects {
     });
   }
 
-  private addDrops(x: number, y: number, man: Character, strength: number): void {
+  private addDrops(x: number, y: number, man: Character, strength: number, focus: boolean): void {
+    const group = focus ? 1 : 0;
     const count = 3 + Math.round(strength * 3);
     const vx = Math.cos(man.facing) * man.speed;
     const vy = Math.sin(man.facing) * man.speed;
     for (let i = 0; i < count; i++) {
       const angle = this.rand() * Math.PI * 2;
       const speed = 5 + this.rand() * (8 + strength * 5);
-      push(this.drops, MAX_DROPS, (n) => (this.dropAt = n), this.dropAt, {
+      push(this.drops[group], focus ? FOCUS_DROPS : MAX_DROPS - FOCUS_DROPS, (n) => (this.dropAt[group] = n), this.dropAt[group], {
         x,
         y,
         vx: Math.cos(angle) * speed + vx * 0.1,
@@ -161,24 +186,30 @@ export class FootstepEffects {
   }
 
   private age(dt: number): void {
-    for (let i = this.prints.length - 1; i >= 0; i--) {
-      const p = this.prints[i];
-      p.age += dt;
-      if (p.age >= PRINT_LIFE) discard(this.prints, i);
+    for (const pool of this.prints) {
+      for (let i = pool.length - 1; i >= 0; i--) {
+        const p = pool[i];
+        p.age += dt;
+        if (p.age >= PRINT_LIFE) discard(pool, i);
+      }
     }
-    for (let i = this.ripples.length - 1; i >= 0; i--) {
-      const r = this.ripples[i];
-      r.age += dt;
-      if (r.age >= r.life) discard(this.ripples, i);
+    for (const pool of this.ripples) {
+      for (let i = pool.length - 1; i >= 0; i--) {
+        const r = pool[i];
+        r.age += dt;
+        if (r.age >= r.life) discard(pool, i);
+      }
     }
-    for (let i = this.drops.length - 1; i >= 0; i--) {
-      const d = this.drops[i];
-      d.age += dt;
-      d.x += d.vx * dt;
-      d.y += d.vy * dt;
-      d.height += d.vz * dt;
-      d.vz -= 42 * dt;
-      if (d.age >= d.life || d.height < 0) discard(this.drops, i);
+    for (const pool of this.drops) {
+      for (let i = pool.length - 1; i >= 0; i--) {
+        const d = pool[i];
+        d.age += dt;
+        d.x += d.vx * dt;
+        d.y += d.vy * dt;
+        d.height += d.vz * dt;
+        d.vz -= 42 * dt;
+        if (d.age >= d.life || d.height < 0) discard(pool, i);
+      }
     }
   }
 
@@ -187,57 +218,63 @@ export class FootstepEffects {
     const sx = (wx: number) => rootX + (wx - camX) * scale;
     const sy = (wy: number) => rootY + (wy - camY) * Projection.groundSquash * scale;
 
-    for (const p of this.prints) {
-      const fade = clamp((PRINT_LIFE - p.age) / 10, 0, 1);
-      const alpha = Math.round(fade * lerp(80, 155, p.strength));
-      if (alpha <= 2) continue;
-      const x = sx(p.x);
-      const y = sy(p.y);
-      // 印子指着人当时朝的方向，但方向本身要投影：地面被压扁了，一个朝向 45 度的脚印
-      // 在屏幕上不是 45 度。
-      const rot = Math.atan2(Math.sin(p.facing) * Projection.groundSquash, Math.cos(p.facing));
-      shapes.ellipse(
-        v2(x, y),
-        Math.max(p.long * scale, 0.65),
-        Math.max(p.wide * scale, 0.42),
-        rot,
-        rgba(66, 79, 88, alpha),
-        y * Projector.DEPTH_PER_ROW - 25,
-      );
+    for (const pool of this.prints) {
+      for (const p of pool) {
+        const fade = clamp((PRINT_LIFE - p.age) / 10, 0, 1);
+        const alpha = Math.round(fade * lerp(80, 155, p.strength));
+        if (alpha <= 2) continue;
+        const x = sx(p.x);
+        const y = sy(p.y);
+        // 印子指着人当时朝的方向，但方向本身要投影：地面被压扁了，一个朝向 45 度的脚印
+        // 在屏幕上不是 45 度。
+        const rot = Math.atan2(Math.sin(p.facing) * Projection.groundSquash, Math.cos(p.facing));
+        shapes.ellipse(
+          v2(x, y),
+          Math.max(p.long * scale, 0.65),
+          Math.max(p.wide * scale, 0.42),
+          rot,
+          rgba(66, 79, 88, alpha),
+          y * Projector.DEPTH_PER_ROW - 25,
+        );
+      }
     }
 
-    for (const r of this.ripples) {
-      const t = r.age / r.life;
-      const x = sx(r.x);
-      const y = sy(r.y);
-      const radius = lerp(1, 6.2 + r.strength * 2.5, t) * scale;
-      const alpha = Math.round((1 - t) * lerp(105, 190, r.strength));
-      if (alpha <= 2) continue;
-      shapes.ellipseRing(
-        v2(x, y),
-        Math.max(radius, 0.8),
-        Math.max(radius * Projection.groundSquash, 0.5),
-        0,
-        Math.max(0.55, scale * 0.72),
-        rgba(177, 222, 232, alpha),
-        y * Projector.DEPTH_PER_ROW - 24,
-        16,
-      );
+    for (const pool of this.ripples) {
+      for (const r of pool) {
+        const t = r.age / r.life;
+        const x = sx(r.x);
+        const y = sy(r.y);
+        const radius = lerp(1, 6.2 + r.strength * 2.5, t) * scale;
+        const alpha = Math.round((1 - t) * lerp(105, 190, r.strength));
+        if (alpha <= 2) continue;
+        shapes.ellipseRing(
+          v2(x, y),
+          Math.max(radius, 0.8),
+          Math.max(radius * Projection.groundSquash, 0.5),
+          0,
+          Math.max(0.55, scale * 0.72),
+          rgba(177, 222, 232, alpha),
+          y * Projector.DEPTH_PER_ROW - 24,
+          16,
+        );
+      }
     }
   }
 
   /** 飞在空中的水珠。按落点那一行排序，所以它们和溅起它们的人是同一层。 */
   drawSplashes(shapes: ShapeBatch, camX: number, camY: number, rootX: number, rootY: number, scale: number): void {
-    for (const d of this.drops) {
-      const fade = 1 - d.age / d.life;
-      const gx = rootX + (d.x - camX) * scale;
-      const gy = rootY + (d.y - camY) * Projection.groundSquash * scale;
-      shapes.disc(
-        v2(gx, gy - d.height * Projection.heightSquash * scale),
-        Math.max(0.48, d.radius * scale),
-        rgba(205, 238, 244, Math.round(fade * 220)),
-        gy * Projector.DEPTH_PER_ROW + 3,
-      );
+    for (const pool of this.drops) {
+      for (const d of pool) {
+        const fade = 1 - d.age / d.life;
+        const gx = rootX + (d.x - camX) * scale;
+        const gy = rootY + (d.y - camY) * Projection.groundSquash * scale;
+        shapes.disc(
+          v2(gx, gy - d.height * Projection.heightSquash * scale),
+          Math.max(0.48, d.radius * scale),
+          rgba(205, 238, 244, Math.round(fade * 220)),
+          gy * Projector.DEPTH_PER_ROW + 3,
+        );
+      }
     }
   }
 }
@@ -249,14 +286,21 @@ export class FootstepEffects {
  * 变多，每一次添加都是一次几百项的内存搬移。这里画出来的东西没有任何顺序含义，所以
  * 最老的那个槽直接重用就行。
  */
-function push<T>(pool: T[], limit: number, setCursor: (i: number) => void, cursor: number, item: T): void {
+function push<T>(
+  pool: T[],
+  limit: number,
+  setCursor: (i: number) => void,
+  cursor: number,
+  item: T,
+): void {
   if (pool.length < limit) {
     pool.push(item);
     return;
   }
+
   const at = cursor >= limit ? 0 : cursor;
   pool[at] = item;
-  setCursor(at + 1);
+  setCursor((at + 1) % limit);
 }
 
 /**

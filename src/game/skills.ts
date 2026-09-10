@@ -110,8 +110,8 @@ export const Skills: SkillDef[] = [
     reach: 1.8,
     arc: null,
     duration: 0,
-    // 横扫就是基础那一下，不该有"打碎了"的表现。
-    power: 1,
+    // 横扫虽然是自动攻击，但命中仍应有完整破坏反馈；与破空、回旋统一为技能级碎片量。
+    power: 2,
     cooldown: 0,
     finishRing: 0,
   },

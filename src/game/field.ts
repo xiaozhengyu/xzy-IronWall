@@ -94,8 +94,8 @@ export class Field {
    * @param actors 场上所有人。脚步是从步态相位的跨越读触地的，所以一步正好一次 ——
    *               走在水里溅水花，走在雪上留脚印。
    */
-  update(dt: number, actors: Iterable<Character>): void {
+  update(dt: number, actors: Iterable<Character>, focus: Character | null = null): void {
     this.weather.update(dt);
-    this.footsteps.update(actors, dt, this.terrain, this.weather);
+    this.footsteps.update(actors, dt, this.terrain, this.weather, focus);
   }
 }

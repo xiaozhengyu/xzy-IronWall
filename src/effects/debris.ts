@@ -17,17 +17,16 @@ import type { ShapeBatch } from '../render/shapeBatch';
  *         让一次重击在画面上留下痕迹的东西。
  *
  * 定长的池子 + 定型数组，一个对象都不分配：一次回旋能同时杀掉上百人，如果每个人溅十几个
- * 粒子对象出来，光是这一下产生的垃圾就够卡一帧。满了就直接丢掉新的 —— 场面已经足够乱，
- * 少几片没人看得出来，掉帧所有人都看得出来。
+ * 粒子对象出来，光是这一下产生的垃圾就够卡一帧。满池后血珠直接丢弃，甲片则轮转覆盖旧粒子：
+ * 总图元数不变，但这次技能打碎敌人的证据不能被上一蓬短命血珠吃掉。
  */
 
 /**
  * 池子容量。
  *
  * 一次回旋能同时杀上百人，每人溅三十来片，峰值就是三千多。给满会让一次群杀之后场上飘着
- * 三千个方块，既没必要也拖帧；给 2600 是让**大部分**那一下能完整炸出来，尾巴上少几片没人
- * 数得清。满了直接丢新的（和血泊相反：血泊满了覆盖最旧的，因为它是留在地上的记号，而碎片
- * 一瞬即逝）。
+ * 三千个方块，既没必要也拖帧；给 2600 是让**大部分**那一下能完整炸出来。达到上限后不再加
+ * 图元，但新甲片会替掉旧粒子，让同一帧被回旋扫中的整圈敌人都能留下破碎反馈。
  */
 const CAPACITY = 2600;
 
@@ -64,6 +63,8 @@ export class Debris {
   private readonly tint: Rgba[] = new Array(CAPACITY);
 
   private count = 0;
+  /** 满池后新甲片轮转写入的位置。无需搜索，因此百人同帧死亡仍是常数开销。 */
+  private shardAt = 0;
 
   /** 场上还剩多少片。 */
   get alive(): number {
@@ -72,6 +73,7 @@ export class Debris {
 
   clear(): void {
     this.count = 0;
+    this.shardAt = 0;
   }
 
   /**
@@ -100,8 +102,16 @@ export class Debris {
     kind: number,
     palette: CharacterPalette,
   ): void {
-    if (this.count >= CAPACITY) return;
-    const i = this.count++;
+    let i: number;
+    if (this.count < CAPACITY) {
+      i = this.count++;
+    } else {
+      // 血珠只负责瞬时命中感，满池后可以舍弃；甲片承担“敌人被打碎”的信息，必须让新技能
+      // 写进来。轮转覆盖避免扫描 2600 个槽，也让回旋的碎片分布到整圈命中点。
+      if (kind === KIND_BLOOD) return;
+      i = this.shardAt;
+      this.shardAt = (this.shardAt + 1) % CAPACITY;
+    }
 
     // 方向：以打击方向为中心撒开一个很宽的扇面，再各自掷一个速度。
     const spread = kind === KIND_BLOOD ? 1.5 : 1.1;
