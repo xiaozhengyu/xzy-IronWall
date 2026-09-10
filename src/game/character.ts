@@ -1,4 +1,5 @@
 import { CharacterAnimator, attackDuration, attackImpact } from '../characters/animator';
+import { HorseAnimator, HorsePose, HorseSpec } from '../characters/horse';
 import type { CharacterPalette } from '../characters/palette';
 import { Pose, RigSpec } from '../characters/rig';
 import type { UnitDef } from '../characters/unitDef';
@@ -86,6 +87,31 @@ const TRAIL_STEP = 0.045;
 export class Character {
   readonly pose = new Pose();
   private readonly animator = new CharacterAnimator();
+
+  /**
+   * 坐骑的姿势和步态。步兵是 null。
+   *
+   * 按需建、并且只建一次：换 def 时（setPreset、备战界面换角色）如果新的 def 是骑兵就补上，
+   * 换回步兵**不销毁** —— 一个 HorsePose 就是二十来个 Vec3，留着比来回 new 便宜，而且换回
+   * 骑兵时步态相位还接得上。真正决定画不画马的是 def.mounted，不是这两个字段在不在。
+   */
+  private horsePose: HorsePose | null = null;
+  private horseAnimator: HorseAnimator | null = null;
+
+  /** 这一帧马的姿势；不骑马时是 null。渲染那边按它决定要不要先画一匹马。 */
+  get mount(): HorsePose | null {
+    return this.ensureMount();
+  }
+
+  /** def 换成骑兵时把坐骑补出来。不是骑兵就返回 null，什么都不建。 */
+  private ensureMount(): HorsePose | null {
+    if (!this.def.mounted) return null;
+    if (!this.horsePose) {
+      this.horsePose = new HorsePose();
+      this.horseAnimator = new HorseAnimator();
+    }
+    return this.horsePose;
+  }
 
   x = 0;
   y = 0;
@@ -195,6 +221,8 @@ export class Character {
    * 窄处算，宽了会让人卡在明明过得去的缝里、也会让攻击白白变长。
    */
   get radius(): number {
+    // 骑兵按马的躯干半宽算。拿骑手的胯宽当半径的话，两匹马能贴到肚子叠在一起。
+    if (this.def.mounted) return HorseSpec.barrelHalfWidth * this.def.bulk;
     return RigSpec.hipHalfWidth * this.def.bulk * 1.15;
   }
 
@@ -208,6 +236,9 @@ export class Character {
    * 所以站位按躯干算。这不是把碰撞"调大一点"，是本来就该用另一个数。
    */
   get spacing(): number {
+    // 骑兵在地上占的那一圈按马来。马是长条的（十三个单位长、五个多宽），而人群分离用的是
+    // 一个圆 —— 取长宽之间偏宽的一档：按长度给会让骑兵之间空出一大片，按宽度给则前后叠住。
+    if (this.def.mounted) return HorseSpec.barrelHalfWidth * 1.7 * this.def.bulk;
     return RigSpec.torsoHalfWidth * this.def.bulk;
   }
 
@@ -334,6 +365,21 @@ export class Character {
       j.z = hz + along * sin + dz * cos + height;
     };
 
+    // 马跟着一起翻。不带上它的话，骑手在空中翻跟头而马平平地滑出去，读起来像两件不相干
+    // 的东西被同一阵风吹走。多这十九个点只发生在**正在飞的骑兵尸体**上，场上不会有几个。
+    const horse = this.horsePose;
+    if (horse && this.def.mounted) {
+      move(horse.chest);
+      move(horse.croup);
+      move(horse.withers);
+      move(horse.poll);
+      move(horse.muzzle);
+      move(horse.saddle);
+      for (const j of horse.hoof) move(j);
+      for (const j of horse.knee) move(j);
+      for (const j of horse.tail) move(j);
+    }
+
     // 十一个规范关节两两互不相同，可以放心逐个走。
     move(p.chest);
     move(p.head);
@@ -428,7 +474,14 @@ export class Character {
       }
 
       if (!animate) return false;
-      this.animator.collapse(this.pose, this.def, clamp(this.death / COLLAPSE_TIME, 0, 1), this.fallX, this.fallY);
+      this.animator.collapse(
+        this.pose,
+        this.def,
+        clamp(this.death / COLLAPSE_TIME, 0, 1),
+        this.fallX,
+        this.fallY,
+        this.ensureMount(),
+      );
 
       // 翻滚 + 抬到空中。两件事都发生在 collapse 搭完姿势之后：collapse 给的是"躺平的
       // 那个样子"，这里把整具身体当成一个刚体去转、去抬。
@@ -453,6 +506,16 @@ export class Character {
           this.pose.handL, this.pose.handR, this.pose.elbowL, this.pose.elbowR,
         ]) {
           j.z *= k;
+        }
+        // 马也得一起沉。漏了它，骑手陷进草里之后地上还剩一匹凭空停住的马。
+        const horse = this.horsePose;
+        if (horse && this.def.mounted) {
+          for (const j of [horse.chest, horse.croup, horse.withers, horse.poll, horse.muzzle, horse.saddle]) {
+            j.z *= k;
+          }
+          for (const j of horse.hoof) j.z *= k;
+          for (const j of horse.knee) j.z *= k;
+          for (const j of horse.tail) j.z *= k;
         }
       }
       return false;
@@ -479,7 +542,12 @@ export class Character {
       }
     }
 
-    if (animate) this.animator.update(dt, this.speed, this.walkSpeed, this.def, attackT, this.pose);
+    if (animate) {
+      // 马先走一步：骑手的胯是坐在鞍上的，鞍的位置这一帧得先算出来。
+      const horse = this.ensureMount();
+      if (horse) this.horseAnimator?.update(dt, this.speed, horse);
+      this.animator.update(dt, this.speed, this.walkSpeed, this.def, attackT, this.pose, horse);
+    }
     return landed;
   }
 }

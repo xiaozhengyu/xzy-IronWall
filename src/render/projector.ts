@@ -101,6 +101,33 @@ export class Projector {
     return this.scale >= 2;
   }
 
+  /**
+   * 一个立在"右/上"平面里的椭圆截面，**垂直于给定屏幕方向**看上去有多厚。
+   *
+   * 和 crossSectionWidth 的区别是它量的方向：那一个量的永远是水平宽度，够用在竖直站着的
+   * 躯干上；而马的躯干是一根斜躺在屏幕上的管子，要算的是它自己轴线的法向厚度 —— 马一转身，
+   * 那个方向就跟着转。
+   *
+   * @param screenAxis 这根管子在屏幕上的轴向（不必归一化）。
+   */
+  crossThickness(halfRight: number, halfUp: number, screenAxis: Vec2): number {
+    let nx = -screenAxis.y;
+    let ny = screenAxis.x;
+    const len = Math.hypot(nx, ny);
+    if (len < 1e-3) {
+      nx = 1;
+      ny = 0;
+    } else {
+      nx /= len;
+      ny /= len;
+    }
+    const right = this.rightAxis;
+    const up = Projector.upAxis;
+    const a = halfRight * (right.x * nx + right.y * ny);
+    const b = halfUp * (up.x * nx + up.y * ny);
+    return 2 * Math.sqrt(a * a + b * b) * this.scale;
+  }
+
   /** 一个横截面椭圆（横向半宽 halfWidth、纵深半深 halfDepth）看上去的宽度。 */
   crossSectionWidth(halfWidth: number, halfDepth: number): number {
     const a = halfWidth * this.sin;

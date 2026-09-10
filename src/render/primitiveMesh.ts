@@ -76,7 +76,7 @@ export class PrimitiveMesh implements PrimitiveSink {
   private lastIndexCount = 0;
   /** 索引缓冲实际画到哪儿的高水位线。只涨不落，见 end()。 */
   private drawSpan = 0;
-  /** 装不下而被丢掉的图元数。正常应当一直是 0；不是的话说明容量估小了。 */
+  /** 扩容失败后被丢掉的图元数。正常应当一直是 0。 */
   overflow = 0;
 
   /**
@@ -134,7 +134,7 @@ export class PrimitiveMesh implements PrimitiveSink {
     x3: number, y3: number,
     color: Rgba,
   ): void {
-    if (this.vertices + 4 > this.colors.length || this.indexCount + 6 > this.indices.length) {
+    if (!this.ensureCapacity(4, 6)) {
       this.overflow++;
       return;
     }
@@ -162,7 +162,7 @@ export class PrimitiveMesh implements PrimitiveSink {
   /** 一个椭圆（圆盘是 rx === ry），扇形展开。 */
   ellipse(cx: number, cy: number, rx: number, ry: number, rotation: number, color: Rgba): void {
     const n = ellipseSegments(rx, ry);
-    if (this.vertices + n + 1 > this.colors.length || this.indexCount + n * 3 > this.indices.length) {
+    if (!this.ensureCapacity(n + 1, n * 3)) {
       this.overflow++;
       return;
     }
@@ -208,6 +208,46 @@ export class PrimitiveMesh implements PrimitiveSink {
 
     this.vertices = center + n + 1;
     this.indexCount = o;
+  }
+
+  /**
+   * 骑兵加入后，一个单位的圆盘和关节数明显多于步兵，密集波次可能超过最初按步兵估出的
+   * 40 万顶点。图元已经按纵深排序，固定缓冲满了以后丢弃的恰好都是后写入的屏幕下半部分，
+   * 所以症状会像“地图下面的人消失”。这里按需增长并保留高水位，既不让普通场景预占双倍显存，
+   * 也不再按屏幕区域截断角色。
+   */
+  private ensureCapacity(addVertices: number, addIndices: number): boolean {
+    const requiredVertices = this.vertices + addVertices;
+    const requiredIndices = this.indexCount + addIndices;
+    if (requiredVertices <= this.colors.length && requiredIndices <= this.indices.length) return true;
+
+    try {
+      let capacity = this.colors.length;
+      while (capacity < requiredVertices || capacity * 3 < requiredIndices) {
+        capacity = Math.max(capacity + 1, Math.ceil(capacity * 1.5));
+      }
+
+      const positions = new Float32Array(capacity * 2);
+      positions.set(this.positions);
+      this.positions = positions;
+
+      const colors = new Uint32Array(capacity);
+      colors.set(this.colors);
+      this.colors = colors;
+
+      const indices = new Uint32Array(capacity * 3);
+      indices.set(this.indices);
+      this.indices = indices;
+
+      // Buffer 对象本身留在 Geometry 上，只替换底层数组；Pixi 会在下一次 render 前重建一次
+      // GPU buffer。扩容只在跨过历史峰值时发生，之后每帧仍只上传实际使用的字节。
+      this.posBuffer.setDataWithSize(this.positions, this.positions.length, false);
+      this.colBuffer.setDataWithSize(this.colors, this.colors.length, false);
+      this.idxBuffer.setDataWithSize(this.indices.subarray(0, this.drawSpan), this.drawSpan, false);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**

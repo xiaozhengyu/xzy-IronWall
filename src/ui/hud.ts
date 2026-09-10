@@ -58,7 +58,15 @@ export interface HudOptions {
   gemProgressHeight?: string;
   gemsPerCycle?: number;
   gemProgressSideOverhang?: number;
+  /** 暂停按钮：弹临时结算画面（继续 / 结束），和 ESC 是同一件事。 */
   requestPause?: () => void;
+  /**
+   * 系统按钮：打开调试菜单。
+   *
+   * 它是调试菜单**唯一**的入口 —— ESC 和窗口失焦都走上面那条流程的路。分开之后，玩家
+   * 按 ESC 永远只会看到结算画面，不会一头撞进一屏帧率和图元数里。
+   */
+  requestSystemMenu?: () => void;
   locale?: HudLocale;
 }
 
@@ -115,7 +123,6 @@ export class Hud {
     this.minimapDock.className = 'hud-minimap-dock';
     const minimapControls = document.createElement('div');
     minimapControls.className = 'hud-minimap-controls';
-    const requestPause = () => options.requestPause?.();
     const pauseButton = createHudButton({
       label: this.text.value('pause'),
       icon: 'pause',
@@ -128,8 +135,8 @@ export class Hud {
       skin: 'button4',
       className: 'hud-minimap-button',
     });
-    pauseButton.addEventListener('click', requestPause);
-    settingsButton.addEventListener('click', requestPause);
+    pauseButton.addEventListener('click', () => options.requestPause?.());
+    settingsButton.addEventListener('click', () => options.requestSystemMenu?.());
     this.text.bindAttribute(pauseButton, 'aria-label', 'pause');
     this.text.bindAttribute(settingsButton, 'aria-label', 'settings');
     minimapControls.append(pauseButton, settingsButton);
@@ -236,7 +243,7 @@ export class Hud {
       const item = document.createElement('div');
       item.className = 'hud-currency-item';
       this.text.bindAttribute(item, 'aria-label', label);
-      item.append(createHudIcon(icon, `hud-currency-icon hud-currency-icon--${icon}`));
+      item.append(createHudIcon(icon, `hud-currency-icon hud-icon--${icon}`));
       const count = document.createElement('span');
       count.className = 'hud-text hud-text--pixel hud-currency-value';
       count.textContent = value;

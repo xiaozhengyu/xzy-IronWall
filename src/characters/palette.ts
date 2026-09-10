@@ -54,6 +54,17 @@ export interface CharacterPalette {
   woodDark: Rgba;
   shieldFace: Rgba;
   shieldRim: Rgba;
+
+  /**
+   * 坐骑。
+   *
+   * 不跟着阵营走 —— 马在哪一边都是马，把它染成阵营色只会让骑兵读作"一团红的"而不是
+   * "一个人骑在马上"。阵营色留给鞍垫、马衣和骑手自己，那几块正好都在轮廓的上半截。
+   */
+  horseCoat: Rgba;
+  horseShade: Rgba;
+  horseLight: Rgba;
+  horseMane: Rgba;
 }
 
 const base = (): Omit<CharacterPalette, 'cloth' | 'clothShade' | 'clothLight' | 'plume' | 'plumeShade' | 'shieldFace' | 'shieldRim'> => ({
@@ -83,6 +94,12 @@ const base = (): Omit<CharacterPalette, 'cloth' | 'clothShade' | 'clothLight' | 
 
   wood: rgb(120, 86, 54),
   woodDark: rgb(62, 44, 28),
+
+  // 枣红马。和材质色一样只给两个真值：一块平涂加一条硬边阴影，第三档留着等于中间色。
+  horseCoat: rgb(112, 74, 46),
+  horseShade: rgb(54, 34, 22),
+  horseLight: rgb(112, 74, 46),
+  horseMane: rgb(38, 26, 20),
 });
 
 /** 玩家阵营。 */

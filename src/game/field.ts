@@ -2,7 +2,7 @@ import { clamp } from '../core/math';
 import { FootstepEffects } from '../effects/footsteps';
 import { GroundSurface } from '../world/groundSurface';
 import { Props } from '../world/props';
-import { Terrain } from '../world/terrain';
+import { DEFAULT_LAYOUT, Terrain, type TerrainLayout } from '../world/terrain';
 import { Weather } from '../world/weather';
 import type { Character } from './character';
 
@@ -59,10 +59,10 @@ export class Field {
   /** 初始底图分成几片烘。加载条按这个数报进度。 */
   static readonly BAKE_SLICES = GroundSurface.INITIAL_SLICES;
 
-  constructor(width: number, height: number, seed: number) {
+  constructor(width: number, height: number, seed: number, layout: TerrainLayout = DEFAULT_LAYOUT) {
     this.width = width;
     this.height = height;
-    this.terrain = new Terrain(width, height, seed);
+    this.terrain = new Terrain(width, height, seed, layout);
     this.weather = new Weather();
     this.edgeMargin = Math.min(64, this.terrain.borderWidth * 0.75);
 

@@ -6,6 +6,7 @@ import { SKY_BLADE_LENGTH, drawSkyBlade, heavenSplitBlade, skyArrowBlade } from 
 import { drawCharacter, drawSkeleton } from '../characters/renderer';
 import type { ImpactEffects } from '../effects/impact';
 import type { Pose } from '../characters/rig';
+import type { HorsePose } from '../characters/horse';
 import type { UnitDef } from '../characters/unitDef';
 import type { CharacterPalette } from '../characters/palette';
 import { brightenPalette, flatPalette } from '../characters/palette';
@@ -222,11 +223,25 @@ export class Scene {
     return this.surface.view;
   }
 
-  /** 地面的两个精灵不参与批次，直接挂在不描边的那一层上。 */
+  /**
+   * 地面的两个精灵不参与批次，直接挂在不描边的那一层上。
+   *
+   * 换地图会再调一次，所以要先把上一块地的两个精灵摘掉 —— 留着的话它们仍然在显示树上，
+   * 新地面盖在旧地面上，而两张图的尺寸不一样，边上就会露出上一块地的一条。摘下来而不是
+   * destroy：Field 是按地图缓存的（见 main.ts 的 fieldOf），回头选回去还要用。
+   */
   attachField(field: Field): void {
+    if (this.attached && this.attached !== field) {
+      this.worldGround.removeChild(this.attached.ground.sprite);
+      this.worldGround.removeChild(this.attached.ground.shadowSprite);
+    }
+    this.attached = field;
     this.worldGround.addChildAt(field.ground.sprite, 0);
     this.worldGround.addChildAt(field.ground.shadowSprite, 1);
   }
+
+  /** 当前挂着的那块地。只给 attachField 判要不要摘旧的。 */
+  private attached: Field | null = null;
 
   /**
    * 把缓冲对齐到当前窗口和放大倍数，并把尺寸同步给相机。
@@ -549,6 +564,7 @@ export class Scene {
     grain: number,
     footY: number,
     facing = 0,
+    mount: HorsePose | null = null,
   ): HTMLCanvasElement | null {
     const target = RenderTexture.create({ width, height, scaleMode: 'nearest', antialias: false });
     try {
@@ -562,6 +578,7 @@ export class Scene {
         new Projector(v2(width * 0.5, footY), facing, Projection.groundSquash, grain),
         palette,
         def,
+        { mount },
       );
       shapes.flushToMesh(this.prim, width, height);
       this.prim.end();
@@ -883,6 +900,7 @@ export class Scene {
       hurt: c.hurt,
       lift: c.lift,
       lite: this.liteEnemies && !rim,
+      mount: c.mount,
     });
   }
 

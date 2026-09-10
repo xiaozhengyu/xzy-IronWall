@@ -58,6 +58,25 @@ export interface UnitDef {
   /** 双持：副手也握一把同样的武器。目前只有锤子支持。 */
   dualWield: boolean;
 
+  /**
+   * 骑在马上。
+   *
+   * 这是一个单位身上**最响**的一条：马肩隆就有十个单位高，骑手的头因此落在 24 上下，比
+   * 步兵高出一半。人堆里认出骑兵靠的就是这个高度差，不是马本身的细节 —— 出货尺寸下那匹马
+   * 只有二十来个像素长。
+   *
+   * 它同时改三件事：姿势（胯坐在鞍上、脚挂在马腹两侧，见 CharacterAnimator）、渲染（先画马
+   * 再画人，见 drawCharacter）、以及战斗里的移动速度（在 waves.ts 的出兵表里给）。
+   */
+  mounted: boolean;
+  /**
+   * 马衣。侧裙、胸甲、臀甲、颈甲和面甲，全套阵营色加钢边。
+   *
+   * 和 mounted 分开是因为它是**这匹马有多贵**：轻骑兵骑的是光马，重骑兵才披甲。两者在
+   * 出货尺寸下也分得开 —— 侧裙那一块是马身上唯一大到能读出来的甲。
+   */
+  barding: boolean;
+
   /** 四肢和躯干的粗细倍率。 */
   bulk: number;
   /** 武器长度倍率。 */
@@ -109,6 +128,8 @@ const DEFAULTS: UnitDef = {
   tassel: false,
   cape: false,
   dualWield: false,
+  mounted: false,
+  barding: false,
   bulk: 1,
   reach: 1,
   stature: 1,
@@ -305,5 +326,100 @@ export const UnitPresets = {
       helmetTone: 0.9,
       attackRange: 19,
       attackArc: 1.5,
+    }),
+
+  /**
+   * 戟兵：过顶劈砍。
+   *
+   * halberd 这套动作（applyHalberd：抬到身后再从身前落下）一直躺在 animator 里没人用 ——
+   * 之前一个预设都没挂它。补上它不要任何新几何：戟走的是和长枪同一条 drawPolearm，多的只是
+   * 杆头上的斧刃。
+   *
+   * 定位夹在长枪兵和持盾兵之间：比枪短、比刀长，扇面也居中。人堆里认他靠"抡起来的那一下"——
+   * 全场只有他把武器举过头顶。
+   */
+  halberdier: (): UnitDef =>
+    makeUnitDef({
+      weapon: 'halberd',
+      helmet: 'kettle',
+      armor: 'lamellar',
+      pauldrons: true,
+      skirt: true,
+      bulk: 1.02,
+      reach: 1.7,
+      helmetTone: 1.05,
+      attackRange: 16,
+      attackArc: 1.25,
+    }),
+
+  // ------------------------------------------------------------ 骑兵
+  //
+  // 三种坐骑单位共有的那件事：**高**。马肩隆十个单位，骑手的头因此在 24 上下，而步兵是
+  // 18.3 —— 一队骑兵混在人海里，认出他们靠的是这条比所有人高出一截的天际线，不是马身上
+  // 的任何细节（出货尺寸下整匹马也就二十来像素长）。
+  //
+  // 攻击范围一律给得比同样武器的步兵大：人坐在鞍上，手离地面本来就远了一大截，按步兵那个
+  // 数给会出现"贴到马肚子上了还打不着"。
+  //
+  // **stature 一律留在 1。** 它是在 IK 之后把每个关节的 z 整体缩一遍（见 applyStature），
+  // 而马的姿势不走那一遍 —— 给骑兵一个非 1 的身高倍率，人就会陷进马背里或者浮在马背上。
+  // 想让骑兵有高矮之分得先让缩放也作用到坐骑上，那是另一件事。
+
+  /** 骑兵：马上持剑，光马不披甲。轻装轮廓和枪骑兵、骑射区分开。 */
+  cavalry: (): UnitDef =>
+    makeUnitDef({
+      weapon: 'sword',
+      shield: 'none',
+      helmet: 'cap',
+      armor: 'leather',
+      mounted: true,
+      pauldrons: true,
+      skirt: true,
+      bulk: 1.02,
+      helmetTone: 1.1,
+      attackRange: 20,
+      attackArc: 1.6,
+    }),
+
+  /**
+   * 枪骑兵：马上端一杆长枪，马披全套马衣。
+   *
+   * 这是重的那一档 —— 马衣的侧裙是马身上唯一大到能读出来的一块甲，所以"贵"这件事在出货
+   * 尺寸下也说得清。枪的 reach 比步兵长枪短一档：马背上那杆枪要是也有 2.6，杆尾会一直
+   * 戳在马屁股里。
+   */
+  lancer: (): UnitDef =>
+    makeUnitDef({
+      weapon: 'spear',
+      helmet: 'visor',
+      armor: 'plate',
+      mounted: true,
+      barding: true,
+      crest: true,
+      gorget: true,
+      pauldrons: true,
+      skirt: true,
+      tassel: true,
+      bulk: 1.06,
+      reach: 2.0,
+      helmetTone: 1.15,
+      attackRange: 30,
+      attackArc: 0.95,
+    }),
+
+  /** 骑射：马上开弓。跑得最快、最瘦，站得最远。 */
+  horseArcher: (): UnitDef =>
+    makeUnitDef({
+      weapon: 'bow',
+      helmet: 'conical',
+      armor: 'cloth',
+      mounted: true,
+      quiver: true,
+      leatherKit: true,
+      bulk: 0.94,
+      helmetTone: 1.05,
+      // 比步弓手近一档：他能靠速度自己拉开距离，站得和步弓手一样远就永远打不到人。
+      attackRange: 84,
+      attackArc: 1.4,
     }),
 };

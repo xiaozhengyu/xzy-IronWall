@@ -50,6 +50,8 @@ export interface MenuState {
   preset: number;
   skillLoadout: SkillLoadoutSnapshot;
   autoAttack: boolean;
+  /** 倒下自动重开。关着的时候倒下会走结算流程，见 Battle.autoRespawn。 */
+  autoRespawn: boolean;
   /** 物品图鉴开着的时候面板要让开，见 showGallery。 */
   showItems: boolean;
   /** 灵石收满是否弹升级卡牌。关掉就是接这个功能之前的样子。 */
@@ -340,7 +342,8 @@ export class Menu {
     const keys = el('div', 'menu-keys');
     keys.innerHTML =
       '<b>按住左键</b> 移动 · <b>Shift</b> 跑 · <b>空格</b> 挥击 · <b>Q/W/E/R</b> 主动技能 · ' +
-      '<b>J</b> 换自动攻击 · <b>O/P</b> 上下一波 · <b>\\</b> 末波压测 · <b>滚轮</b> 缩放 · <b>I</b> 物品图鉴 · <b>ESC</b> 暂停';
+      '<b>J</b> 换自动攻击 · <b>O/P</b> 上下一波 · <b>\\</b> 末波压测 · <b>滚轮</b> 缩放 · <b>I</b> 物品图鉴 · ' +
+      '<b>ESC</b> 结算画面（这块调试菜单只由 HUD 上的系统按钮开）';
     this.keysBox.appendChild(keys);
     card.appendChild(this.keysBox);
   }
@@ -360,6 +363,9 @@ export class Menu {
 
     const fight = row(parent, '战斗');
     fight.appendChild(this.toggle('自动挥击', 'F', 'KeyF', (s) => s.autoAttack));
+    // 倒下重开：开着就是接结算流程之前的样子，压力测试要它 —— 测末波必然要死很多次，
+    // 每死一次弹一屏结算就测不下去了。
+    fight.appendChild(this.toggle('倒下重开', 'V', 'KeyV', (s) => s.autoRespawn));
     fight.appendChild(this.toggle('骨架', 'K', 'KeyK', (s) => s.skeleton));
     fight.appendChild(this.toggle('升级卡牌', 'B', 'KeyB', (s) => s.showCards));
     fight.appendChild(this.button('清场重来', 'X', 'KeyX'));

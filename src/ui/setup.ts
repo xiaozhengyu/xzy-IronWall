@@ -228,6 +228,9 @@ export class SetupScreen {
     this.entryVeil.hidden = true;
     this.startButton.disabled = false;
     this.startButton.textContent = '开始游戏';
+    // 每次回到这一屏都从当前地图自己的天气重新起步 —— 上一局打完回来，右栏不该还亮着
+    // 上一局在别的图上点过的那一档。
+    this.weather = this.currentMap.weather;
     this.buildHeroList();
     this.buildHeroDetail();
     this.buildMapStrip();
@@ -350,6 +353,9 @@ export class SetupScreen {
     const next = ((index % count) + count) % count;
     if (this.entering || next === this.mapIndex) return;
     this.mapIndex = next;
+    // 天气跟着地图走：每张图自己写了"这地方本来什么样"（白岭雪原就该在下雪）。玩家换完图
+    // 还能自己点回去，但默认值该是这张图的，不该是上一张图上留下来的那一档。
+    this.weather = this.currentMap.weather;
     this.buildMapStrip();
     this.buildMapDetail();
     this.refreshSummary();
@@ -412,6 +418,8 @@ export class SetupScreen {
       sky.appendChild(button);
     }
     env.appendChild(sky);
+    // 这张图本来是什么天气。三个按钮说的是"这一局下什么"，这一行说的是"这地方平时什么样"。
+    line(env, '天候', map.weatherNote);
 
     const goal = block(this.mapInfo, '本局目标');
     goal.appendChild(el('p', 'setup-goal', map.objective));

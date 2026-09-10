@@ -187,7 +187,7 @@ export function drawFigureStage(
     new Projector(at, actor.facing, Projection.groundSquash, grain),
     actor.palette,
     actor.def,
-    { lift: actor.lift },
+    { lift: actor.lift, mount: actor.mount },
   );
   // 弧和人在同一个批次里，所以谁压谁由深度说了算 —— 和打仗时是同一套排序。
   if (effects) effects.draw(shapes, 0, 0, at.x, at.y, grain);

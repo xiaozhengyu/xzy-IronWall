@@ -20,6 +20,9 @@ import { type Rgba, lerpColor, rgb, rgba, shade, tone } from '../render/color';
 import { Projection } from '../render/projection';
 import { Projector, projectUprightDisc } from '../render/projector';
 import { ShapeBatch } from '../render/shapeBatch';
+import { drawHorse } from './horseRenderer';
+import type { HorsePose } from './horse';
+import { tokenScale } from './lod';
 import type { CharacterPalette } from './palette';
 import { type Pose, RigSpec } from './rig';
 import { BUTT_FRACTION, HAMMER_HEAD_RADIUS, type UnitDef, bladeLength, hammerLength, shaftLength } from './unitDef';
@@ -58,15 +61,7 @@ const DEPTH_DEBUG = 14;
 const SHIELD_FOOT_Z = 0.3;
 const SHIELD_TOP_Z = RigSpec.headZ - RigSpec.headRadius * 1.05;
 
-/**
- * 每世界单位低于这么多像素时，人就画成一个色块而不是一个身体。
- *
- * 一个人是十九个单位高，所以 0.45 时他只有八像素，而构成他的五十多个图元大多落在其中的
- * 三个像素上：手、箭袋、盔缨、明暗带全都不足一像素，却仍然各花一个 quad。色块只有四个
- * quad，在那个尺寸下和完整版无法区分 —— 因为那个距离上被读取的是色块的颜色和密度，
- * 不是人。
- */
-export const tokenScale = { value: 0.45 };
+export { tokenScale } from './lod';
 
 /**
  * 平涂档：每个部件只画本体，不画那条硬边阴影带。
@@ -104,6 +99,13 @@ export interface DrawOptions {
    * 这个开关把那几处关掉。它们表达的都是"这块被挡住了"，而一份剪影里没有"被挡住"这回事。
    */
   silhouette?: boolean;
+  /**
+   * 坐骑的姿势。给了它就先画马再画人（见 Character.mount）。
+   *
+   * 走参数而不是让渲染器自己去问 def：drawCharacter 收的是一份 Pose，不是一个 Character ——
+   * 轮廓光、头像、备战台子上那几条路各自持有姿势的方式都不一样，谁有马谁自己带过来。
+   */
+  mount?: HorsePose | null;
 }
 
 export function drawCharacter(
@@ -117,14 +119,27 @@ export function drawCharacter(
   const hurt = options.hurt ?? 0;
   const lift = options.lift ?? 0;
   const silhouette = options.silhouette ?? false;
+  const mount = def.mounted ? options.mount ?? null : null;
   lite = options.lite ?? false;
 
   if (p.scale < tokenScale.value) {
+    // 色块档下马也只是一个色块，但它得画 —— 一队骑兵在那个尺寸下大半的面积就是马。
+    if (mount) drawHorse(shapes, mount, p, palette, def);
     drawToken(shapes, pose, p, palette, def, hurt);
     return;
   }
 
-  if (!silhouette) drawShadow(shapes, p, lift);
+  // 马垫在最底下。它自带影子，所以骑兵不再画人的那一块 —— 两块椭圆叠在一起是一团更黑的
+  // 斑，读作地上有个洞。
+  //
+  // 剪影那一遍连马一起跳过：马身上那块影子是写死的黑，不走调色板（和人脚下那块同理，见
+  // DrawOptions.silhouette），四份叠起来就是一团渲染坏了的黑斑。目前只有玩家会走剪影，
+  // 而玩家没有骑马这一档。
+  if (mount) {
+    if (!silhouette) drawHorse(shapes, mount, p, palette, def);
+  } else if (!silhouette) {
+    drawShadow(shapes, p, lift);
+  }
 
   if (def.cape) drawCape(shapes, p, pose, palette, def);
   drawLeg(shapes, p, pose, palette, def, 0);

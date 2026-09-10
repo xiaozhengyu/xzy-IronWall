@@ -139,7 +139,7 @@
   object-fit: contain;
 }
 
-.hud-currency-icon--gem {
+.hud-icon--gem {
   filter: hue-rotate(300deg) saturate(1.22) brightness(1.18);
 }
 

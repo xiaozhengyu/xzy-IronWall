@@ -12,6 +12,7 @@
 import { deflateSync } from 'node:zlib';
 import { writeFileSync } from 'node:fs';
 import { CharacterAnimator, attackDuration, attackImpact } from '../src/characters/animator';
+import { HorseAnimator, HorsePose } from '../src/characters/horse';
 import { PALETTE_BLUE, PALETTE_HERO, PALETTE_PEASANT, PALETTE_RED, flatPalette, type CharacterPalette } from '../src/characters/palette';
 import { drawFigureStage, spawnStageSkill, STAGE_TILE_RADIUS, type StageSkillShape } from '../src/render/figureStage';
 import { drawCharacter } from '../src/characters/renderer';
@@ -253,24 +254,33 @@ interface Cell {
   attack: number;
   /** 投影缩放，也就是颗粒度：人由多少个像素构成。默认 1 是 overlord 的出货尺寸。 */
   grain?: number;
+  /** 移动速度。骑兵要用它才能跑到疾驰那一档（见 HorseAnimator 的 GALLOP_THRESHOLD）。 */
+  speed?: number;
 }
 
 function renderCell(cell: Cell, cellW: number, cellH: number, canvas: Canvas, ox: number, oy: number): number {
   const pose = new Pose();
   const animator = new CharacterAnimator();
+  // 骑兵：马和人各自有一份状态，推进顺序和 Character.update 一样 —— 先马后人，因为骑手的
+  // 胯坐在这一帧刚算出来的鞍上。
+  const horse = cell.def.mounted ? new HorsePose() : null;
+  const horseGait = horse ? new HorseAnimator() : null;
 
   const walkSpeed = 16;
-  const speed = cell.walk > 0 ? walkSpeed : 0;
+  const speed = cell.walk > 0 ? (cell.speed ?? walkSpeed) : 0;
   const dt = 1 / 60;
   const steps = Math.max(1, Math.round(cell.walk / dt));
-  for (let i = 0; i < steps; i++) animator.update(dt, speed, walkSpeed, cell.def, cell.attack, pose);
+  for (let i = 0; i < steps; i++) {
+    if (horse && horseGait) horseGait.update(dt, speed, horse);
+    animator.update(dt, speed, walkSpeed, cell.def, cell.attack, pose, horse);
+  }
 
   const shapes = new ShapeBatch();
   const sink = new ShapeSink();
   // 人站在格子底部往上一点，脚下留出影子的位置。
   const grain = cell.grain ?? 1;
   const p = new Projector(v2(ox + cellW / 2, oy + cellH - 6 * grain), cell.facing, Projection.groundSquash, grain);
-  drawCharacter(shapes, pose, p, cell.palette, cell.def);
+  drawCharacter(shapes, pose, p, cell.palette, cell.def, { mount: horse });
   shapes.flushToMesh(sink);
 
   for (const s of sink.shapes) canvas.fillPolygon(s);
@@ -286,6 +296,10 @@ const presets: [string, () => UnitDef][] = [
   ['spearman', UnitPresets.spearman],
   ['archer', UnitPresets.archer],
   ['elite', UnitPresets.elite],
+  ['halberdier', UnitPresets.halberdier],
+  ['cavalry', UnitPresets.cavalry],
+  ['lancer', UnitPresets.lancer],
+  ['horseArcher', UnitPresets.horseArcher],
 ];
 
 // 八个朝向。facing 是地面平面上的角度，PI/2 是朝着镜头。
@@ -338,6 +352,47 @@ for (let i = 0; i < WALK_FRAMES; i++) {
   );
 }
 writePng('.preview-walk.png', walkStrip.upscale(2));
+
+// 骑兵：一整个疾驰循环 × 三种坐骑单位。
+//
+// 单独出一张而不是并进上面那条，是因为要看的东西不一样：步兵那条看的是脚有没有打滑，
+// 这条看的是**四条腿的落地顺序**和躯干的起伏 —— 疾驰时两对腿各自并到一起，中间有一个
+// 腾空期，那是它和走路唯一真正的区别（见 HorseAnimator 的 GALLOP_OFFSETS）。
+const MOUNTS: [string, () => UnitDef, CharacterPalette][] = [
+  ['cavalry', UnitPresets.cavalry, PALETTE_RED],
+  ['lancer', UnitPresets.lancer, PALETTE_BLUE],
+  ['horseArcher', UnitPresets.horseArcher, PALETTE_PEASANT],
+];
+{
+  const FRAMES = 8;
+  // 疾驰速度 44（waves.ts 给轻骑的那个数），步幅约 3.2 + 44×0.2 = 9.5（顶到 MAX_STRIDE），
+  // 所以一个循环走 2×9.5 = 19 个单位、约 0.43 秒。
+  const speed = 44;
+  const cycle = 0.432;
+  const strip = new Canvas(CELL_W * FRAMES, CELL_H * MOUNTS.length, [71, 105, 59]);
+  MOUNTS.forEach(([, make, palette], row) => {
+    for (let i = 0; i < FRAMES; i++) {
+      renderCell(
+        {
+          def: make(),
+          palette,
+          // 侧对镜头：马是长条的，正对镜头时整个身子缩成一个点，看不出腿的顺序。
+          facing: 0,
+          walk: 0.5 + (i / FRAMES) * cycle,
+          speed,
+          attack: -1,
+          grain: GRAIN,
+        },
+        CELL_W,
+        CELL_H,
+        strip,
+        i * CELL_W,
+        row * CELL_H,
+      );
+    }
+  });
+  writePng('.preview-mounted.png', strip.upscale(2));
+}
 
 // 攻击动作：剑士横扫 + 弓手开弓。
 const attackStrip = new Canvas(CELL_W * WALK_FRAMES, CELL_H * 2, [71, 105, 59]);

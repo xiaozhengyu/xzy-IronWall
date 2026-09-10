@@ -14,6 +14,7 @@ import {
   sub3,
   v3,
 } from '../core/math';
+import { HorseAnimator, HorseSpec, type HorsePose } from './horse';
 import { type Pose, RigSpec } from './rig';
 import type { UnitDef } from './unitDef';
 
@@ -99,8 +100,18 @@ export class CharacterAnimator {
    * @param speed     当前移动速度（世界单位/秒）
    * @param walkSpeed 该单位的标准步行速度，用来把 speed 归一化
    * @param attack    攻击动作进度 0..1；负数表示没在攻击
+   * @param horse     坐骑的姿势；步兵传 null。给了它，下半身就不再走步态而是坐上马鞍
+   *                  （见 buildSeat），上半身也不再摆臂。
    */
-  update(dt: number, speed: number, walkSpeed: number, def: UnitDef, attack: number, pose: Pose): void {
+  update(
+    dt: number,
+    speed: number,
+    walkSpeed: number,
+    def: UnitDef,
+    attack: number,
+    pose: Pose,
+    horse: HorsePose | null = null,
+  ): void {
     const move = clamp(speed / Math.max(walkSpeed, 0.01), 0, 1.6);
     const gait = clamp(move, 0, 1);
 
@@ -117,8 +128,9 @@ export class CharacterAnimator {
 
     this.breath += dt;
 
-    this.buildLowerBody(pose, gait, speed);
-    this.buildUpperBody(pose, gait, speed, def, attack);
+    if (horse) buildSeat(pose, horse);
+    else this.buildLowerBody(pose, gait, speed);
+    this.buildUpperBody(pose, gait, speed, def, attack, horse !== null);
     this.updateCape(pose, speed, walkSpeed);
     pose.solveLimbs();
     applyStature(pose, def.stature);
@@ -137,9 +149,22 @@ export class CharacterAnimator {
    *             横着铺开的方向，而不是戳进屏幕里的 —— 后者投影出来几乎没有位移，看着
    *             像人原地缩了一下。
    */
-  collapse(pose: Pose, def: UnitDef, t: number, fallX: number, fallY: number): void {
-    this.buildLowerBody(pose, 0, 0);
-    this.buildUpperBody(pose, 0, 0, def, -1);
+  collapse(
+    pose: Pose,
+    def: UnitDef,
+    t: number,
+    fallX: number,
+    fallY: number,
+    horse: HorsePose | null = null,
+  ): void {
+    // 马跟着骑手一起倒下，然后骑手照常摊到地上 —— 他是被摔下来的，不是连人带马一起躺平。
+    if (horse) {
+      HorseAnimator.collapse(horse, t);
+      buildSeat(pose, horse);
+    } else {
+      this.buildLowerBody(pose, 0, 0);
+    }
+    this.buildUpperBody(pose, 0, 0, def, -1, horse !== null);
     pose.capeSwing = 0;
     pose.capeTrail = 0;
     pose.capeLift = 0;
@@ -267,8 +292,16 @@ export class CharacterAnimator {
     return v3(sideX, y, z);
   }
 
-  private buildUpperBody(pose: Pose, gait: number, speed: number, def: UnitDef, attack: number): void {
-    const lean = speed * LEAN_PER_SPEED;
+  private buildUpperBody(
+    pose: Pose,
+    gait: number,
+    speed: number,
+    def: UnitDef,
+    attack: number,
+    mounted = false,
+  ): void {
+    // 骑在马上的人本来就是前倾的，而且不会随速度越倾越多 —— 他靠鞍子固定，不是靠往前扑。
+    const lean = mounted ? 0.1 + speed * 0.004 : speed * LEAN_PER_SPEED;
     pose.spineLean = lean;
     pose.spineYaw = 0;
     pose.bowDraw = 0;
@@ -285,8 +318,8 @@ export class CharacterAnimator {
       pose.hip.z + (RigSpec.headZ - RigSpec.hipZ),
     );
 
-    // 反向摆臂：每条手臂镜像同侧的腿。
-    const swing = (pose.footR.y - pose.footL.y) * 0.5 * gait;
+    // 反向摆臂：每条手臂镜像同侧的腿。骑手的脚挂在镫上不动，所以他也不摆臂。
+    const swing = mounted ? 0 : (pose.footR.y - pose.footL.y) * 0.5 * gait;
 
     const shoulderL = pose.shoulderSocket(0);
     const shoulderR = pose.shoulderSocket(1);
@@ -295,6 +328,25 @@ export class CharacterAnimator {
 
     if (attack >= 0) applyAttack(pose, def, attack, shoulderL, shoulderR);
   }
+}
+
+/**
+ * 骑姿：胯坐在鞍上，两只脚踩在马腹两侧的镫里，于是两条腿是永远弯在马身上的。
+ *
+ * 落脚点两边各有一个失败模式，正确的位置夹在中间：收进躯干半宽以内，整条腿会消失到马身
+ * 后面；伸到一个真实马镫该在的位置，脚又超出腿的可达范围，IK 把腿拉成一条直线 —— 而马
+ * 侧面那条直线读作贴上去的一根木条。现在这个位置让腿在大约四分之三可达处折起来，膝盖还在。
+ */
+function buildSeat(pose: Pose, horse: HorsePose): void {
+  // 骑手吸收掉一部分马的起伏，不是焊在鞍子上的。
+  const seat = horse.saddle;
+  pose.hip = v3(seat.x * 0.7, seat.y + 0.2, seat.z + 0.9);
+
+  const stirrupX = HorseSpec.barrelHalfWidth + 1.0;
+  const stirrupZ = HorseSpec.backZ - HorseSpec.barrelHalfHeight + 0.5 + horse.body.z * 0.9;
+
+  pose.footL = v3(-stirrupX, seat.y + 2.6, stirrupZ);
+  pose.footR = v3(stirrupX, seat.y + 2.6, stirrupZ);
 }
 
 /**

@@ -61,6 +61,16 @@ export const Roster: HeroDef[] = [
     blurb: '出手最远的一个：一道破空推出去，路过的都倒，自己不用挤进人堆。',
     skills: ['wave', 'heavenSplit', 'skyArrow', 'aegis', 'ironBody'],
   },
+  {
+    id: 'rider',
+    // PlayerPresets 里的 lancer，见 battle.ts 那张表。
+    preset: 10,
+    name: '骠骑将军',
+    tagline: '马上长枪',
+    blurb: '唯一骑马的一个：坐在鞍上比谁都高，枪够得也最远，靠冲进去再冲出来打。',
+    // 突进配长枪：这个角色的打法就是"冲过去、扎一下、再冲出来"，所以两个位移技都带上。
+    skills: ['sweep', 'lunge', 'heavenSplit', 'aegis', 'ironBody'],
+  },
 ];
 
 /** 这个角色长什么样。界面画头像和模型预览都从这里取。 */

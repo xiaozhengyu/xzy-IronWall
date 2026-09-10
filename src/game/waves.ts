@@ -20,7 +20,16 @@ import { type UnitDef, UnitPresets } from '../characters/unitDef';
  * 才 19 单位高），照真人步速走进来要半分钟 —— 开局一整分钟画面上什么都不会发生。割草游戏里
  * 的杂兵本来也是小跑着扑过来的。
  */
-export type EnemyKindId = 'thug' | 'peasant' | 'spearman' | 'shieldman' | 'archer';
+export type EnemyKindId =
+  | 'thug'
+  | 'peasant'
+  | 'spearman'
+  | 'shieldman'
+  | 'archer'
+  | 'halberdier'
+  | 'cavalry'
+  | 'lancer'
+  | 'horseArcher';
 
 export type EnemyKind = {
   /** 模板里按这个名字配比例。改名字要同步改所有模板。 */
@@ -36,6 +45,15 @@ export const EnemyKinds: readonly EnemyKind[] = [
   { id: 'spearman', def: UnitPresets.spearman(), palette: PALETTE_RED, speed: 23 },
   { id: 'shieldman', def: UnitPresets.shieldman(), palette: PALETTE_RED, speed: 20 },
   { id: 'archer', def: UnitPresets.archer(), palette: PALETTE_PEASANT, speed: 33 },
+  { id: 'halberdier', def: UnitPresets.halberdier(), palette: PALETTE_RED, speed: 22 },
+  // 三种骑兵仍然比同定位步兵快，但只快一档。driveEnemies 远距离还会乘追击倍率，如果模板值
+  // 拉到四十多，实际冲锋会超过玩家冲刺速度，整片骑兵很快从地图外缘挤到玩家身边。
+  //
+  // 轻骑冲锋最快，但经追击倍率放大后也只略高于玩家冲刺，玩家仍能用冲刺拉开。
+  { id: 'cavalry', def: UnitPresets.cavalry(), palette: PALETTE_RED, speed: 34 },
+  // 枪骑兵披着全套马衣，是重的那一档，所以比轻骑慢。
+  { id: 'lancer', def: UnitPresets.lancer(), palette: PALETTE_RED, speed: 30 },
+  { id: 'horseArcher', def: UnitPresets.horseArcher(), palette: PALETTE_PEASANT, speed: 35 },
 ];
 
 /** 兵种比例。权重是相对的，不必加起来等于 1；没写的兵种这一波就不出。 */
@@ -159,20 +177,146 @@ export const DEFAULT_SPAWN_TEMPLATE: SpawnTemplate = {
     },
     {
       duration: 180, surge: 180, surgeTime: 2, density: 30, crowd: 620, world: 1100, bosses: 0,
-      mix: { thug: 0.2, peasant: 0.1, spearman: 0.3, shieldman: 0.25, archer: 0.15 },
+      // 戟兵进场。他和长枪兵、持盾兵是同一类近战，认他靠"举过头顶砸下来"那一下 ——
+      // 全场只有他把武器抡到头顶。
+      mix: { thug: 0.2, peasant: 0.1, spearman: 0.25, shieldman: 0.2, archer: 0.15, halberdier: 0.1 },
     },
     {
       duration: 210, surge: 220, surgeTime: 2, density: 36, crowd: 660, world: 1150, bosses: 0,
-      mix: { thug: 0.15, peasant: 0.1, spearman: 0.3, shieldman: 0.28, archer: 0.17 },
+      // 骑兵进场。这是全场最响的一次配比变化 —— 他们比所有人高出一半、快出一截，
+      // 玩家会先看见一条比人海高一头的天际线压过来。所以比例压得很低（0.08）。
+      mix: {
+        thug: 0.14, peasant: 0.08, spearman: 0.24, shieldman: 0.22, archer: 0.14,
+        halberdier: 0.1, cavalry: 0.08,
+      },
     },
     {
       duration: 240, surge: 260, surgeTime: 2.2, density: 44, crowd: 700, world: 1200, bosses: 0,
-      mix: { thug: 0.12, peasant: 0.08, spearman: 0.3, shieldman: 0.3, archer: 0.2 },
+      // 枪骑兵和骑射一起进来。到这一波，场上三种骑兵各有各的读法：轻骑最快、枪骑最重、
+      // 骑射站得最远。
+      mix: {
+        thug: 0.1, peasant: 0.06, spearman: 0.2, shieldman: 0.2, archer: 0.13,
+        halberdier: 0.11, cavalry: 0.1, lancer: 0.06, horseArcher: 0.04,
+      },
     },
     {
       duration: 270, surge: 300, surgeTime: 2.5, density: 52, crowd: 750, world: 1200, bosses: 0,
-      // 弓手封顶 0.2：再往上，场上一百多张弓同时开火，玩家是被看不见的箭磨死的，不是被围死的。
-      mix: { thug: 0.1, peasant: 0.05, spearman: 0.3, shieldman: 0.35, archer: 0.2 },
+      // 弓手（含骑射）合计封顶 0.2：再往上，场上一百多张弓同时开火，玩家是被看不见的箭
+      // 磨死的，不是被围死的。骑兵合计封顶 0.24 —— 他们又高又快，比例再高，人海就读不成
+      // 人海了，读成一支冲锋的骑兵队。
+      mix: {
+        thug: 0.08, peasant: 0.04, spearman: 0.18, shieldman: 0.2, archer: 0.14,
+        halberdier: 0.12, cavalry: 0.12, lancer: 0.06, horseArcher: 0.06,
+      },
+    },
+  ],
+};
+
+/**
+ * 三张新地图各自的出兵模板。
+ *
+ * 每一张只挑一条线往深里走 —— 一张图上什么兵都有等于三张图长一个样。波长和密度沿用默认
+ * 模板那条曲线（越往后越长、越密），改的只有配比和人数预算。
+ */
+
+/** 隘口：正面硬碰。重步兵和戟兵为主，几乎没有远程，考的是能不能顶住一堵墙往前推。 */
+export const PASS_SPAWN_TEMPLATE: SpawnTemplate = {
+  name: '隘口 · 六波',
+  after: 'hold',
+  waves: [
+    {
+      duration: 70, surge: 70, surgeTime: 1.5, density: 12, crowd: 420, world: 900, bosses: 0,
+      mix: { thug: 0.55, shieldman: 0.45 },
+    },
+    {
+      duration: 100, surge: 110, surgeTime: 1.6, density: 17, crowd: 480, world: 950, bosses: 0,
+      mix: { thug: 0.35, shieldman: 0.4, spearman: 0.25 },
+    },
+    {
+      duration: 130, surge: 150, surgeTime: 1.8, density: 23, crowd: 540, world: 1000, bosses: 0,
+      mix: { thug: 0.25, shieldman: 0.35, spearman: 0.24, halberdier: 0.16 },
+    },
+    {
+      duration: 170, surge: 200, surgeTime: 2, density: 31, crowd: 600, world: 1080, bosses: 0,
+      mix: { thug: 0.16, shieldman: 0.34, spearman: 0.22, halberdier: 0.22, archer: 0.06 },
+    },
+    {
+      duration: 210, surge: 250, surgeTime: 2.2, density: 40, crowd: 660, world: 1150, bosses: 0,
+      mix: { thug: 0.12, shieldman: 0.34, spearman: 0.2, halberdier: 0.26, archer: 0.08 },
+    },
+    {
+      duration: 260, surge: 310, surgeTime: 2.4, density: 50, crowd: 720, world: 1200, bosses: 0,
+      // 盾和戟各占三分之一：这张图的最后一波就是一堵会往前挪的墙。
+      mix: { thug: 0.08, shieldman: 0.33, spearman: 0.16, halberdier: 0.33, archer: 0.1 },
+    },
+  ],
+};
+
+/** 荒原：骑兵的地方。开阔、跑得开，出的全是又高又快的东西。 */
+export const STEPPE_SPAWN_TEMPLATE: SpawnTemplate = {
+  name: '荒原 · 六波',
+  after: 'hold',
+  waves: [
+    {
+      duration: 60, surge: 60, surgeTime: 1.5, density: 11, crowd: 380, world: 850, bosses: 0,
+      // 第一波就有骑兵，而且只有两种东西 —— 这张图要在第一分钟里就说清楚"这儿不一样"。
+      mix: { peasant: 0.7, cavalry: 0.3 },
+    },
+    {
+      duration: 90, surge: 100, surgeTime: 1.6, density: 16, crowd: 440, world: 900, bosses: 0,
+      mix: { peasant: 0.45, thug: 0.2, cavalry: 0.25, horseArcher: 0.1 },
+    },
+    {
+      duration: 120, surge: 140, surgeTime: 1.8, density: 22, crowd: 500, world: 960, bosses: 0,
+      mix: { peasant: 0.3, thug: 0.18, cavalry: 0.28, horseArcher: 0.14, lancer: 0.1 },
+    },
+    {
+      duration: 160, surge: 190, surgeTime: 2, density: 29, crowd: 560, world: 1020, bosses: 0,
+      mix: { peasant: 0.2, thug: 0.15, cavalry: 0.3, horseArcher: 0.17, lancer: 0.18 },
+    },
+    {
+      duration: 200, surge: 240, surgeTime: 2.2, density: 37, crowd: 620, world: 1080, bosses: 0,
+      mix: { peasant: 0.12, thug: 0.1, cavalry: 0.32, horseArcher: 0.2, lancer: 0.26 },
+    },
+    {
+      duration: 250, surge: 300, surgeTime: 2.4, density: 46, crowd: 680, world: 1120, bosses: 0,
+      // 末波九成是马。人数预算比别的图低一档：骑兵一个人占的地方是步兵的两倍多
+      // （Character.spacing），同样的预算下场上其实更挤。
+      mix: { peasant: 0.06, thug: 0.04, cavalry: 0.34, horseArcher: 0.24, lancer: 0.32 },
+    },
+  ],
+};
+
+/** 雪原：远程为主，视野差。弓手和骑射的比例是全部三张图里最高的。 */
+export const SNOWFIELD_SPAWN_TEMPLATE: SpawnTemplate = {
+  name: '雪原 · 六波',
+  after: 'hold',
+  waves: [
+    {
+      duration: 70, surge: 70, surgeTime: 1.5, density: 11, crowd: 400, world: 880, bosses: 0,
+      mix: { thug: 0.6, archer: 0.4 },
+    },
+    {
+      duration: 100, surge: 110, surgeTime: 1.6, density: 16, crowd: 460, world: 940, bosses: 0,
+      mix: { thug: 0.4, peasant: 0.16, archer: 0.32, spearman: 0.12 },
+    },
+    {
+      duration: 130, surge: 150, surgeTime: 1.8, density: 22, crowd: 520, world: 1000, bosses: 0,
+      mix: { thug: 0.28, peasant: 0.14, archer: 0.32, spearman: 0.16, horseArcher: 0.1 },
+    },
+    {
+      duration: 170, surge: 200, surgeTime: 2, density: 30, crowd: 580, world: 1060, bosses: 0,
+      mix: { thug: 0.2, peasant: 0.1, archer: 0.32, spearman: 0.16, horseArcher: 0.14, shieldman: 0.08 },
+    },
+    {
+      duration: 210, surge: 250, surgeTime: 2.2, density: 38, crowd: 640, world: 1120, bosses: 0,
+      mix: { thug: 0.14, peasant: 0.08, archer: 0.33, spearman: 0.15, horseArcher: 0.16, shieldman: 0.14 },
+    },
+    {
+      duration: 260, surge: 310, surgeTime: 2.4, density: 47, crowd: 700, world: 1180, bosses: 0,
+      // 弓加骑射合计 0.5。这已经越过默认模板给自己定的 0.2 上限 —— 这张图刻意就是"被箭
+      // 磨死"的那一张，所以持盾兵的比例也跟着抬上来：躲在他后面是这里唯一的解法。
+      mix: { thug: 0.1, peasant: 0.05, archer: 0.32, spearman: 0.15, horseArcher: 0.18, shieldman: 0.2 },
     },
   ],
 };

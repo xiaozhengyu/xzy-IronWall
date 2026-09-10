@@ -19,12 +19,12 @@ import { STAGE_TILE_RADIUS, spawnStageSkill, type StageSkillShape } from './rend
 import { Projection } from './render/projection';
 import { Scene } from './render/scene';
 import { Props } from './world/props';
-import { Terrain } from './world/terrain';
 import type { WeatherKind } from './world/weather';
 import { Controls } from './ui/controls';
 import { Hud } from './ui/hud';
 import { Menu } from './ui/menu';
 import { SetupScreen, type MapPin } from './ui/setup';
+import { SummaryScreen, type SummaryStats } from './ui/summary';
 import './style.css';
 
 /**
@@ -44,18 +44,28 @@ import './style.css';
 // ---------------------------------------------------------------- 状态
 
 /**
- * 游戏的五个状态。
+ * 游戏的七个状态，也就是一整圈流程：
  *
- *   loading  —— 在烘地面，面板上是进度条。
- *   setup    —— 备战：选角色 → 选地图。烘完就直接进这里，没有单独的标题页。
- *   entering —— 按下开始之后那一小段：界面盖着"正在进入"，底下在换角色、清场、铺人。
- *   playing  —— 世界在跑。
- *   paused   —— ESC、暂停按钮或失去窗口焦点。
+ *   loading   —— 在烘地面，面板上是进度条。
+ *   setup     —— 备战：选角色 → 选地图。烘完就直接进这里，没有单独的标题页。
+ *   entering  —— 按下开始之后那一小段：界面盖着"正在进入"，底下在换角色、清场、铺人。
+ *   playing   —— 世界在跑。
+ *   interlude —— ESC 或者 HUD 上的暂停按钮：临时结算画面，出口是"继续游戏"或"结束游戏"。
+ *   result    —— 这一局结束了（主动结束或者被打倒）：最终结算，出口只有"确认"，回 setup。
+ *   paused    —— 调试菜单。**只由 HUD 上的系统按钮打开**，和 ESC 无关。
  *
- * Controls 统一切换运行状态；鼠标始终使用普通屏幕坐标，暂停不移动光标。
+ * setup → entering → playing → interlude → result → setup 就是那个圈。
+ *
+ * 三个"停下来"的状态（interlude / result / paused）停的都只是 battle.update，画面照常
+ * 想画就画 —— 理由见主循环那一段。它们的区别只在于面板上写什么、以及能不能点回去。
  */
-type GameState = 'loading' | 'setup' | 'entering' | 'playing' | 'paused';
+type GameState = 'loading' | 'setup' | 'entering' | 'playing' | 'interlude' | 'result' | 'paused';
 let state: GameState = 'loading';
+
+/** 世界是不是冻住的（结算画面、调试菜单都算）。 */
+function frozen(): boolean {
+  return state === 'interlude' || state === 'result' || state === 'paused';
+}
 
 /** 场地：正方形，边长 1200 个世界单位 —— 一个人 19 单位高，所以是六十三个人宽。 */
 const FIELD_W = 1200;
@@ -121,6 +131,7 @@ const menu = new Menu({
       preset: battle.presetIndex,
       skillLoadout: battle.skillLoadout.snapshot(),
       autoAttack: battle.autoAttack,
+      autoRespawn: battle.autoRespawn,
       showItems,
       showCards: hud.cardsEnabled,
       skeleton: showSkeleton,
@@ -180,10 +191,10 @@ await app.init({
 });
 gameViewport.appendChild(app.canvas);
 const hud = new Hud(gameViewport, {
-  requestPause: () => {
-    if (state !== 'playing') return;
-    controls.pause();
-  },
+  // 暂停按钮和 ESC 是同一件事：临时结算。
+  requestPause: () => openInterlude(),
+  // 系统按钮是调试菜单**唯一**的入口。
+  requestSystemMenu: () => openDebugMenu(),
 });
 
 const scene = new Scene(app.renderer, camera);
@@ -194,7 +205,14 @@ scene.resize(app.screen.width, app.screen.height, app.renderer.resolution);
 bootDone += RENDERER_WEIGHT;
 
 await boot('生成地形');
-const field = new Field(FIELD_W, FIELD_H, FIELD_SEED);
+/**
+ * 当前正在显示的那块地 —— 打仗时是战场，备战界面上是中栏那张地图。跟着选中的地图换，
+ * 所以是 let（换法见 showField）。
+ *
+ * 开局这一份就是 GameMaps[0]（演武荒原）那三个数，所以它烘完之后直接进缓存，第一张图
+ * 不会被再建一次。maps.ts 上那条记录的注释写了这个约定。
+ */
+let field = new Field(FIELD_W, FIELD_H, FIELD_SEED, GameMaps[0].layout);
 scene.attachField(field);
 bootDone += TERRAIN_WEIGHT;
 
@@ -202,6 +220,35 @@ for (let i = 0; i < Field.BAKE_SLICES; i++) {
   await boot('烘制地面');
   field.bakeSlice(i);
   bootDone += 1;
+}
+
+/**
+ * 每张地图一块地，用到才建。
+ *
+ * 建一块要生成地形（几十毫秒）再把底图整片烘出来（又几十毫秒），还占一张几百 KB 的
+ * RGBA 加一张同样大的显存纹理。所以按地图存着 —— 玩家在备战界面上来回点四张图不该每次
+ * 重建，进图之后再退回来也不该。
+ *
+ * **备战界面上那张地图预览用的就是这一份**，不是另烘的缩略图。于是"选图时看到的"和"进去
+ * 之后走的"是同一块地的同一份数据，而且进图那一下不用再烘一次 —— 预览的时候已经烘完了。
+ */
+const fieldCache = new Map<string, Field>([[GameMaps[0].id, field]]);
+
+function fieldOf(map: GameMapDef): Field {
+  let made = fieldCache.get(map.id);
+  if (!made) {
+    made = new Field(map.width, map.height, map.seed, map.layout);
+    // 分片烘是为了让加载条走得起来，这里没有条可走，一片一片连着烘完就行。
+    for (let i = 0; i < Field.BAKE_SLICES; i++) made.bakeSlice(i);
+    fieldCache.set(map.id, made);
+  }
+  return made;
+}
+
+/** 把画面切到这张图的地上。备战界面换图和真正进图走的是同一句。 */
+function showField(map: GameMapDef): void {
+  field = fieldOf(map);
+  scene.attachField(field);
 }
 
 await boot('加载物品贴图');
@@ -216,20 +263,44 @@ const controls = new Controls(app.canvas as HTMLCanvasElement, camera, {
   onKey: (code) => onKeyPressed(code),
   onActiveChange: (active) => {
     if (active) {
-      if (state === 'paused') {
+      if (state === 'paused' || state === 'interlude') {
         state = 'playing';
         menu.hide();
+        summary.hide();
       }
       return;
     }
-    if (state === 'playing') {
+    // 从游戏里掉出来。**默认走流程那条路**（临时结算），调试菜单要由 openDebugMenu 先把
+    // 目标改掉 —— 于是失去窗口焦点看到的是结算画面，而不是一屏帧率和图元数。
+    if (state !== 'playing') return;
+    if (pauseTarget === 'debug') {
       state = 'paused';
       menu.showPause();
+    } else {
+      state = 'interlude';
+      summary.show('interlude', summaryStats());
     }
+    pauseTarget = 'interlude';
   },
   // 备战界面盖在画布上，点它不该把游戏"继续"起来 —— 那时候还没选完地图。
-  canActivate: () => state === 'playing' || state === 'paused',
+  // 最终结算（result）也不认：那一局已经结束了，只能按"确认"回选人。
+  canActivate: () => state === 'playing' || state === 'paused' || state === 'interlude',
+  onEscape: () => {
+    // ESC 只管流程这一条线：打仗时弹临时结算，结算画面上按第二下等于"继续游戏"。
+    // 调试菜单开着的时候它什么也不做 —— 那块面板是系统按钮开的，就该由它自己的按钮关。
+    if (state === 'playing') openInterlude();
+    else if (state === 'interlude') controls.resume();
+  },
 });
+
+/**
+ * 下一次"掉出游戏"该弹哪一块面板。
+ *
+ * 只有系统按钮会把它改成 'debug'，而且用完立刻弹回 —— 失去焦点、ESC、暂停按钮全部落在
+ * 流程那条路上。用一个一次性的目标而不是给 Controls.pause 加参数，是因为掉出游戏的路不止
+ * 一条（还有 blur 和 visibilitychange，它们在 Controls 内部），而它们都该走默认那一条。
+ */
+let pauseTarget: 'interlude' | 'debug' = 'interlude';
 
 // ---------------------------------------------------------------- 命令表
 
@@ -249,9 +320,12 @@ let showItems = false;
  * 键盘和菜单走同一张表，所以两条路的行为不会分岔 —— 详见 Menu 的 press 那段注释。
  */
 function onKeyPressed(code: string): void {
-  // 备战界面上一个调试键都不认：那些开关全是对着战场的，而战场还没开始。Shift 不走这条路
-  // （跑步读的是 Controls 自己的按键集合），所以试练地上照样能跑。
-  if (state === 'setup' || state === 'entering') return;
+  // 只有打仗和调试菜单里认这些键。
+  //
+  // 备战界面上一个调试键都不认：那些开关全是对着战场的，而战场还没开始。结算画面上同理 ——
+  // 那一局已经停下来等玩家做决定了，这时候切天气、跳波次只会把结算里的数字改掉。Shift 不走
+  // 这条路（跑步读的是 Controls 自己的按键集合），所以试练地上照样能跑。
+  if (state !== 'playing' && state !== 'paused') return;
 
   if (code === 'Space') battle.swingNow();
   if (code === 'KeyK') showSkeleton = !showSkeleton;
@@ -281,6 +355,8 @@ function onKeyPressed(code: string): void {
   // 这个键把它打开。见 Scene.liteEnemies。
   if (code === 'KeyL') scene.liteEnemies = !scene.liteEnemies;
   if (code === 'KeyF') battle.autoAttack = !battle.autoAttack;
+  // 倒下自动重开。默认关着（倒下会走结算流程），压力测试时打开。
+  if (code === 'KeyV') battle.autoRespawn = !battle.autoRespawn;
   if (code === 'KeyJ') battle.cycleAttackSkill();
   const activeSlot = ACTIVE_SKILL_CODES.indexOf(code as (typeof ACTIVE_SKILL_CODES)[number]);
   if (activeSlot >= 0) battle.triggerActiveSkill(activeSlot as ActiveSkillSlot, viewOf());
@@ -367,6 +443,9 @@ app.ticker.add((ticker) => {
   battle.update(dt, readInput(), viewOf());
   hud.update(dt);
   draw();
+  // 倒地动画放完那一帧才判负（见 Battle 里 RESPAWN_DELAY 那一段），所以这里已经画过了 ——
+  // 玩家看得见自己是怎么倒下的，然后结算才盖上来。
+  if (battle.defeated) endRun();
 });
 
 // 开始画面和暂停时没有帧在跑，窗口尺寸变了得自己补一帧，否则画面会一直停在旧尺寸那张图上。
@@ -376,7 +455,7 @@ addEventListener('resize', () => {
     if (setup.showsStages) drawSetupScreen(0);
     return;
   }
-  if (state === 'paused') {
+  if (frozen()) {
     layout();
     draw();
   }
@@ -433,6 +512,80 @@ function draw(): void {
   });
 }
 
+// ---------------------------------------------------------------- 流程
+//
+// 一整圈是 setup → entering → playing → interlude → result → setup。三个入口（ESC、HUD
+// 上的两个按钮）和一个出口（玩家倒下）全部收在这一段里，别处只调用它们。
+
+/**
+ * 这一局到目前为止的战果，交给结算画面显示。
+ *
+ * 临时结算和最终结算读的是同一份 —— 它们要回答的本来就是同一个问题（"我这一局干了什么"），
+ * 区别只在于后面还能不能接着打。
+ */
+function summaryStats(): SummaryStats {
+  const wave = battle.waveStatus;
+  return {
+    hero: setup.currentHero.name,
+    map: setup.currentMap.name,
+    time: battle.runTime,
+    coins: battle.collectedCoins,
+    gems: battle.collectedGems,
+    kills: battle.kills,
+    deaths: battle.deaths,
+    wave: wave.wave,
+    waves: wave.waves,
+    cleared: wave.cleared,
+    defeated: battle.defeated,
+  };
+}
+
+/** ESC 或者 HUD 上的暂停按钮：把世界停住，弹临时结算。 */
+function openInterlude(): void {
+  if (state !== 'playing') return;
+  pauseTarget = 'interlude';
+  controls.pause();
+}
+
+/** HUD 上的系统按钮：调试菜单。这是它唯一的入口。 */
+function openDebugMenu(): void {
+  if (state !== 'playing') return;
+  pauseTarget = 'debug';
+  controls.pause();
+}
+
+/**
+ * 这一局结束了：临时结算里按了"结束游戏"，或者玩家被打倒。
+ *
+ * 先把状态推成 result 再 pause —— onActiveChange 只在 'playing' 时才自己决定弹哪块面板，
+ * 状态先落地就不会被它改回临时结算。
+ */
+function endRun(): void {
+  if (state === 'result') return;
+  state = 'result';
+  controls.pause();
+  menu.hide();
+  showItems = false;
+  summary.show('result', summaryStats());
+  // 世界停在玩家倒下的那一帧，画面留着当结算的背景 —— 比盖一块纯色更能说明刚才发生了什么。
+  draw();
+}
+
+/**
+ * 结算画面上按了确认：回到选人。
+ *
+ * 场上的东西不在这里清 —— 真正的清场在 enterMap 里（battle.reset），那一次连地图和天气
+ * 一起换掉。这里只负责把界面切回去，让备战界面重新长出来。
+ */
+function returnToSetup(): void {
+  summary.hide();
+  menu.hide();
+  hud.setVisible(false);
+  showItems = false;
+  state = 'setup';
+  setup.show();
+}
+
 // ---------------------------------------------------------------- 备战
 
 /**
@@ -464,6 +617,18 @@ const HERO_GRAIN = Camera.DEFAULT_GRAIN * HERO_STAGE_ZOOM;
  * 一块，宽出去的部分给的是草流动的余地。两次各加两成，合起来 1.44。
  */
 const HERO_TILE_ZOOM = 1.2 * 1.2;
+
+/**
+ * 骑马的角色在台子上缩回去多少。
+ *
+ * 骑兵从脚底到头顶是 24.5 个单位（马肩隆就有 10 个），步兵是 18.3。按同一个倍率放，他的头
+ * 会顶出台子的上沿 —— 而这一台的全部意义就是**看清这个人**，看不见头等于白摆。
+ *
+ * 比值正好是两个身高的商，所以骑兵在台子上占的高度和步兵一样。**这一档只用在台子上。**
+ * 右栏那一排敌人不缩：那一排要回答的是"我会遇到谁"，而"骑兵比所有人高出一头"正是要回答的
+ * 内容之一，缩掉就把那句话抹了。
+ */
+const MOUNTED_STAGE_SHRINK = 18.3 / 24.5;
 /** 敌人和头像侧过来一点。正对镜头时武器在身体正前方，被自己挡掉一半。 */
 const PREVIEW_TURN = 0.38;
 
@@ -583,7 +748,7 @@ function heroStageFigure(): StageFigure {
   return {
     actor: preview.actor,
     at: stageAnchor(),
-    grain: HERO_GRAIN,
+    grain: preview.actor.def.mounted ? HERO_GRAIN * MOUNTED_STAGE_SHRINK : HERO_GRAIN,
     scrollX: preview.scrollX,
     scrollY: preview.scrollY,
     tileScale: HERO_TILE_ZOOM,
@@ -667,10 +832,15 @@ function foeStageFigures(): StageFigure[] {
   const stages: StageFigure[] = [];
   for (let i = 0; i < foeActors.length && i < slots.length; i++) {
     const box = boxToBuffer(slots[i]);
+    // 地块中心落在格子偏下的位置：人从脚往上画，头顶那一半留给他和他举起来的武器。
+    //
+    // 骑兵再往下压一截：他比步兵高出六个多单位（出货尺寸下十三个像素），照步兵那个落点摆，
+    // 格子里就只剩一顶盔的下半截。这一排不缩尺寸（理由见 MOUNTED_STAGE_SHRINK），所以只能
+    // 挪落点。
+    const foot = foeActors[i].def.mounted ? 0.86 : 0.74;
     stages.push({
       actor: foeActors[i],
-      // 地块中心落在格子偏下的位置：人从脚往上画，头顶那一半留给他和他举起来的武器。
-      at: v2(Math.round(box.x + box.w * 0.5), Math.round(box.y + box.h * 0.74)),
+      at: v2(Math.round(box.x + box.w * 0.5), Math.round(box.y + box.h * foot)),
       grain: FOE_GRAIN,
       scrollX: foeScroll[i].x,
       scrollY: foeScroll[i].y,
@@ -686,69 +856,50 @@ function heroPortrait(hero: HeroDef): HTMLCanvasElement | null {
   // 走几帧把姿势搭出来 —— 没跑过 update 的骨架是一堆零。
   for (let i = 0; i < 20; i++) model.update(1 / 60, true);
   // 64 见方，脚落在纹理下沿之外 —— 于是画面从胸口往上截断，头盔、肩甲和武器都在。
-  return scene.renderPortrait(model.pose, model.def, PALETTE_HERO, 64, 64, 6.5, 91, model.facing);
+  //
+  // 骑马的那个要把落点再往下放一截，正好补上他多出来的那段高度：骑手的头在 21.7 个单位
+  // （坐在 13.5 的鞍上），步兵是 15.8，差 5.9 个单位 —— 换算到这一档缩放就是 26 个像素。
+  // 不补的话他的头会掉到框子中间，一排头像里只有他不齐。
+  const mounted = model.def.mounted;
+  return scene.renderPortrait(
+    model.pose,
+    model.def,
+    PALETTE_HERO,
+    64,
+    64,
+    6.5,
+    mounted ? 117 : 91,
+    model.facing,
+    // 头像里不画马：这一格只有 64 见方，一匹马进来就把人挤成一个像素点，而列表要认的是人。
+    null,
+  );
 }
 
 /**
- * 这张地图对应的地形。
+ * 底下那条列表里那张缩略图的像素。
  *
- * 按**尺寸和种子**存，不按地图 id —— 那三条记录目前指着同一块地，按 id 存就会生成三份
- * 一模一样的地形（每份要跑几十毫秒、占几兆内存）。是不是同一块地由参数说了算，和它在
- * 目录里叫什么名字无关。
- *
- * 就是当前那块场地时连生成都省了：那一份已经烘在画面上了。
+ * 烘一次几十毫秒，所以按地图存着。天气传 null：卡片上该是这块地**本来**的样子，不该跟着
+ * 玩家在右栏点了雨还是雪来回变 —— 那一栏改的是这一局的天气，不是这块地长什么样。
  */
-const terrainCache = new Map<string, Terrain>();
-
-function terrainOf(map: GameMapDef): Terrain {
-  if (map.width === field.width && map.height === field.height && map.seed === FIELD_SEED) {
-    return field.terrain;
-  }
-  const key = `${map.width}x${map.height}#${map.seed}`;
-  let terrain = terrainCache.get(key);
-  if (!terrain) {
-    terrain = new Terrain(map.width, map.height, map.seed);
-    terrainCache.set(key, terrain);
-  }
-  return terrain;
-}
-
-/** 地图底图烘一次就存着：一张四百乘二百二的 RGBA，烘一次几十毫秒。 */
 const mapPixels = new Map<string, ImageData | null>();
 
 function mapImageData(map: GameMapDef): ImageData | null {
-  const key = mapKey(map);
-  if (!mapPixels.has(key)) {
-    // 天气传 null：卡片上该是这块地本来的样子，不该跟着局内下不下雪变。
-    const baked = terrainOf(map).bakeGround(null);
+  if (!mapPixels.has(map.id)) {
+    const baked = fieldOf(map).terrain.bakeGround(null);
     const pixels = new ImageData(new Uint8ClampedArray(baked.data), baked.texWidth, baked.texHeight);
-    mapPixels.set(key, pixels);
+    mapPixels.set(map.id, pixels);
   }
-  return mapPixels.get(key) ?? null;
+  return mapPixels.get(map.id) ?? null;
 }
 
 /**
  * 这张地图上的营地。
  *
- * Props.place 是确定性的（同一份地形、同一个种子摆在同一处），所以这里摆出来的就是进去
- * 之后看到的那几处。存一份是因为点位每帧都要算一遍，而摆营地要在地形上试探几百次。
+ * 就是 Field 自己那一份 —— Props.place 在构造时就跑完了，而它是确定性的（同一份地形摆在
+ * 同一处）。所以中栏地图上标出来的那几个点，就是进去之后真会走到的那几处营地。
  */
-const mapPropsCache = new Map<string, Props>();
-
-/** 和地形同一个键：营地是从地形上摆出来的，同一块地就是同一批营地。 */
-function mapKey(map: GameMapDef): string {
-  return `${map.width}x${map.height}#${map.seed}`;
-}
-
 function mapProps(map: GameMapDef): Props {
-  const key = mapKey(map);
-  let props = mapPropsCache.get(key);
-  if (!props) {
-    props = new Props();
-    props.place(terrainOf(map), 4);
-    mapPropsCache.set(key, props);
-  }
-  return props;
+  return fieldOf(map).props;
 }
 
 /** 每次给一张新画布：一张画布只能挂在 DOM 的一个地方，而缩略图和详图都要用。 */
@@ -896,6 +1047,22 @@ function applyHero(hero: HeroDef): void {
 }
 
 /**
+ * 换地图：换那块地，也换那张出兵表。
+ *
+ * 地本身在备战界面选中这张图的时候就建好烘完了（见 fieldOf），所以这一步基本不花时间。
+ *
+ * 顺序要紧：人先挪到新场地的中央（setField 干这件事），镜头再跟过去。反过来的话
+ * camera.follow 会按上一块地的尺寸去夹，而紧接着 reset 要靠 viewOf 决定把人生在哪儿 ——
+ * 拿到一份指着旧地的视野，开场那一批人就全生在图外了。
+ */
+function applyMap(map: GameMapDef): void {
+  battle.setSpawnTemplate(map.template);
+  showField(map);
+  battle.setField(field);
+  camera.follow(battle.player.x, battle.player.y, field.width, field.height);
+}
+
+/**
  * 按下开始之后。
  *
  * 先把状态推到 entering 再让出一帧：换角色、清场、重新铺一批人加起来是看得见的一段卡顿，
@@ -907,25 +1074,40 @@ function enterMap(hero: HeroDef, map: GameMapDef, weather: WeatherKind): void {
   requestAnimationFrame(() =>
     setTimeout(() => {
       applyHero(hero);
+      applyMap(map);
       // 天气用备战界面上选的那一档，不是地图自己写的默认值 —— 玩家刚在右栏点过，
       // 而且地图预览已经按那一档重烘过了，进去再换回来会是"我选的没作数"。
-      field.weather.kind = weather;
-      // 换地图本来还要重烘地面（Field 就是宽、高、种子三个数），但三张图现在指着同一块地，
-      // 而它正是启动时烘好的那一份。真加一块新地时，这里要多一步重建 Field 并重跑烘制那段
-      // 进度条 —— map.seed / width / height 就是那一步要读的东西。
-      void map;
+      //
+      // settle 而不是只改 kind：地上该积的雪、该湿的地要一次到位。玩家在备战界面看到的
+      // 就是稳定之后的样子（见 onWeatherChange），进去再从零慢慢积一遍是两张不同的图。
+      field.weather.settle(weather);
+      field.ground.bakeWeatherNow();
       battle.reset(viewOf());
       layout();
       // 零步长跑一次，让每个人先把姿势搭出来 —— 和开场那一次是同一个道理。
       battle.update(0, readInput(), viewOf());
       state = 'playing';
+      pauseTarget = 'interlude';
       setup.hide();
+      summary.hide();
       hud.setVisible(true);
       draw();
       controls.resume();
     }, 0),
   );
 }
+
+/**
+ * 结算画面。三个按钮各自对应流程上的一条边，界面自己不知道有"状态"这回事。
+ *
+ * 建在 setup 之前 —— 它的 show 要读 setup.currentHero/currentMap（结算上要写清是谁在哪儿
+ * 打的），但那只发生在按下 ESC 之后，那时两块界面都早就建好了。
+ */
+const summary = new SummaryScreen({
+  onResume: () => controls.resume(),
+  onEnd: () => endRun(),
+  onConfirm: () => returnToSetup(),
+});
 
 const setup = new SetupScreen(
   {
@@ -942,6 +1124,13 @@ const setup = new SetupScreen(
       drawSetupScreen(0);
     },
     onMapChange: (map) => {
+      // 中栏那张地图画的**就是这块地本身**（Scene.drawMapView 读的是 field），所以换图
+      // 第一件事是把画面切过去 —— 不切的话，卡片换了、名字换了，中间那张图还是上一块地。
+      showField(map);
+      // 天气跟着走：备战界面在换图时会把选择重置成这张图自己的默认档（见 SetupScreen.selectMap），
+      // 而地上积多少雪、湿到什么程度要一次到位，玩家看到的就该是稳定之后的样子。
+      field.weather.settle(setup.currentWeather);
+      field.ground.bakeWeatherNow();
       syncFoeActors(map);
       resetMapCam(map);
       drawSetupScreen(0);

@@ -399,6 +399,12 @@ export const PlayerPresets: { name: string; make: () => UnitDef }[] = [
   { name: 'archer 弓手', make: UnitPresets.archer },
   { name: 'elite 精英', make: UnitPresets.elite },
   { name: 'knight 骑士', make: UnitPresets.knight },
+  // 后面这四个是后加的兵种。**只能往后加**：备战界面那张 Roster 表按下标引这里
+  // （HeroDef.preset），在中间插一条会把已有的三个角色全换成别人。
+  { name: 'halberdier 戟兵', make: UnitPresets.halberdier },
+  { name: 'cavalry 骑兵', make: UnitPresets.cavalry },
+  { name: 'lancer 枪骑兵', make: UnitPresets.lancer },
+  { name: 'horseArcher 骑射', make: UnitPresets.horseArcher },
 ];
 
 /** 菜单和 HUD 共用的角色显示名，英文部分只是内部预设代号。 */
@@ -603,6 +609,30 @@ export class Battle {
   kills = 0;
   deaths = 0;
   presetIndex = 0;
+
+  /**
+   * 玩家倒下之后自动清场重开。
+   *
+   * 默认关掉：正经的流程是"倒下 → 结算画面 → 回选人"（见 defeated）。留着这个开关是给压力
+   * 测试用的 —— 测末波必然要死很多次，每死一次弹一屏结算就测不下去了，所以调试菜单里能把
+   * 它打开，那时的行为就是接结算流程之前的样子。
+   */
+  autoRespawn = false;
+  /**
+   * 玩家已经倒下、并且没有自动重开。外面读到它就切到结算画面。
+   *
+   * 用一个标志而不是回调：Battle 不认识界面，也不该认识 —— 它只负责把"这一局结束了"这件
+   * 事记下来，怎么表现是 main 的事。reset 会清掉。
+   */
+  defeated = false;
+
+  /**
+   * 这一局打了多久，秒。结算画面要读。
+   *
+   * 和 clock 分开：那个是从进程启动就一直在涨的战斗时钟，DistantMotion 拿它当相位基准，
+   * 重开时把它清零会让全图那批远处的人整齐地跳一下。这个只服务结算，清零没有副作用。
+   */
+  runTime = 0;
 
   /**
    * 完整 Character 的性能上限，含尚未清理的尸体，运行时用逗号/句号调整。
@@ -878,8 +908,9 @@ export class Battle {
   /** 逻辑这一段花掉的毫秒，指数平滑。暂停面板要读。 */
   simMs = 0;
 
-  private readonly field: Field;
-  private readonly worldPopulation: WorldPopulation;
+  // 这两个跟着地图换，所以不是 readonly。见 setField。
+  private field: Field;
+  private worldPopulation: WorldPopulation;
   private spawnTimer = 0;
   /** 按模板发号施令的那个人：只管"这一秒该放几个、放什么"，落点仍在这个文件里算。 */
   private readonly waves = new WaveDirector(DEFAULT_SPAWN_TEMPLATE);
@@ -911,6 +942,22 @@ export class Battle {
     yield* this.enemies;
   }
 
+  /**
+   * 换一块地。
+   *
+   * 只换"世界是什么样"，不清场 —— 调用方紧接着一定要 reset(view)，否则上一局的人还站在
+   * 新地图的旧坐标上。分两步是因为 reset 需要一份 BattleView，而那份视野得等玩家先被挪到
+   * 新场地的中央才算得对。
+   *
+   * 全图人口表跟着场地尺寸重建：它按格子摊开整张图，尺寸变了那张表就整个不对了。
+   */
+  setField(field: Field): void {
+    this.field = field;
+    this.worldPopulation = new WorldPopulation(field.width, field.height, WORLD_ENEMY_SPACING);
+    this.player.x = field.width * 0.5;
+    this.player.y = field.height * 0.5;
+  }
+
   /** 换一个玩家形象。血量按新的上限补满，免得换成小个子之后血条读不出来。 */
   setPreset(index: number): void {
     if (index < 0 || index >= PlayerPresets.length) return;
@@ -925,6 +972,9 @@ export class Battle {
     // 预留的是"刚才那片人海"，重开之后它不该再长回来。
     this.reserved.length = 0;
     this.kills = 0;
+    this.deaths = 0;
+    this.defeated = false;
+    this.runTime = 0;
     this.recycled = 0;
     this.restored = 0;
     // 跨帧招式和各自冷却一起归零；装备方案保留，重开不会替玩家换技能。
@@ -1355,6 +1405,7 @@ export class Battle {
     const { player, enemies, field } = this;
 
     this.clock += dt;
+    if (!this.defeated) this.runTime += dt;
     this.movePlayer(dt, input);
     this.advanceEnemyArrows(dt);
     this.syncEnemyVisibility(view);
@@ -1381,20 +1432,27 @@ export class Battle {
     this.collectedCoins += this.collectibles.collected.coin;
     field.update(dt, this.actors());
 
-    // 玩家倒下了就重开：清场、回血、重新铺一批。
+    // 玩家倒下了。
+    //
+    // 正经流程是把这一局判负（defeated），由 main 切到结算画面；只有压力测试才走下面那条
+    // 原地重开的路。倒地动画照常放完再判，玩家要看得见自己是怎么倒下的。
     if (!player.alive && player.death > RESPAWN_DELAY) {
-      this.player.death = -1;
-      this.player.hp = this.player.maxHp;
-      this.player.hurt = 0;
-      enemies.length = 0;
-      // 和 reset 一样：清场就该是真的清场，不能让预留把上一条命的人海放回来。
-      this.reserved.length = 0;
-      this.resetSkillRuntime();
-      this.enemyArrows.length = 0;
-      this.collectibles.clear();
-      this.collectedGems = 0;
-      this.collectedCoins = 0;
-      this.seed(view);
+      if (this.autoRespawn) {
+        this.player.death = -1;
+        this.player.hp = this.player.maxHp;
+        this.player.hurt = 0;
+        enemies.length = 0;
+        // 和 reset 一样：清场就该是真的清场，不能让预留把上一条命的人海放回来。
+        this.reserved.length = 0;
+        this.resetSkillRuntime();
+        this.enemyArrows.length = 0;
+        this.collectibles.clear();
+        this.collectedGems = 0;
+        this.collectedCoins = 0;
+        this.seed(view);
+      } else {
+        this.defeated = true;
+      }
     }
 
     // 清掉已经沉下去的尸体；还在飞的尸体夹回场地内。

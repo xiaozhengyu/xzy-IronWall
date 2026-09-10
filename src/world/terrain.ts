@@ -230,6 +230,46 @@ const TRUNK_RADIUS = TREE_HEIGHT * 0.075;
  */
 const BORDER_FRACTION = 0.11;
 
+/**
+ * 一张图上"人为摆过"的那几处东西：场院、水塘、往场内探的林子，加上四边树墙有多厚。
+ *
+ * 单独拿出来是为了让"加一张地图"不只是换一个随机种子。种子只改噪声 —— 明暗成团、边界毛糙、
+ * 树的抖动 —— 换个种子的地图**布局是一模一样的**：同一处左上角的场院、同一片右下角的水塘。
+ * 玩家一眼就认出那是同一块地换了个名字。真正让两张图不一样的是这几块东西摆在哪儿、有多大，
+ * 以及边上那圈林子有多厚（它决定这张图是开阔还是逼仄）。
+ *
+ * 位置和尺寸一律写成**场地的比例**，不是世界单位：这样同一份布局套在 1200 见方和 1600 见方
+ * 的地上都还是同一张图的样子，而不是一张被裁掉一半的图。圆角半径是例外，它是世界单位 ——
+ * 那是一条边有多圆，和场地多大无关。
+ */
+export interface TerrainLayout {
+  /** 土地：场院、踩出来的路口。圆角矩形，因为有直边的地读作**人为的**。 */
+  dirt: { x: number; y: number; hw: number; hh: number; r: number }[];
+  /** 水塘。空数组就是这张图上没有水。每一处自带一圈岸（自动加宽出来的一层土）。 */
+  ponds: { x: number; y: number; hw: number; hh: number; r: number }[];
+  /** 往场内探的林子。它们的作用是把树墙的内缘啃出缺口，别摆太大。 */
+  groves: { x: number; y: number; r: number }[];
+  /** 四边树墙的厚度，占场地短边的比例。见 BORDER_FRACTION。 */
+  border: number;
+}
+
+/** 演武荒原那一份 —— 也就是接这个结构之前写死在 generate 里的那几个数。 */
+export const DEFAULT_LAYOUT: TerrainLayout = {
+  dirt: [
+    // 左上角一块场院
+    { x: 0.24, y: 0.24, hw: 0.15, hh: 0.11, r: 46 },
+    // 正中间一小块，给开阔地一个落脚点
+    { x: 0.5, y: 0.5, hw: 0.07, hh: 0.05, r: 26 },
+  ],
+  // 右下角的池塘。
+  ponds: [{ x: 0.74, y: 0.72, hw: 0.13, hh: 0.1, r: 52 }],
+  groves: [
+    { x: 0.12, y: 0.7, r: 0.115 },
+    { x: 0.86, y: 0.28, r: 0.1 },
+  ],
+  border: BORDER_FRACTION,
+};
+
 /** 材质边界切得多陡。存的场是按整片地图的比例羽化的，这个值把过渡带压到几个色块宽。 */
 const EDGE_HARDNESS = 5.5;
 
@@ -273,6 +313,7 @@ export class Terrain {
   private readonly rows: number;
   private readonly cellSize: number;
   private readonly seed: number;
+  private readonly layout: TerrainLayout;
 
   private readonly dirt: Float32Array;
   private readonly water: Float32Array;
@@ -290,13 +331,16 @@ export class Terrain {
 
   /**
    * @param width/height 场地尺寸，世界单位。横向矩形就是 width > height。
+   * @param layout       这张图上摆了什么（场院、水塘、林子、树墙厚度）。种子只改噪声，
+   *                     布局才是让两张图长得不一样的东西 —— 见 TerrainLayout。
    * @param cellSize     材质网格的格子边长。格子是正方的，所以矩形场地上的水塘和林地
    *                     不会被拉长 —— 这是把网格按比例分成固定列数最容易踩的坑。
    */
-  constructor(width: number, height: number, seed = 1337, cellSize = 24) {
+  constructor(width: number, height: number, seed = 1337, layout: TerrainLayout = DEFAULT_LAYOUT, cellSize = 24) {
     this.width = width;
     this.height = height;
     this.cellSize = cellSize;
+    this.layout = layout;
     this.cols = Math.ceil(width / cellSize);
     this.rows = Math.ceil(height / cellSize);
     this.seed = seed;
@@ -320,7 +364,7 @@ export class Terrain {
    * 再拍一个百分比。
    */
   get borderWidth(): number {
-    return Math.min(this.width, this.height) * BORDER_FRACTION;
+    return Math.min(this.width, this.height) * this.layout.border;
   }
 
   private index(x: number, y: number): number {
@@ -415,18 +459,17 @@ export class Terrain {
     const w = this.width;
     const h = this.height;
 
-    // 圆角矩形，全部按场地比例摆位、按世界单位量尺寸。
+    // 圆角矩形，全部按场地比例摆位、按世界单位量尺寸。布局从 TerrainLayout 来。
     //
     // 用圆角矩形而不是圆斑：一块有直边的地读作**人为的**（踩出来的场院、挖出来的池子），
     // 而椭圆读作自然形成的。两者都对，但一张全是椭圆的图会显得没有人待过。
-    const dirtPatches = [
-      // 左上角一块场院
-      { x: w * 0.24, y: h * 0.24, hw: w * 0.15, hh: h * 0.11, r: 46 },
-      // 正中间一小块，给开阔地一个落脚点
-      { x: w * 0.5, y: h * 0.5, hw: w * 0.07, hh: h * 0.05, r: 26 },
-    ];
-    // 右下角的池塘，连着一圈岸。
-    const pond = { x: w * 0.74, y: h * 0.72, hw: w * 0.13, hh: h * 0.1, r: 52 };
+    const dirtPatches = this.layout.dirt.map((d) => ({
+      x: w * d.x, y: h * d.y, hw: w * d.hw, hh: h * d.hh, r: d.r,
+    }));
+    // 池塘，每一处连着一圈岸。
+    const ponds = this.layout.ponds.map((p) => ({
+      x: w * p.x, y: h * p.y, hw: w * p.hw, hh: h * p.hh, r: p.r,
+    }));
 
     /**
      * 四边的树墙。
@@ -447,14 +490,21 @@ export class Terrain {
         const wx = gx * this.cellSize;
         const edgeNoise = this.continuousNoise(wx / w, wy / h) * 4;
 
-        // 水：一个圆角矩形的池子。
-        const water = roundedRect(wx + edgeNoise, wy + edgeNoise * 0.7, pond.x, pond.y, pond.hw, pond.hh, pond.r, 26);
-        // 岸：同一个形状放大一圈，减掉水面本身。
-        const bank = clamp(
-          roundedRect(wx + edgeNoise, wy + edgeNoise * 0.7, pond.x, pond.y, pond.hw + 34, pond.hh + 30, pond.r + 20, 30) - water,
-          0,
-          1,
-        );
+        // 水：圆角矩形的池子，多处取最深的那一处。
+        let water = 0;
+        let banked = 0;
+        for (const pond of ponds) {
+          water = Math.max(
+            water,
+            roundedRect(wx + edgeNoise, wy + edgeNoise * 0.7, pond.x, pond.y, pond.hw, pond.hh, pond.r, 26),
+          );
+          // 岸：同一个形状放大一圈，减掉水面本身。
+          banked = Math.max(
+            banked,
+            roundedRect(wx + edgeNoise, wy + edgeNoise * 0.7, pond.x, pond.y, pond.hw + 34, pond.hh + 30, pond.r + 20, 30),
+          );
+        }
+        const bank = clamp(banked - water, 0, 1);
 
         let dirt = 0;
         for (const d of dirtPatches) {
@@ -468,13 +518,13 @@ export class Terrain {
         let forest = clamp((border - toEdge) / Math.max(border * 0.55, 1), 0, 1);
         forest = forest * forest * (3 - 2 * forest);
 
-        // 往场内探的两片，让树墙的内缘不是一条直线。刻意小 —— 它们是把边界啃出缺口的，
+        // 往场内探的几片，让树墙的内缘不是一条直线。刻意小 —— 它们是把边界啃出缺口的，
         // 不是另外的林子。
-        for (const f of [
-          { x: w * 0.12, y: h * 0.7, r: w * 0.115 },
-          { x: w * 0.86, y: h * 0.28, r: w * 0.1 },
-        ]) {
-          forest = Math.max(forest, this.irregularBlob(wx, wy, f.x, f.y, f.r, f.r * 0.9, f.x * 0.01));
+        for (const f of this.layout.groves) {
+          const fx = w * f.x;
+          const fy = h * f.y;
+          const fr = w * f.r;
+          forest = Math.max(forest, this.irregularBlob(wx, wy, fx, fy, fr, fr * 0.9, fx * 0.01));
         }
 
         forest *= 1 - dirt * 0.9;

@@ -5,9 +5,17 @@ export interface ControlHooks {
   onKey(code: string): void;
   onActiveChange(active: boolean): void;
   canActivate(): boolean;
+  /**
+   * 按下了 ESC。
+   *
+   * 它**不再**等于"暂停"。ESC 归游戏流程管（弹临时结算画面，见 ui/summary.ts），而调试
+   * 菜单只由 HUD 上的系统按钮打开 —— 两件事从这里就分开，Controls 自己不再替谁做决定。
+   * 长按不重复触发。
+   */
+  onEscape(): void;
 }
 
-/** 普通鼠标坐标驱动瞄准，ESC 只暂停游戏，不锁定或重定位系统鼠标。 */
+/** 普通鼠标坐标驱动瞄准，ESC 交给上层处理，不锁定或重定位系统鼠标。 */
 export class Controls {
   /** 准星的缓冲坐标，与人物投影保持一致。 */
   readonly cursor = { x: 0, y: 0 };
@@ -54,7 +62,7 @@ export class Controls {
     addEventListener('keydown', (event) => {
       if (event.code === 'Escape') {
         event.preventDefault();
-        if (!event.repeat) this.pause();
+        if (!event.repeat) hooks.onEscape();
         return;
       }
       if (!this.keys.has(event.code)) hooks.onKey(event.code);
