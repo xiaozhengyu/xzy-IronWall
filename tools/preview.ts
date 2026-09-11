@@ -908,6 +908,9 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
       GRAIN,
       1,
       1e6,
+      // 满级五颗珠子，时钟随便定一个 —— 要看的是它们在球面上铺开的样子，不是某一刻。
+      5,
+      1.1,
     );
     shapes.flushToMesh(sink);
     for (const s2 of sink.shapes) sheet.fillPolygon(s2);
@@ -915,6 +918,57 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
 
   writePng('.preview-skillfx.png', sheet.upscale(2));
   console.log('技能特效：上排新画法（压人群之上/加粗/放慢），下排旧画法（贴地）；列 = 横扫 / 回旋 / 破空');
+
+  // ---------------------------------------------------------------- 金钟罩表面的珠子
+  //
+  // 四列 = 一 / 二 / 三 / 五颗（技能 1、2、3、5 级），三排是各隔 0.18 秒的三个时刻。
+  //
+  // 分排是为了看出它们真的在**球面上**跑而不是在一个平面上转：同一颗珠子各排里的亮度和大小
+  // 应该不一样（转到背面就暗下去、小一圈）。摆在空地上：这一张要看的是珠子自己，而罩子能不能在
+  // 人堆里读出来早就由上一张图答过了。
+  {
+    const COUNTS = [1, 2, 3, 5];
+    const TIMES = [1.1, 1.28, 1.46];
+    const domeSheet = new Canvas(W * COUNTS.length, H * TIMES.length, [71, 105, 59]);
+
+    COUNTS.forEach((beads, col) => {
+      TIMES.forEach((t, row) => {
+        const shapes = new ShapeBatch();
+        const sink = new ShapeSink();
+        const rootX = col * W + W / 2;
+        const rootY = row * H + H / 2;
+
+        const hero = new Character(UnitPresets.warlord(), PALETTE_HERO, 32);
+        hero.facing = Math.PI * 0.4;
+        for (let k = 0; k < Math.round(0.35 / STEP); k++) hero.update(STEP, true);
+        drawCharacter(
+          shapes,
+          hero.pose,
+          new Projector(v2(rootX, rootY), hero.facing, Projection.groundSquash, GRAIN),
+          PALETTE_HERO,
+          hero.def,
+        );
+        drawAegisDome(
+          shapes,
+          rootX,
+          rootY,
+          34 * 0.95 * GRAIN,
+          RigSpec.chestZ * Projection.heightSquash * GRAIN,
+          GRAIN,
+          1,
+          1e6,
+          beads,
+          t,
+        );
+
+        shapes.flushToMesh(sink);
+        for (const s2 of sink.shapes) domeSheet.fillPolygon(s2);
+      });
+    });
+
+    writePng('.preview-aegis.png', domeSheet.upscale(2));
+    console.log('金钟罩的珠子：列 = 一 / 二 / 三 / 五颗（技能 1、2、3、5 级），三排各隔 0.18 秒');
+  }
 
   // ---------------------------------------------------------------- 磐石的流星
   //

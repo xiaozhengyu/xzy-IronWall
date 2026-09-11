@@ -860,6 +860,10 @@ export class Scene {
       grain,
       blink,
       sy * Projector.DEPTH_PER_ROW + DEPTH_AEGIS,
+      // 贴着球面跑的那几颗珠子：一级一颗，纯装饰。相位取战斗时钟 —— 它不带任何状态，
+      // 也就不存在"重新开罩时从哪里接上"这种问题。
+      Math.max(1, battle.skillLevel('aegis')),
+      battle.elapsed,
     );
   }
 
