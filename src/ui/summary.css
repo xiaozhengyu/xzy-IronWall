@@ -172,7 +172,7 @@
   color: #dfe6f3;
   background: #1b2130;
   border: 1px solid #39435a;
-  cursor: pointer;
+  cursor: inherit;
 }
 
 .summary-btn:hover {

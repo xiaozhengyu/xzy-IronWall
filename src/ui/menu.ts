@@ -2,7 +2,7 @@ import './menu.css';
 import { SkillCategoryRules, type SkillCategory, type SkillId } from '../game/skills';
 import { ACTIVE_SKILL_KEYS, type SkillLoadoutSnapshot } from '../game/skillLoadout';
 import type { WaveStatus } from '../game/battle';
-import { cursorCss } from './cursorImage';
+import { startCursorBreathing } from './cursorImage';
 import { HudText } from './text/hudText';
 import type { WeatherKind } from '../world/weather';
 
@@ -172,8 +172,9 @@ export class Menu {
     this.build();
     document.body.appendChild(this.root);
 
-    // 顶层光标还没启用时使用同款浏览器光标，包含菜单的透传区域。
-    document.body.style.cursor = cursorCss();
+    // 光标在这儿就装上：菜单比 HUD 先建，加载那几秒也该是那把剑。重复调用无效，
+    // HUD 那边再调一次只是为了不依赖两者的先后顺序。
+    startCursorBreathing();
   }
 
   // ---------------------------------------------------------------- 三个状态

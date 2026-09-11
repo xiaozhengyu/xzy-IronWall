@@ -9,7 +9,7 @@ import { HudCardPicker } from './hudCardPicker';
 import { HudFrame } from './hudFrame';
 import { createHudButton } from './hudButton';
 import { createHudIcon } from './hudIcons';
-import { cursorImage } from './cursorImage';
+import { startCursorBreathing } from './cursorImage';
 import { HudWavePanel } from './hudWavePanel';
 import { HudPlayerPanel } from './hudPlayerPanel';
 import { HudQuickbar } from './hudQuickbar';
@@ -106,7 +106,6 @@ export class Hud {
   private readonly minimapDock = document.createElement('div');
   private readonly minimapElement = document.createElement('div');
   private readonly currencyValues = new Map<'gold' | 'energy', HTMLSpanElement>();
-  private readonly hudPointer = document.createElement('div');
   private readonly quickbarResizeObserver: ResizeObserver;
   private readonly viewportResizeObserver: ResizeObserver;
   /**
@@ -220,25 +219,10 @@ export class Hud {
     this.root.appendChild(this.cards.root);
     this.quickbarResizeObserver = new ResizeObserver(() => this.syncGemProgressWidth());
 
-    this.hudPointer.className = 'hud-pointer';
-    this.hudPointer.setAttribute('aria-hidden', 'true');
-    this.hudPointer.hidden = true;
-    const pointerImage = cursorImage();
-    if (pointerImage) {
-      this.hudPointer.style.width = `${pointerImage.width}px`;
-      this.hudPointer.style.height = `${pointerImage.height}px`;
-      this.hudPointer.style.backgroundImage = `url(${pointerImage.url})`;
-      this.hudPointer.style.transform = `translate(${-pointerImage.hotX}px, ${-pointerImage.hotY}px)`;
-    }
     host.appendChild(this.root);
-    // 固定在窗口顶层，连 ESC 菜单和画框留边也使用同一枚光标。
-    document.body.appendChild(this.hudPointer);
-    addEventListener('mousemove', (event) => this.updatePointer(event.clientX, event.clientY));
-    document.documentElement.addEventListener('mouseleave', () => this.hidePointer());
-    addEventListener('blur', () => this.hidePointer());
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) this.hidePointer();
-    });
+    // 光标是一枚真的 CSS cursor，挂在 body 上（见 cursorImage.ts）。固定在窗口顶层那一层已经
+    // 不存在了 —— 换成系统来画之后，ESC 菜单、画框留边、掉出窗口都自然就对了。
+    startCursorBreathing();
     this.viewportResizeObserver = new ResizeObserver(([entry]) => {
       if (entry) this.syncViewportScale(entry.contentRect.width, entry.contentRect.height);
     });
@@ -319,20 +303,6 @@ export class Hud {
   /** 1 显示整张地图；数值越大越靠近玩家。实际值会限制在 1..8。 */
   setMinimapZoom(zoom: number): void {
     this.minimap.zoom = zoom;
-  }
-
-  /** 直接跟随真实屏幕坐标；暂停、继续和窗口缩放不重设光标位置。 */
-  private updatePointer(clientX: number, clientY: number): void {
-    if (!this.hudPointer.style.backgroundImage) return;
-    this.hudPointer.hidden = false;
-    this.hudPointer.style.left = `${clientX}px`;
-    this.hudPointer.style.top = `${clientY}px`;
-    document.documentElement.classList.add('game-pointer-active');
-  }
-
-  private hidePointer(): void {
-    this.hudPointer.hidden = true;
-    document.documentElement.classList.remove('game-pointer-active');
   }
 
   /**
