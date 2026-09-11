@@ -1,4 +1,6 @@
 import { Container, type Renderer, RenderTexture, Sprite } from 'pixi.js';
+import type { WarpLens } from '../effects/warpField';
+import { WarpFilter } from './warpFilter';
 
 /**
  * 像素网格量化那一步：所有东西先画进一张很小的 render target，再用最近邻整数倍放大到窗口。
@@ -7,6 +9,10 @@ import { Container, type Renderer, RenderTexture, Sprite } from 'pixi.js';
  * 单位画在一张独立的透明层上，合成时先把这张层按四个方向各偏移一像素、染黑叠一遍，再把
  * 原色的那张压上去 —— 于是层上所有东西都被描了一圈一像素的暗边。整支军队只多五个 quad，
  * 所以描边是一次合成通道，而不是逐个单位去描。
+ *
+ * 最后还有一道可选的扭曲通道（见 warpFilter.ts）。它必须夹在**合成之后、放大之前**：
+ * 合成之后才有完整的一帧可以拧，放大之前才保证位移是按游戏像素走的。这也是这一层存在的
+ * 意义之一 —— 换个地方就没有这么一个"整帧已经画完但还没放大"的时刻。
  */
 export class PixelSurface {
   private static readonly OUTLINE_OFFSETS = [
@@ -32,6 +38,12 @@ export class PixelSurface {
   private readonly composite = new Container();
   private readonly outlineSprites: Sprite[] = [];
   private layerSprite!: Sprite;
+
+  /** 扭曲通道的落点。没有洞的那些帧一次都不碰，view 直接指回 base。 */
+  private warped!: RenderTexture;
+  private readonly warpStage = new Container();
+  private warpSprite!: Sprite;
+  private readonly warpFilter = new WarpFilter();
 
   /** 挂到 stage 上的那个精灵：放大后的整帧。 */
   readonly view = new Sprite();
@@ -77,9 +89,11 @@ export class PixelSurface {
 
     this.base?.destroy(true);
     this.layer?.destroy(true);
+    this.warped?.destroy(true);
 
     this.base = RenderTexture.create({ width: w, height: h, scaleMode: 'nearest', antialias: false });
     this.layer = RenderTexture.create({ width: w, height: h, scaleMode: 'nearest', antialias: false });
+    this.warped = RenderTexture.create({ width: w, height: h, scaleMode: 'nearest', antialias: false });
 
     this.composite.removeChildren();
     this.outlineSprites.length = 0;
@@ -94,19 +108,40 @@ export class PixelSurface {
     this.layerSprite = new Sprite(this.layer);
     this.composite.addChild(this.layerSprite);
 
+    this.warpStage.removeChildren();
+    this.warpSprite = new Sprite(this.base);
+    // 滤镜挂在**精灵**上，不是挂在外面那个容器上：容器是直接交给 renderer.render 的根，
+    // 而根自己身上的效果不一定会被遍历到。挂在子节点上就是一条最普通的路径。
+    this.warpSprite.filters = [this.warpFilter];
+    this.warpStage.addChild(this.warpSprite);
+
     this.view.texture = this.base;
     this.view.scale.set(this.pixelScale / dpr);
   }
 
-  /** 画一帧：地面 → 单位层 → 带描边合成回底图。 */
-  render(): void {
+  /**
+   * 画一帧：地面 → 单位层 → 带描边合成回底图 →（有洞的话）扭曲。
+   *
+   * @param lenses 这一帧场上还活着的扭曲，缓冲像素。空的时候整条通道被跳过 —— 绝大多数帧
+   *               没有洞，不该为了一个偶尔出现的效果给每一帧都加两次全屏拷贝。
+   */
+  render(lenses: readonly WarpLens[] = []): void {
     this.renderer.render({ container: this.ground, target: this.base, clear: true });
     this.renderer.render({ container: this.units, target: this.layer, clear: true });
     this.renderer.render({ container: this.composite, target: this.base, clear: false });
+
+    if (lenses.length === 0) {
+      this.view.texture = this.base;
+      return;
+    }
+    this.warpFilter.setLenses(lenses, this.width, this.height);
+    this.renderer.render({ container: this.warpStage, target: this.warped, clear: true });
+    this.view.texture = this.warped;
   }
 
   destroy(): void {
     this.base?.destroy(true);
     this.layer?.destroy(true);
+    this.warped?.destroy(true);
   }
 }

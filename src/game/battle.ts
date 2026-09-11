@@ -24,6 +24,7 @@ import { NEUTRAL_MODIFIER, type HeroDef, type MapModifier, type StatBonus, type 
 import type { ResolvedUnitKind } from '../data/types';
 import { expFromKill, resolveEnemyStats, resolveHeroStats } from './stats';
 import { Debris } from '../effects/debris';
+import { WarpField } from '../effects/warpField';
 import { ImpactEffects, frontRadius, weaponImpactPoint, type ShockwaveOptions } from '../effects/impact';
 import { SKY_BLADE_LENGTH, SKY_BLADE_WIDTH } from '../effects/skyBlade';
 import { Character } from './character';
@@ -652,6 +653,11 @@ export class Battle {
   readonly effects = new ImpactEffects();
   /** 打碎溅出来的血珠和甲片。同上：谁放出来的归战斗管，画它的是 Scene。 */
   readonly debris = new Debris();
+  /**
+   * 砸在地上的扭曲。和上面两个一样是"招式放出来的东西"，只是画它的不是 ShapeBatch 而是
+   * 合成阶段的一道滤镜（见 effects/warpField.ts）。
+   */
+  readonly warp = new WarpField();
   /** 头顶飘起来的扣血数字。数值还没接上，见 rollDamage。 */
   readonly damageNumbers = new DamageNumbers();
   /** 地图上的掉落物。数值结算尚未接入，目前只负责生成、落地和吸附。 */
@@ -1503,6 +1509,7 @@ export class Battle {
     this.applyPlayerStats();
     this.enemyArrows.length = 0;
     this.debris.clear();
+    this.warp.clear();
     this.damageNumbers.clear();
     this.collectibles.clear();
     this.collectedGems = 0;
@@ -1961,6 +1968,7 @@ export class Battle {
 
     this.effects.update(dt);
     this.debris.update(dt);
+    this.warp.update(dt);
     this.damageNumbers.update(dt, this.player.x, this.player.y);
     // 吸附半径是玩家的一项属性（拾取范围），不再是 collectibles 里的一个常量。
     this.pickupTarget.x = player.x;
@@ -2413,6 +2421,24 @@ export class Battle {
             });
           }
         }
+        // 扇面正中也砸一个洞，比回旋小、比回旋短。
+        //
+        // 圆心不在脚下而在身前六成距离处：横扫的力气是甩出去的，洞跟着落点走才对得上眼睛看到
+        // 的那一下；摆在脚下会读成"他自己脚底炸了"。
+        //
+        // 旋进取负 = 画面上顺时针，和这一刀本身的走向一致：applySlash 的手从身体右后绕到左前
+        // （animator.ts），换算到屏幕上正好是顺时针。反着拧会让人觉得画面在跟招式较劲。
+        //
+        // depth 0.17 不是"变弱了"：重映射从钟形衰减换成球面 pow 之后（warpFilter.ts），
+        // 同一个数字对应的位移大了约两倍半。0.17 是按峰值位移反解出来的，横扫看到的深浅
+        // 和换之前一样。
+        const holeAt = reach * 0.6;
+        this.warp.spawn(
+          player.x + Math.cos(player.facing) * holeAt,
+          player.y + Math.sin(player.facing) * holeAt,
+          reach * 0.62,
+          { life: 0.34, depth: 0.17, swirl: -0.95, dark: 0.4, rim: 0.4, open: 0.62 },
+        );
         for (const e of this.enemies) {
           if (!e.alive) continue;
           if (inSector(player, e, reach, arc)) this.strike(e, player.x, player.y, skill.power);
@@ -2604,11 +2630,50 @@ export class Battle {
       velocityX: options.velocityX,
       velocityY: options.velocityY,
     });
+    // 那圈环扫过的地方，画面跟着被拧一下。
+    //
+    // 折射带**恒定压在环上**，靠的是两个半径用同一条推进曲线（都是三次 easeOut，见
+    // WarpField.collect 和 frontRadius）加上一个固定的比：环的终点是 reach /
+    // SKILL_HIT_MARGIN，透镜的终点是 reach，比就是 1/1.15 ≈ 0.87 —— 那正是 rimAt。起点也
+    // 按同一个比给（环从 1.5 起手，所以透镜从 1.5 × 1.15 起手）。于是整条命里，带子一直
+    // 骑在那个椭圆环上，而不是从它身上滑下来。
+    //
+    // depth / swirl / dark 全是 0：它们作用的是**整片**，而这一招的圆心站着玩家自己。
+    // 拧他一下读作画面坏了，不是有力量在那儿。这一招的扭曲只发生在外围那条带上，
+    // 环里面一个像素都不动。见 warpField.ts 顶上那段。
+    const ringFrom = 1.5 * SKILL_HIT_MARGIN;
+    this.warp.spawn(x, y, reach, {
+      life: 0.5,
+      depth: 0,
+      swirl: 0,
+      dark: 0,
+      edge: 0.12,
+      rim: 0.5,
+      rimAt: 1 / SKILL_HIT_MARGIN,
+      // 比横扫那条锐得多：带子要在 r = 1 之前衰减干净，否则透镜外沿会留一道几像素的硬
+      // 台阶 —— 那读作画面被切了一刀。
+      rimSharp: 13,
+      open: ringFrom / reach,
+    });
+    const hit = (e: Character): boolean =>
+      e.alive && (e.x - x) * (e.x - x) + (e.y - y) * (e.y - y) <= (reach + e.radius) * (reach + e.radius);
+
+    // 从中心真的甩出东西来。
+    //
+    // 光靠每个死者身上溅的那一蓬凑不出"爆炸"：一次回旋杀掉身周五十人，碎片就摊在一个半径
+    // 四十多个单位的圈上，每一处都很稀，合起来只是"一圈人身上各掉了点东西"。爆炸得有东西从
+    // **中心**飞出来，而且飞得比那圈人还远 —— 见 Debris.blast。
+    //
+    // 材质取圈里的一个人，不取玩家：飞出来的是被炸碎的**他们**，用玩家的甲色会让一蓬金片从
+    // 他脚下喷出来，读作他自己碎了。一个人都没打到就不炸 —— 空地上炸出一蓬血是假的。
+    //
+    // 而且要**赶在结算之前**炸。碎片池快满时会按比例缩水（Debris 里的 share），排在五十个
+    // 人身上那些小蓬后面去分剩下的话，最该被看见的这一蓬反而是被削得最狠的那个。
+    const caught = this.enemies.find(hit);
+    if (caught) this.debris.blast(x, y, power, caught.palette);
+
     for (const e of this.enemies) {
-      if (!e.alive) continue;
-      const dx = e.x - x;
-      const dy = e.y - y;
-      if (dx * dx + dy * dy <= (reach + e.radius) * (reach + e.radius)) this.strike(e, x, y, power);
+      if (hit(e)) this.strike(e, x, y, power);
     }
   }
 
