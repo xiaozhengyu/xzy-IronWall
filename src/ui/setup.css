@@ -13,8 +13,8 @@
   position: fixed;
   left: 50%;
   top: 50%;
-  width: min(100vw, 177.7778vh);
-  height: min(100vh, 56.25vw);
+  width: var(--stage-w);
+  height: var(--stage-h);
   aspect-ratio: 16 / 9;
   transform: translate(-50%, -50%);
   z-index: 12;
@@ -28,8 +28,12 @@
   /*
    * 整框的高度。要和画布对齐的元素按它取尺寸，而不是写死像素 —— 画布是一张固定 960×540 的
    * 缓冲，写死像素的话窗口一大，框里的人就跟着缩水。
+   *
+   * 转发 style.css 的 --stage-h，不再自己写一遍那个表达式：这一屏上的人和地图是画在**画布**
+   * 上、由 DOM 量出位置的（见 main.ts 的 boxToBuffer），所以这里的尺寸和画布的尺寸必须永远
+   * 是同一个数。各写一份迟早会差出一点，而差出的那一点正好就是"画出来的东西和框对不齐"。
    */
-  --frame-h: min(100vh, 56.25vw);
+  --frame-h: var(--stage-h);
 }
 
 .setup[hidden] {
@@ -241,7 +245,9 @@
 
 .setup-stats {
   display: flex;
-  gap: 14px;
+  /* 一律折行。小窗口下三项就能顶满一行，不折行的话它会从栏的两侧漏出去。 */
+  flex-wrap: wrap;
+  gap: 4px 14px;
   margin-top: 6px;
   padding-top: 6px;
   font-size: 12px;
@@ -654,4 +660,74 @@
   font-size: 12px;
   letter-spacing: 0.2em;
   color: #6f7a90;
+}
+
+/* 角色列表上的等级：贴在名字后面，比名字暗一档，不抢主视线。 */
+.setup-item-name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.setup-item-lv {
+  /* 不许被压缩：放不下时该被省略号截掉的是名字，不是等级。 */
+  flex: none;
+  font-size: 11px;
+  color: #8d7a4e;
+}
+
+/* ---------------------------------------------------------------- 顶栏右侧：家底 */
+
+/*
+ * 金币和商店入口靠右。
+ *
+ * margin-left: auto 把这一块推到行尾，不用给左边那两段各写一个宽度 —— 标题的字数以后要是
+ * 变了，那两个宽度就又得重算一遍。
+ */
+.setup-top-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.setup-purse-icon {
+  width: 14px;
+  height: 14px;
+  image-rendering: pixelated;
+}
+
+.setup-purse {
+  min-width: 34px;
+  color: #c9a24a;
+  font-size: 13px;
+}
+
+.setup-shop {
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 12px;
+  color: #cdd5e4;
+  background: rgba(24, 28, 38, 0.9);
+  border: 1px solid #3a4254;
+  cursor: pointer;
+}
+
+.setup-shop:hover {
+  color: #f0e6d2;
+  border-color: #6a5a34;
+}
+
+/* 顶栏底下那行会自己消失的提示。压在三栏之上，不参与布局，所以它出现和消失都不会推动别的。 */
+.setup-notice {
+  position: absolute;
+  top: 46px;
+  right: 20px;
+  z-index: 4;
+  padding: 6px 12px;
+  color: #e8dcc0;
+  font-size: 12px;
+  background: rgba(11, 13, 18, 0.94);
+  border: 1px solid #3a4254;
 }

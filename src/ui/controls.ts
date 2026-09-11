@@ -23,6 +23,22 @@ export class Controls {
   active = false;
   moving = false;
 
+  /**
+   * 左键这一刻按着没有。**按在哪儿都算**，包括按在界面上。
+   *
+   * 和 moving 是两件事：moving 是"人在走"，只有按在画布上才立得起来；这一条是"手指还压着"。
+   * 分开记是为了补上一个洞 —— 界面上任何一层弹出物（升级卡那块幕布最典型）都会把 mousedown
+   * 吃掉，而玩家往往按着不放就想接着走，结果人钉在原地，直到他松手再按一次。
+   */
+  private primaryDown = false;
+  /**
+   * 这一次按下不许触发移动，直到松手。
+   *
+   * 只有一处会立起来：从暂停里点回来的那一下（resume）。那一下是"继续游戏"，不是"往那边走"
+   * —— 否则玩家一回到游戏就朝着他刚才点确认的位置冲出去。
+   */
+  private holdBlocked = false;
+
   private readonly canvas: HTMLCanvasElement;
   private readonly camera: Camera;
   private readonly hooks: ControlHooks;
@@ -32,6 +48,11 @@ export class Controls {
     this.canvas = canvas;
     this.camera = camera;
     this.hooks = hooks;
+
+    // 捕获阶段记"手指压着没有"：界面上的弹出层会在冒泡前把事件吃掉，这一层要在它之前。
+    addEventListener('mousedown', (event) => {
+      if (event.button === 0) this.primaryDown = true;
+    }, true);
 
     canvas.addEventListener('mousedown', (event) => {
       if (event.button !== 0) return;
@@ -45,9 +66,25 @@ export class Controls {
     canvas.addEventListener('contextmenu', (event) => event.preventDefault());
     canvas.addEventListener('mouseleave', () => { this.moving = false; });
     addEventListener('mouseup', (event) => {
-      if (event.button === 0) this.moving = false;
+      if (event.button !== 0) return;
+      this.primaryDown = false;
+      this.holdBlocked = false;
+      this.moving = false;
     });
-    addEventListener('mousemove', (event) => this.trackPointer(event));
+    addEventListener('mousemove', (event) => {
+      this.trackPointer(event);
+      /*
+       * 按着不放的补漏：手指压着、光标已经在画布上、可就是没在走，那就开始走。
+       *
+       * 这一条专治"mousedown 被别人吃了"。弹出层（升级卡）、刚消失的按钮、浏览器自己的一些
+       * 手势，都可能让画布收不到那一下按下，而玩家的手指明明还压着。只认 target 是画布本身，
+       * 所以从 HUD 按钮上拖出来不会误触发。
+       */
+      if (this.active && this.primaryDown && !this.moving && !this.holdBlocked
+        && event.target === this.canvas) {
+        this.moving = true;
+      }
+    });
     addEventListener('blur', () => this.pause());
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) this.pause();
@@ -86,13 +123,16 @@ export class Controls {
     );
   }
 
-  get running(): boolean {
-    return this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+  /** 这个键这一帧按着没有。按住型的技能（疾走）靠它，见 main.ts 的 readInput。 */
+  held(code: string): boolean {
+    return this.keys.has(code);
   }
 
   resume(): void {
     if (this.active || !this.hooks.canActivate()) return;
     this.moving = false;
+    // 点回来的这一下按住不放也不许走，直到松手 —— 见 holdBlocked。
+    this.holdBlocked = this.primaryDown;
     this.keys.clear();
     this.syncCursor();
     this.active = true;
@@ -101,6 +141,8 @@ export class Controls {
 
   pause(): void {
     this.moving = false;
+    this.primaryDown = false;
+    this.holdBlocked = false;
     this.keys.clear();
     if (!this.active) return;
     this.active = false;

@@ -1,9 +1,28 @@
 import { attackDuration } from '../characters/animator';
 import { RigSpec } from '../characters/rig';
 import { PALETTE_HERO, type CharacterPalette } from '../characters/palette';
-import { type UnitDef, UnitPresets } from '../characters/unitDef';
+import { type UnitDef, type UnitPresetId, UnitPresets, unitAppearance } from '../characters/unitDef';
 import { clamp } from '../core/math';
 import { DamageNumbers } from '../effects/damageNumbers';
+import {
+  CRIT_CHANCE_BASIC,
+  CRIT_CHANCE_SKILL,
+  CRIT_MULTIPLIER,
+  DAMAGE_VARIANCE,
+  MIN_DAMAGE,
+  MAX_LEVEL,
+  expToNextLevel,
+  RUN_MULTIPLIER,
+  SKILL_DAMAGE_PER_POWER,
+  COIN_DROP_CHANCE,
+  PICKUP_DROP_CHANCE,
+  damageAfterDefense,
+} from '../data/balance';
+import { ITEM_SLOT_COUNT, ITEM_STACK_MAX, pickupById, rollPickup } from '../data/pickups';
+import { Heroes } from '../data/heroes';
+import { NEUTRAL_MODIFIER, type HeroDef, type MapModifier, type StatBonus, type UnitStats } from '../data/types';
+import type { ResolvedUnitKind } from '../data/types';
+import { expFromKill, resolveEnemyStats, resolveHeroStats } from './stats';
 import { Debris } from '../effects/debris';
 import { ImpactEffects, frontRadius, weaponImpactPoint, type ShockwaveOptions } from '../effects/impact';
 import { SKY_BLADE_LENGTH, SKY_BLADE_WIDTH } from '../effects/skyBlade';
@@ -15,11 +34,10 @@ import { rgb } from '../render/color';
 import { SpatialGrid } from './grid';
 import { WorldPopulation } from './worldPopulation';
 import { DistantMotion } from './distantMotion';
-import { SkillLoadout, type ActiveSkillSlot } from './skillLoadout';
+import { SkillLoadout, SPRINT_SKILL, SPRINT_SLOT, runSkillPool, type ActiveSkillSlot } from './skillLoadout';
 import {
   DEFAULT_SPAWN_TEMPLATE,
   WaveDirector,
-  type EnemyKind,
   type SpawnTemplate,
 } from './waves';
 import { Collectibles } from '../world/collectibles';
@@ -51,12 +69,14 @@ import {
 export const HUMAN_PACE = 16;
 
 /**
- * 突进的两个常量。
+ * 突进撞人判定在身体半径之外再放宽多少。
  *
- * LUNGE_TIME_SCALE 把"冲多远"换算成速度：技能表里给的是距离（reach × attackRange），
- * 除以它得到速度，于是改冲的距离不会顺带改冲的时长——一招的节奏该是固定的。
- *
- * LUNGE_BODY_MARGIN 是撞人判定在身体半径之外再放宽多少。
+ * 冲多快现在由**奔跑速度**折算，不再是一个时间常量除出来的（见 castSkill 的 lunge 分支）。
+ * 原来是"距离 = reach × attackRange，除以 0.22 得到速度"，那条换算有两个毛病：一是冲刺
+ * 的快慢跟着**武器长度**走，武将的攻击范围 34、骑士 16，同一招在两个人身上差出两倍多；
+ * 二是 0.22 秒那一档根本看不清，一帧跨过八个单位，玩家看到的是人瞬间出现在别处，撞飞的人
+ * 和犁开的道全糊在镜头飞走的过程里。现在冲刺速度是这个角色奔跑速度的固定倍数，四个人的
+ * 冲刺读起来是同一招。
  *
  * 13 不是"放宽一点"，是**犁出一条看得见的道**。原来给 2.5，加上体宽总半宽才 8 个单位，而
  * 人群互相分离的间距是 11 —— 一次冲刺只扫掉正中一列人，人群立刻合拢，画面上什么都没发生。
@@ -65,8 +85,6 @@ export const HUMAN_PACE = 16;
  * 这一条是"撞飞看不见"的真正原因，而不是力度或方向：尸体确实以 170 单位/秒横着甩出去，
  * 但它从一团人飞进另一团人，没有空地做参照就读不出位移。先有道，才看得见飞。
  */
-const LUNGE_TIME_SCALE = 0.22;
-
 
 /**
  * 冲刺撞人时的击飞力度和定格时长。
@@ -109,10 +127,13 @@ const LUNGE_BODY_MARGIN = 13;
  */
 
 /**
- * 玩家的基础移动速度，以及按住 Shift 的速度。
+ * 基准角色的走路和奔跑速度。
  *
- * 导出是给备战界面那块试练地用的：那里的人也是走同一套走/跑，速度各写一份的话，"选人时
- * 试出来的手感"和"进去之后的手感"迟早会是两回事。
+ * 战斗里**不读这两个常量** —— 玩家真正走多快看 player.stats.moveSpeed，那是按角色、等级和
+ * 被动算出来的（见 game/stats.ts），跑是它乘 RUN_MULTIPLIER。留着这两个数是因为备战界面
+ * 那个转圈的小人也要走路，而它身上没有属性。
+ *
+ * 两个数正好是基准角色（双锤武将，一级）算出来的结果：32 和 32 × 1.875 = 60。
  */
 export const PLAYER_SPEED = 32;
 export const PLAYER_RUN_SPEED = 60;
@@ -156,26 +177,25 @@ const SIDESTEP_NEAR = 45;
 export const INVINCIBLE_HP = 999999;
 
 /**
- * 生命值的档位。菜单里那个 [− 生命 N +] 在这张表上走。
+ * 生命上限的调试倍率档位。菜单里那个 [− 生命 N +] 在这张表上走。
  *
- * 走梯子不走等差：调试同屏几百人的时候，二十点血撑不过两秒，而一格一格加十点要按半天。
- * 顶格是 INVINCIBLE_HP，面板上显示成"无敌"。
+ * 以前这是一张绝对血量的梯子（5 / 10 / 20 … 1000）。现在血量上限由角色和等级算出来，
+ * 一个写死的绝对值会把那份结算整个覆盖掉，所以改成**倍率**：1 就是这个角色本来的血量，
+ * 往下调用来测"被打死是什么样"，往上调用来长时间挂机看人海。
+ *
+ * 顶格那一档是无敌（面板上就显示成"无敌"），走的仍然是 INVINCIBLE_HP 那条老路。
  */
-const HP_LADDER = [5, 10, 20, 50, 100, 200, 500, 1000, INVINCIBLE_HP];
+const HP_SCALE_LADDER = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, Number.POSITIVE_INFINITY];
 
 /**
- * 开局血量。必须是 HP_LADDER 上的一档 —— 菜单里的 [− 生命 +] 是在那张表上走的，起点不在
- * 表上的话第一次按加号会先跳到最近的一档，看着像少了一次。
- */
-const PLAYER_HP = 100;
-
-/**
- * 攻击频率：一次挥击**结束**之后再等多久才起下一次，秒。0 就是一刀接一刀。
+ * 攻击频率现在是玩家的一项基础属性（UnitStats.attackSpeed），不再是这里的一个常量。
  *
- * 默认 0，节奏就是动作时长本身 —— 锤子 0.72 秒一下、拳头 0.38 秒一下。攻击频率本来就该是
- * 每种武器自己的属性，这个常量只是在它之上再加一段停顿。
+ * 它是**倍率**而不是"再等几秒"：每种武器的动作时长本来就不一样（锤子 0.72 秒一下、拳头
+ * 0.38 秒），一个绝对的秒数没法同时作用在它们身上，而且减到 0 就到顶了。一刀接一刀（原来
+ * 那个 PLAYER_SWING_GAP = 0）对应的就是 attackSpeed = 1。
  */
-const PLAYER_SWING_GAP = 0;
+const playerSwingTime = (player: Character): number =>
+  attackDuration(player.def) / Math.max(0.2, player.stats.attackSpeed);
 
 /**
  * 出怪间隔。玩家清场的速度约每秒三个，所以这个值定得比它快不少，场面才会一直是满的 ——
@@ -192,13 +212,8 @@ const SPAWN_INTERVAL = 0.18;
  *
  * 代价是开局有几秒钟画面偏空。这是对的：割草的压迫感来自人越涌越多，而不是一上来就满屏。
  */
-/**
- * 敌人死亡掉金币的概率，剩下的都掉灵石。
- *
- * 1/50 是故意压低的：金币要当成一局里能记住的小惊喜，掉多了就和灵石一样成了背景噪音，
- * 玩家反而两种都不会去看。数值平衡以后要动的话改这一个常量就行。
- */
-const COIN_DROP_CHANCE = 1 / 50;
+// 掉金币的概率搬到 data/balance.ts 了 —— 金币现在是跨局的货币，它的产出率和商店那一侧的
+// 定价是同一件事，不该留在战斗引擎里。
 
 const SEED_COUNT = 30;
 
@@ -387,24 +402,41 @@ const APPROACH_BAND = 6;
 const PACE_TAU = 0.18;
 
 /** 玩家倒下之后躺多久重开。 */
+/**
+ * 用掉一件药或符之后，身上那层发光持续多久，秒。
+ *
+ * 短：它要读作"按下去的那一下"，不是一个状态。长一点就会和铁布衫那层一直在呼吸的提亮混成
+ * 一件事，而那两件事玩家必须分得开。
+ *
+ * 0.42 试过，太快了 —— 在一屏几百个人都在动的画面里，那一下还没被注意到就退完了。0.62 仍然
+ * 是"一下"，但看得见。
+ */
+const ITEM_FLASH_TIME = 0.62;
+
 const RESPAWN_DELAY = 1.2;
 
-/** 可选的玩家形象。菜单上那一排按钮就是这张表。 */
-export const PlayerPresets: { name: string; make: () => UnitDef }[] = [
-  { name: 'warlord 武将 双锤', make: UnitPresets.warlord },
-  { name: 'hero 披风剑士', make: UnitPresets.hero },
-  { name: 'thug 杂兵', make: UnitPresets.thug },
-  { name: 'shieldman 持盾兵', make: UnitPresets.shieldman },
-  { name: 'spearman 长枪兵', make: UnitPresets.spearman },
-  { name: 'archer 弓手', make: UnitPresets.archer },
-  { name: 'elite 精英', make: UnitPresets.elite },
-  { name: 'knight 骑士', make: UnitPresets.knight },
-  // 后面这四个是后加的兵种。**只能往后加**：备战界面那张 Roster 表按下标引这里
-  // （HeroDef.preset），在中间插一条会把已有的三个角色全换成别人。
-  { name: 'halberdier 戟兵', make: UnitPresets.halberdier },
-  { name: 'cavalry 骑兵', make: UnitPresets.cavalry },
-  { name: 'lancer 枪骑兵', make: UnitPresets.lancer },
-  { name: 'horseArcher 骑射', make: UnitPresets.horseArcher },
+/**
+ * 可选的玩家形象。**调试菜单**上那一排按钮就是这张表。
+ *
+ * 每一条现在都带着形象自己的名字（id）。原来只有 name 和 make，于是备战界面那张角色表只能
+ * 按**下标**引它，那张表因此"只能往后加"，中间插一条会把所有角色悄悄换成别人。现在角色表
+ * 写的是形象名（HeroDef.appearance），这张表怎么排都不影响它。
+ *
+ * 顺序仍然有意义，但只对调试菜单有意义：数字键 1~9 按下标选形象。
+ */
+export const PlayerPresets: { id: UnitPresetId; name: string; make: () => UnitDef }[] = [
+  { id: 'warlord', name: 'warlord 武将 双锤', make: UnitPresets.warlord },
+  { id: 'hero', name: 'hero 披风剑士', make: UnitPresets.hero },
+  { id: 'thug', name: 'thug 杂兵', make: UnitPresets.thug },
+  { id: 'shieldman', name: 'shieldman 持盾兵', make: UnitPresets.shieldman },
+  { id: 'spearman', name: 'spearman 长枪兵', make: UnitPresets.spearman },
+  { id: 'archer', name: 'archer 弓手', make: UnitPresets.archer },
+  { id: 'elite', name: 'elite 精英', make: UnitPresets.elite },
+  { id: 'knight', name: 'knight 骑士', make: UnitPresets.knight },
+  { id: 'halberdier', name: 'halberdier 戟兵', make: UnitPresets.halberdier },
+  { id: 'cavalry', name: 'cavalry 骑兵', make: UnitPresets.cavalry },
+  { id: 'lancer', name: 'lancer 枪骑兵', make: UnitPresets.lancer },
+  { id: 'horseArcher', name: 'horseArcher 骑射', make: UnitPresets.horseArcher },
 ];
 
 /** 菜单和 HUD 共用的角色显示名，英文部分只是内部预设代号。 */
@@ -445,6 +477,13 @@ interface SkillWave {
  * current/previous 给渲染器画出有长度的箭体，判定只在抵达固定落点时发生。
  */
 export interface EnemyArrow {
+  /**
+   * 射出这支箭的人攻击力多少。
+   *
+   * 存在箭上而不是命中时回头去问弓手：箭飞一秒多，这期间射他的那个人经常已经死了，而且就算
+   * 还活着，弓手站在屏幕外时也未必还是同一个对象（远处的人会被回收成无骨架的数据）。
+   */
+  attack: number;
   fromX: number;
   fromY: number;
   targetX: number;
@@ -479,7 +518,16 @@ export interface BattleInput {
   /** 该朝哪儿，弧度；null 表示保持不变（准星正压在人身上时方向没有意义）。 */
   facing: number | null;
   moving: boolean;
-  running: boolean;
+  /**
+   * 四个主动键位这一帧还按着没有，按 Q/W/E/R 的顺序。
+   *
+   * 按键的**按下**走的是另一条路（onKey → triggerActiveSkill），这里报的是**按住**。目前
+   * 只有疾走读它：按住 R 就跑，松开就走。做成一个每帧刷新的数组而不是让 Battle 去记按键
+   * 状态，是因为"键盘现在什么样"本来就是 Controls 的事。
+   *
+   * 可选：tools/ 下那些离线脚本没有键盘，它们只想让世界跑起来。不给就等于一个都没按。
+   */
+  heldSlots?: readonly boolean[];
 }
 
 /**
@@ -530,14 +578,17 @@ const smooth = (prev: number, now: number): number => prev * 0.9 + now * 0.1;
 /**
  * 一个被回收掉的敌人留下的**位置**。
  *
- * 存的是重建一个一模一样的人所需的全部东西。def 和 palette 是 EnemyKinds 里那份共享的只读
- * 数据，直接引用即可，不用记下标 —— 一千条预留指向同五份 def。
+ * 存的是重建一个一模一样的人所需的全部东西。def、palette 和 stats 都是兵种表里那份共享的
+ * 只读数据，直接引用即可，不用记下标 —— 一千条预留指向同五份。
+ *
+ * **属性也得带上。** 它们是按出生那一波算出来的，回来的时候可能已经是第六波了；重新算一遍
+ * 会让一个第一波就存在的杂兵在被玩家跑回去看一眼的瞬间变强。他只是走出过画面，不是重生。
  *
  * 只存活人；远处照常移动、避障和推进冷却，但不创建骨架或动画器。
  */
 type EnemyMover = Pick<Character,
   'x' | 'y' | 'facing' | 'def' | 'speed' | 'walkSpeed' | 'crowdPace' |
-  'sideBias' | 'radius' | 'spacing' | 'alive'
+  'sideBias' | 'radius' | 'spacing' | 'alive' | 'stats' | 'expValue'
 >;
 
 /** 只缓存邻居让路决策；朝向、速度、移动和碰撞仍逐帧计算。 */
@@ -575,18 +626,23 @@ interface Reservation extends EnemyMover {
 }
 
 /**
- * 占位的伤害数：**不是**结算出来的，见 slay 里的调用点。
+ * 一次打击掉多少血。
  *
- * 之所以按 power 分档而不是随便掷一个数：这一层要检的是"平砍和技能在画面上分不分得出来"，
- * 而那个差别正是数字的量级和重击的比例。两档之间留出一个明显的空档（平砍最多 90，技能最
- * 少 130），否则一眼扫过去两种打击的数字混在一起，这一层就白加了。
+ * 这个函数以前叫 rollDamage，掷出来的数**只是给飘字看的** —— 场上是碰到就死，掉血量根本
+ * 不存在。现在它是真的：攻击力经防御递减，按技能档翻倍，再掷一次浮动和暴击，得到的数既
+ * 进敌人的血条，也就是屏幕上飘起来的那个。
+ *
+ * power 一个字段管两件事（画面上溅多少碎片、伤害翻几倍）是有意的：看着更狠的那一下本来就
+ * 该更疼，拆成两个字段迟早会调出"画面很炸但不疼"的招。见 SKILL_DAMAGE_PER_POWER。
  */
-function rollDamage(power: number): { value: number; crit: boolean } {
+function rollDamage(attack: number, defense: number, power: number): { value: number; crit: boolean } {
   const skill = power >= 2;
-  // 重击在技能上更容易出，让大招那一下偶尔炸出一个特别烫的数。
-  const crit = Math.random() < (skill ? 0.18 : 0.09);
-  const base = skill ? 130 + Math.random() * 210 * (power - 1) : 34 + Math.random() * 56;
-  return { value: Math.round(base * (crit ? 2.4 : 1)), crit };
+  const crit = Math.random() < (skill ? CRIT_CHANCE_SKILL : CRIT_CHANCE_BASIC);
+  const scaled = damageAfterDefense(attack, defense) * SKILL_DAMAGE_PER_POWER ** Math.max(0, power - 1);
+  // 完全固定的伤害数字看久了像是假的，所以每一下都掷一次小浮动。
+  const jitter = 1 + (Math.random() * 2 - 1) * DAMAGE_VARIANCE;
+  const value = scaled * jitter * (crit ? CRIT_MULTIPLIER : 1);
+  return { value: Math.max(MIN_DAMAGE, Math.round(value)), crit };
 }
 
 export class Battle {
@@ -605,6 +661,17 @@ export class Battle {
   collectedCoins = 0;
   /** 弓箭手已经射出的箭。公开只供 Scene 读取并绘制。 */
   readonly enemyArrows: EnemyArrow[] = [];
+
+  /**
+   * 交给 Collectibles 的吸附目标。每帧从玩家身上刷一遍，不是每帧新建一个对象 —— 这条路
+   * 一秒钟跑六十次，而它只有三个数。
+   */
+  private readonly pickupTarget: {
+    x: number; y: number; pickupRange: number; accepts?: (id: string) => boolean;
+  } = { x: 0, y: 0, pickupRange: 0 };
+
+  /** 绑好的那一份，免得每帧现造一个闭包。 */
+  private readonly acceptsPickup = (id: string): boolean => this.acceptsItem(id);
 
   kills = 0;
   deaths = 0;
@@ -680,6 +747,14 @@ export class Battle {
     return this.lunge !== null;
   }
 
+  /**
+   * 这一帧在跑（按住 R 且蓝还够）。
+   *
+   * 跑步以前是按住 Shift、不花任何代价，所以它根本不是一个决定。现在它是 R 那一格上的技能
+   * （见 skills.ts 的 sprint），按住就扣蓝，蓝空了自己落回走路。
+   */
+  sprinting = false;
+
   /** 突进：还剩多久、朝哪个方向冲。null = 没在冲。 */
   private lunge: {
     left: number;
@@ -731,21 +806,454 @@ export class Battle {
   }
 
   /**
-   * 调生命上限，沿 HP_LADDER 走一格，并把血补满。
+   * 调生命上限，沿 HP_SCALE_LADDER 走一格，并把血补满。
+   *
+   * 调的是**倍率**不是绝对值：血量上限由角色和等级算出来（见 game/stats.ts），写死一个
+   * 绝对值会把那份结算整个盖掉，换个角色进来还是那个数。
    *
    * 补满是有意的：调血量只在调试时用，留着半管血继续打没有意义，还会让"改完之后到底死没死"
    * 变成两个变量的事。
    */
   nudgeMaxHp(delta: number): void {
-    let at = HP_LADDER.indexOf(this.player.maxHp);
-    // 当前值不在梯子上（比如以前手改过）就从第一个不小于它的档起步。
+    let at = HP_SCALE_LADDER.indexOf(this.hpScale);
     if (at < 0) {
-      at = HP_LADDER.findIndex((v) => v >= this.player.maxHp);
-      if (at < 0) at = HP_LADDER.length - 1;
+      at = HP_SCALE_LADDER.findIndex((v) => v >= this.hpScale);
+      if (at < 0) at = HP_SCALE_LADDER.length - 1;
     }
-    const next = clamp(at + delta, 0, HP_LADDER.length - 1);
-    this.player.maxHp = HP_LADDER[next];
+    this.hpScale = HP_SCALE_LADDER[clamp(at + delta, 0, HP_SCALE_LADDER.length - 1)];
+    this.applyPlayerStats();
     this.player.hp = this.player.maxHp;
+  }
+
+  // ---------------------------------------------------------------- 属性
+
+  /**
+   * 玩家现在是谁、几级、这一局又临时拿了什么。
+   *
+   * 这三样是玩家属性的全部输入，任何一样变了都要重算一次（applyPlayerStats）。等级和角色
+   * 由 main 从存档里取（game/profile.ts），局内加成由灵石三选一给。
+   */
+  private hero: HeroDef = Heroes[0];
+  private heroLevel = 1;
+  private runBonus: StatBonus = {};
+
+  /** 生命上限的调试倍率。见 nudgeMaxHp。 */
+  private hpScale = 1;
+
+  /**
+   * 刚用过药或符之后的那一下发光还剩多久，秒。
+   *
+   * 公开给 Scene：它把这一下画成玩家身上一层短暂的提亮和更厚的轮廓光。和铁布衫那层呼吸是
+   * 两回事 —— 那个是"我一直带着这个护身技"，这个是"我刚才按了一下"，所以它必须快、必须一闪
+   * 就过去，否则两者会读成同一件事。
+   */
+  itemFlash = 0;
+
+  /**
+   * 正在生效的符，以及各自还剩几秒。
+   *
+   * 和 runBonus 分开：那一份是抽牌拿的，一局之内不会走；这些是**会过期**的，所以每次有一条
+   * 到期都得把属性整个重算一遍。做成数组而不是把加成合并进一个值，是因为同一张符可以叠两次，
+   * 而到期是分开到期的 —— 合并之后就没法把先到期的那一份减回去了。
+   */
+  private readonly timedBonuses: { bonus: StatBonus; left: number }[] = [];
+
+  /**
+   * 快捷栏那几格：每格装的是哪一件、装了几个。**格位按先后顺序占，不是按物品表钉死的。**
+   *
+   * 先捡到的先占前面的格子。钉死格位在只有四件东西时还行，可东西会越加越多（以后还有别的
+   * 药和别的符），钉死就意味着永远只有前四种能被拿到，后面的全是摆设。按先后排之后，四格
+   * 装的就是"这一局你身上有什么"。
+   *
+   * **放在这里而不是 HUD 里**：它和血、蓝、技能等级一样是这一局的状态，HUD 只是每帧把它画
+   * 出来。放在界面里的后果是"还收不收得下"这件事战斗那边问不到。
+   */
+  private readonly itemSlots: ({ id: string; count: number } | null)[] =
+    new Array(ITEM_SLOT_COUNT).fill(null);
+
+  /** 第 n 格装的是哪一件。空格返回 null。 */
+  itemAt(slot: number): { id: string; count: number } | null {
+    return this.itemSlots[slot] ?? null;
+  }
+
+  itemCount(id: string): number {
+    return this.itemSlots.find((entry) => entry?.id === id)?.count ?? 0;
+  }
+
+  /**
+   * 这一件现在收不收得下。
+   *
+   * 三种情况：已经有这一件而且没摞满 —— 收；没有这一件但还有空格 —— 收，占一个新格子；
+   * 格子全被别的东西占着 —— **不收**，让它留在草地上。
+   *
+   * 让它留着而不是收下来再丢掉：后者玩家完全不知道刚才发生了什么，只看到一件东西凭空消失。
+   */
+  acceptsItem(id: string): boolean {
+    const held = this.itemSlots.find((entry) => entry?.id === id);
+    if (held) return held.count < ITEM_STACK_MAX;
+    return this.itemSlots.some((entry) => entry === null);
+  }
+
+  private takeItem(id: string): void {
+    const held = this.itemSlots.find((entry) => entry?.id === id);
+    if (held) {
+      held.count = Math.min(ITEM_STACK_MAX, held.count + 1);
+      return;
+    }
+    const free = this.itemSlots.indexOf(null);
+    if (free < 0) return;
+    this.itemSlots[free] = { id, count: 1 };
+  }
+
+  /**
+   * 用掉第 n 格里的一件。
+   *
+   * 先看有没有、再看用不用得上，两条都过了才扣 —— 反过来的话按一下就少一个，而什么都没发生。
+   * 用完最后一件，这一格**空出来**：它本来就不属于哪一件东西，下一件捡到的可以占。
+   */
+  useItemAt(slot: number): boolean {
+    const held = this.itemSlots[slot];
+    if (!held || held.count <= 0) return false;
+    if (!this.applyPickup(held.id)) return false;
+    held.count--;
+    if (held.count <= 0) this.itemSlots[slot] = null;
+    return true;
+  }
+
+  /**
+   * 当前法力。主动技能的开销从这里出，自己按 stats.mpRegen 每秒回一点。
+   *
+   * 公开只读：HUD 要画那条蓝条，而按键能不能按得动由 Battle 自己说了算（canAfford）——
+   * 界面读到的是"够不够"这个结论，不是自己拿两个数去比。
+   */
+  private currentMp = 0;
+
+  get mp(): number {
+    return this.currentMp;
+  }
+
+  get maxMp(): number {
+    return this.player.stats.maxMp;
+  }
+
+  /**
+   * 这一招的蓝够不够。HUD 用它决定要不要把那一格置灰，和冷却是同一种置灰。
+   *
+   * 不耗蓝的技能（自动攻击、自动发射、被动）永远返回 true —— 它们的 mpCost 是 0。
+   */
+  canAfford(id: SkillId): boolean {
+    const skill = skillById(id);
+    // 按住型的技能没有起手价，只有每秒的开销。"够不够"对它的意思是"还撑不撑得住一下"——
+    // 这里按四分之一秒算，蓝低于那个数就置灰，玩家按下去也只会跑一眨眼。
+    const scale = this.skillLoadout.mpScale(id);
+    if (skill.kind === 'sustained') return this.currentMp >= skill.mpDrain * scale * 0.25;
+    return this.currentMp >= skill.mpCost * scale;
+  }
+
+  /** 扣蓝。不够就一点都不扣，返回 false —— 扣一半是最糟的那种结果。 */
+  private spendMp(amount: number): boolean {
+    if (amount <= 0) return true;
+    if (this.currentMp < amount) return false;
+    this.currentMp -= amount;
+    return true;
+  }
+
+  /**
+   * 这张图对敌人的加成。换图时由 main 传进来，出兵那一侧每算一个敌人都要乘它。
+   *
+   * 默认中性（全是 1），所以离线脚本不设置它也能跑。
+   */
+  private modifier: MapModifier = NEUTRAL_MODIFIER;
+
+  /**
+   * 这一局挣到的经验。一局打完由 main 一次性结进存档。
+   *
+   * 局内也在用它升级（见 gainExp），两者不冲突：存档那一侧拿到的是**总数**，重放一遍会得到
+   * 同一个等级。分开记是因为打到一半退出去不该白打，而存档不该每杀一个人写一次磁盘。
+   */
+  earnedExp = 0;
+
+  /** 当前这一级已经攒了多少经验。HUD 的经验条画的就是它。 */
+  private levelExp = 0;
+
+  get expIntoLevel(): number {
+    return this.levelExp;
+  }
+
+  /** 这一级还要多少经验才升。满级时给 1，让经验条停在满格而不是除以无穷。 */
+  get expForLevel(): number {
+    const need = expToNextLevel(this.heroLevel);
+    return Number.isFinite(need) ? need : 1;
+  }
+
+  get heroId(): string {
+    return this.hero.id;
+  }
+
+  get level(): number {
+    return this.heroLevel;
+  }
+
+  /**
+   * 换角色，并开一局：形象、属性、技能一起换。
+   *
+   * **技能只给一个自动攻击技和 R 上的疾走**，别的全靠局内抽牌拿。这是这一版定下来的开局
+   * 状态：主动技三个空槽、发射技零个、护身技零个。
+   *
+   * @param level        这个角色在存档里的等级。每个角色各记各的，见 Profile。
+   * @param expIntoLevel 当前这一级已经攒了多少经验，HUD 的经验条要画它。
+   */
+  setHero(hero: HeroDef, level: number, expIntoLevel = 0): void {
+    this.hero = hero;
+    this.heroLevel = Math.max(1, Math.floor(level));
+    this.levelExp = Math.max(0, expIntoLevel);
+    this.runBonus = {};
+    this.player.def = unitAppearance(hero.appearance);
+    this.presetIndex = PlayerPresets.findIndex((preset) => preset.id === hero.appearance);
+    if (this.presetIndex < 0) this.presetIndex = 0;
+    this.skillLoadout.startRun(hero.attackSkill);
+    this.applyPlayerStats();
+    this.player.hp = this.player.maxHp;
+    this.currentMp = this.player.stats.maxMp;
+  }
+
+  /**
+   * 把一个技能升一级。灵石收满弹出的三选一走这条路，一局之内有效。
+   *
+   * 等级只改两样：作用距离和法力开销。不改冷却也不改动作时长 —— 那两个改的是节奏，而一招的
+   * 节奏是它的身份。
+   */
+  upgradeSkill(id: SkillId): boolean {
+    if (!this.skillLoadout.raiseLevel(id)) return false;
+    // 护身技那一包加成是算进属性里的，升一级得当场重算一遍。
+    if (id === this.hero.passive) this.refreshPassiveStats();
+    return true;
+  }
+
+  /** 这一局还能升的技能：装备着、还没满级。三选一里"升级"那一类的货架。 */
+  upgradableSkills(): SkillId[] {
+    return this.skillLoadout.upgradable().map((skill) => skill.id);
+  }
+
+  /**
+   * 这一局还没拿到的招。三选一里"获取"那一类的货架。
+   *
+   * 主动槽满了就不再出主动技 —— 抽到一张装不上的牌是最扫兴的一种结果。
+   */
+  obtainableSkills(): SkillId[] {
+    const slotsFull = this.skillLoadout.activeSkillSlots.every((id) => id !== null);
+    return runSkillPool(this.hero.passive).filter((id) => {
+      if (this.skillLoadout.isEquipped(id)) return false;
+      return !(slotsFull && skillById(id).category === 'active');
+    });
+  }
+
+  /** 拿到一招。抽牌选了"获取"就走这条路，一局之内有效。 */
+  obtainSkill(id: SkillId): boolean {
+    if (!runSkillPool(this.hero.passive).includes(id)) return false;
+    if (!this.skillLoadout.setEquipped(id, true)) return false;
+    // 护身技那一包加成是算进属性里的，拿到手当场重算一遍。
+    if (skillById(id).category === 'guard') this.refreshPassiveStats();
+    return true;
+  }
+
+  private refreshPassiveStats(): void {
+    const before = this.player.maxHp;
+    this.applyPlayerStats();
+    if (this.player.maxHp > before) this.player.hp += this.player.maxHp - before;
+  }
+
+  skillLevel(id: SkillId): number {
+    return this.skillLoadout.level(id);
+  }
+
+  /**
+   * 这一局临时拿到的属性加成（灵石收满那个三选一）。跨局不保留。
+   *
+   * 加成是**相加再乘一次**的：拿两张 +15% 攻击是 +30%，不是 +32.25%。见 applyBonuses。
+   */
+  addRunBonus(bonus: StatBonus): void {
+    for (const key of Object.keys(bonus) as (keyof UnitStats)[]) {
+      this.runBonus[key] = (this.runBonus[key] ?? 0) + (bonus[key] ?? 0);
+    }
+    const before = this.player.maxHp;
+    this.applyPlayerStats();
+    // 血上限涨了就把涨的那一截补上，但不治疗已经掉的血 —— 一张属性卡不该同时是一瓶药。
+    if (this.player.maxHp > before) this.player.hp += this.player.maxHp - before;
+  }
+
+  /**
+   * 吃下一份经验，够了就当场升级。
+   *
+   * 局内就升而不是等结算：升级会改属性（攻击、血、速度全在长），而一局有二十多分钟 —— 攒到
+   * 最后一起结算的话，这一整局玩家的强度是平的，练级在游戏里就看不见了。
+   *
+   * 升级把涨出来的血补上，但不治疗已经掉的血。升级是变强，不是喝药。
+   */
+  private gainExp(amount: number): void {
+    if (amount <= 0) return;
+    this.earnedExp += amount;
+    if (this.heroLevel >= MAX_LEVEL) return;
+    this.levelExp += amount;
+    let leveled = false;
+    while (this.heroLevel < MAX_LEVEL) {
+      const need = expToNextLevel(this.heroLevel);
+      if (this.levelExp < need) break;
+      this.levelExp -= need;
+      this.heroLevel++;
+      leveled = true;
+    }
+    if (!leveled) return;
+    if (this.heroLevel >= MAX_LEVEL) this.levelExp = 0;
+    const before = this.player.maxHp;
+    this.applyPlayerStats();
+    if (this.player.maxHp > before) this.player.hp += this.player.maxHp - before;
+  }
+
+  /**
+   * 抽牌拿的加成，加上还在生效的那几张符，合成一份。
+   *
+   * 同一项上的多个来源是相加再乘一次（见 applyBonuses 那段），所以这里也只是把数加起来。
+   */
+  private mergedBonus(): StatBonus {
+    if (this.timedBonuses.length === 0) return this.runBonus;
+    const out: StatBonus = { ...this.runBonus };
+    for (const entry of this.timedBonuses) {
+      for (const key of Object.keys(entry.bonus) as (keyof UnitStats)[]) {
+        out[key] = (out[key] ?? 0) + (entry.bonus[key] ?? 0);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 用掉一件药或符。
+   *
+   * 药立刻回一截血或蓝，按**上限的比例**给 —— 血量上限从一级的一千二长到满级的两千三，绝对
+   * 值定的药到后期就是一口水。符挂上一个带时限的加成，上限涨出来的那一截当场补满，所以坚壁
+   * 符同时也是半瓶药。
+   *
+   * @returns 这件东西有没有真的生效。界面靠它决定要不要扣掉一格。
+   */
+  applyPickup(id: string): boolean {
+    const def = pickupById(id);
+    if (!def || !this.player.alive) return false;
+    if (def.restore) {
+      if (def.restore.hp) {
+        const before = this.player.hp;
+        this.player.hp = Math.min(this.player.maxHp, this.player.hp + this.player.maxHp * def.restore.hp);
+        this.floatGain(this.player.hp - before, 'heal', 'plus');
+      }
+      if (def.restore.mp) {
+        const before = this.currentMp;
+        this.currentMp = Math.min(this.player.stats.maxMp, this.currentMp + this.player.stats.maxMp * def.restore.mp);
+        this.floatGain(this.currentMp - before, 'mana', 'plus');
+      }
+    }
+    if (def.buff && def.duration > 0) {
+      const beforeHp = this.player.maxHp;
+      const beforeMp = this.player.stats.maxMp;
+      this.timedBonuses.push({ bonus: def.buff, left: def.duration });
+      this.applyPlayerStats();
+      // 上限涨出来的那一截当场补满。不补的话"生命上限 +25%"在满血时什么也没发生，读起来像
+      // 一张废牌，而到期缩回去时反倒会掉一截血。
+      if (this.player.maxHp > beforeHp) this.player.hp += this.player.maxHp - beforeHp;
+      if (this.player.stats.maxMp > beforeMp) this.currentMp += this.player.stats.maxMp - beforeMp;
+      /*
+       * 符飘的是**加成的百分比**，不是秒数。
+       *
+       * 先飘过秒数，换掉了：那个数配不上任何一个符号 —— 加号会被读成"回了十二点"，乘号会
+       * 被读成"十二倍"。而百分比配乘号正好："×18"就是那一项乘了 1.18。撑多久这件事左下角
+       * 那条计时一直在倒数，不需要飘字再说一遍。
+       *
+       * 一张符带好几项加成时取**最大**的那一个：飘一串数字没人读得完，而玩家真正要知道的是
+       * "这一下有多狠"，那就是最大的那一项。具体哪几项在牌面和物品说明上写着。
+       */
+      let best = 0;
+      for (const value of Object.values(def.buff)) best = Math.max(best, value ?? 0);
+      this.floatGain(Math.round(best * 100), 'buff', 'times');
+    }
+    this.itemFlash = ITEM_FLASH_TIME;
+    // 不放光环。
+    //
+    // 试过在脚下推开一圈，撤了：那个形状是这套游戏里**技能**的语言 —— 横扫、回旋、金钟罩、
+    // 突进收招，推开的圈全是"我打了一下"。用药借同一个形状，画面上就成了又放了一招，而它
+    // 恰恰不是。身上那一层短促的提亮加头顶飘出来的数，说的已经是同一件事，而且只说这一件。
+    return true;
+  }
+
+  /**
+   * 头顶飘一个数。
+   *
+   * 走的是打人那套飘字（DamageNumbers），只是换了颜色 —— 同一个地方冒出来的数字用同一套画法，
+   * 玩家不用学第二种读法。颜色是唯一的区别，而那正好就是"这是好事还是坏事"。
+   */
+  private floatGain(
+    value: number,
+    style: 'heal' | 'mana' | 'buff',
+    sign: 'plus' | 'times',
+  ): void {
+    if (value < 1) return;
+    // follow：这一下发生在**玩家身上**，不是发生在地上某一点。他一边跑一边回，数字得跟着他
+    // 走，否则就是掉在身后的一串数。以后的持续回血、回蓝药更要靠这一条。
+    this.damageNumbers.spawn(this.player.x, this.player.y, value, { style, sign, follow: true });
+  }
+
+  /** 符的倒计时。到期一条就把属性重算一遍。 */
+  private advanceTimedBonuses(dt: number): void {
+    if (this.timedBonuses.length === 0) return;
+    let expired = false;
+    for (let i = this.timedBonuses.length - 1; i >= 0; i--) {
+      this.timedBonuses[i].left -= dt;
+      if (this.timedBonuses[i].left > 0) continue;
+      this.timedBonuses[i] = this.timedBonuses[this.timedBonuses.length - 1];
+      this.timedBonuses.pop();
+      expired = true;
+    }
+    // 上限缩回去之后血和蓝要跟着夹住，applyPlayerStats 里已经做了。
+    if (expired) this.applyPlayerStats();
+  }
+
+  /** 重算玩家属性并挂到 Character 上。角色、等级、局内加成、调试倍率任何一个变了都要跑一次。 */
+  private applyPlayerStats(): void {
+    const stats = resolveHeroStats(
+      this.hero,
+      this.heroLevel,
+      this.mergedBonus(),
+      // 没抽到护身技就传 0，那一包加成整个不算。
+      this.skillLoadout.guardSkill === this.hero.passive
+        ? this.skillLoadout.level(this.hero.passive)
+        : 0,
+    );
+    this.player.stats = stats;
+    this.player.walkSpeed = stats.moveSpeed;
+    this.player.maxHp = this.hpScale === Number.POSITIVE_INFINITY
+      ? INVINCIBLE_HP
+      : Math.round(stats.maxHp * this.hpScale);
+    this.player.hp = Math.min(this.player.hp, this.player.maxHp);
+    // 蓝上限涨了（升级、拿卡）不补满，只是夹住 —— 和血一样，变强不等于回复。
+    this.currentMp = Math.min(this.currentMp, stats.maxMp);
+  }
+
+  /** 这张图对敌人的加成。换图时调一次。 */
+  setMapModifier(modifier: MapModifier): void {
+    this.modifier = modifier;
+  }
+
+  /** 一个兵种在当前这一波、这张图上的属性。出兵那一侧每放一个人都要算一次。 */
+  private enemyStats(kind: ResolvedUnitKind): UnitStats {
+    return resolveEnemyStats(kind, this.waves.waveNumber, this.modifier);
+  }
+
+  /**
+   * 这个敌人两次出手之间等多久，秒。
+   *
+   * 弓手和近战本来就是两个量级（放箭要给箭留飞行时间），所以基准分两档；攻击频率那项属性
+   * 除在它上面 —— 波次越往后，同一个兵出手越密。
+   */
+  private enemySwingGap(def: UnitDef, stats: UnitStats): number {
+    const base = def.weapon === 'bow' ? ENEMY_ARCHER_SHOT_GAP : ENEMY_SWING_GAP;
+    return base / Math.max(0.2, stats.attackSpeed);
   }
 
   /**
@@ -932,8 +1440,8 @@ export class Battle {
     this.player.facing = Math.PI * 0.5; // 面朝镜头
     this.player.x = field.width * 0.5;
     this.player.y = field.height * 0.5;
-    this.player.maxHp = PLAYER_HP;
-    this.player.hp = PLAYER_HP;
+    this.applyPlayerStats();
+    this.player.hp = this.player.maxHp;
   }
 
   /** 玩家加所有敌人。脚印那边要遍历全场，用生成器省掉每帧一个临时数组。 */
@@ -958,7 +1466,12 @@ export class Battle {
     this.player.y = field.height * 0.5;
   }
 
-  /** 换一个玩家形象。血量按新的上限补满，免得换成小个子之后血条读不出来。 */
+  /**
+   * 调试菜单里换一个玩家形象。**只换长相，不换属性** —— 属性跟着角色走（setHero），而这个
+   * 旋钮是用来看"这个模型在场上是什么样"的，不是用来换角色的。
+   *
+   * 血补满：换成小个子之后血条读不出来。
+   */
   setPreset(index: number): void {
     if (index < 0 || index >= PlayerPresets.length) return;
     this.presetIndex = index;
@@ -973,12 +1486,21 @@ export class Battle {
     this.reserved.length = 0;
     this.kills = 0;
     this.deaths = 0;
+    this.earnedExp = 0;
     this.defeated = false;
     this.runTime = 0;
     this.recycled = 0;
     this.restored = 0;
-    // 跨帧招式和各自冷却一起归零；装备方案保留，重开不会替玩家换技能。
+    // 跨帧招式和各自冷却一起归零。
     this.resetSkillRuntime();
+    // 重开就是重新开一局：抽到的招、练出来的等级、拿到的属性卡全部清空，回到"一个自动攻击
+    // 技加一双靴子"。技能和灵石同生共死，留着上一局堆出来的强度就不是重开了。
+    this.skillLoadout.startRun(this.hero.attackSkill);
+    this.runBonus = {};
+    this.timedBonuses.length = 0;
+    this.itemSlots.fill(null);
+    this.itemFlash = 0;
+    this.applyPlayerStats();
     this.enemyArrows.length = 0;
     this.debris.clear();
     this.damageNumbers.clear();
@@ -988,6 +1510,7 @@ export class Battle {
     this.player.death = -1;
     this.player.hurt = 0;
     this.player.hp = this.player.maxHp;
+    this.currentMp = this.player.stats.maxMp;
     this.seed(view);
   }
 
@@ -1075,20 +1598,22 @@ export class Battle {
    */
   private placeWorldEnemy(
     x: number, y: number, view: BattleView,
-    kind: EnemyKind = this.waves.pick(),
+    kind: ResolvedUnitKind = this.waves.pick(),
   ): Reservation | null {
     if (this.worldEnemyCount >= MAX_WORLD_ENEMIES || this.inActiveArea(x, y, view, DESPAWN_MARGIN)) return null;
     const radius = RigSpec.hipHalfWidth * kind.def.bulk * 1.15;
     if (!isFreeSpot(this.field.terrain, this.field.props, x, y, radius)) return null;
+    const stats = this.enemyStats(kind);
     const enemy: Reservation = {
       motion: new DistantMotion(x, y, this.clock, this.farGroup++),
-      x, y, def: kind.def, palette: kind.palette,
-      walkSpeed: kind.speed, speed: 0, crowdPace: 0,
+      x, y, def: kind.def, palette: kind.palette, stats,
+      expValue: expFromKill(kind, this.waves.waveNumber, this.modifier),
+      walkSpeed: stats.moveSpeed, speed: 0, crowdPace: 0,
       sideBias: Math.random() < 0.5 ? -1 : 1,
       radius, spacing: RigSpec.torsoHalfWidth * kind.def.bulk, alive: true,
       facing: Math.atan2(this.player.y - y, this.player.x - x),
-      cooldown: Math.random() * (kind.def.weapon === 'bow' ? ENEMY_ARCHER_SHOT_GAP : ENEMY_SWING_GAP),
-      hp: 1, maxHp: 1,
+      cooldown: Math.random() * this.enemySwingGap(kind.def, stats),
+      hp: stats.maxHp, maxHp: stats.maxHp,
     };
     this.reserved.push(enemy);
     return enemy;
@@ -1121,7 +1646,7 @@ export class Battle {
    * 方向是均匀的一整圈，不做任何"这边在图外就换一边"的挑拣 —— 那正是包围感的来源。距离按
    * **沿这个方向走多远才出画面**算，所以每个方向都恰好在看不见的地方生成，不多走一步。
    */
-  spawn(view: BattleView, kind: EnemyKind = this.waves.pick()): boolean {
+  spawn(view: BattleView, kind: ResolvedUnitKind = this.waves.pick()): boolean {
     const angle = this.spawnAngle();
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
@@ -1173,6 +1698,8 @@ export class Battle {
           def: e.def,
           palette: e.palette,
           walkSpeed: e.walkSpeed,
+          stats: e.stats,
+          expValue: e.expValue,
           speed: e.speed,
           crowdPace: e.crowdPace,
           sideBias: e.sideBias,
@@ -1210,6 +1737,8 @@ export class Battle {
       if (!this.spotFree(r.x, r.y, r.def, initialCount)) continue;
 
       const e = new Character(r.def, r.palette, r.walkSpeed, r.sideBias);
+      e.stats = r.stats;
+      e.expValue = r.expValue;
       e.x = r.x;
       e.y = r.y;
       e.facing = r.facing;
@@ -1303,12 +1832,17 @@ export class Battle {
    * 只夹到"图外一圈"这个大框里，**不**夹回场内 —— 图外生成是有意的，见 SPAWN_OUTSIDE。
    * 落点和树重叠就沿着原方向往外挪一点重试；图外没有树，所以那边一次就成。
    */
-  private place(x: number, y: number, view: BattleView, kind: EnemyKind = this.waves.pick()): boolean {
+  private place(x: number, y: number, view: BattleView, kind: ResolvedUnitKind = this.waves.pick()): boolean {
     if (this.localSpawnRoom() <= 0) return false;
     // 总量满时只置换远离玩家、也不在实际镜头里的数据。可见怪物和即将进场者不动。
     if (this.worldEnemyCount >= this.worldBudget && !this.releaseDistantSpawnSlot(view)) return false;
     const field = this.field;
-    const e = new Character(kind.def, kind.palette, kind.speed);
+    const stats = this.enemyStats(kind);
+    const e = new Character(kind.def, kind.palette, stats.moveSpeed);
+    e.stats = stats;
+    e.maxHp = stats.maxHp;
+    e.hp = stats.maxHp;
+    e.expValue = expFromKill(kind, this.waves.waveNumber, this.modifier);
 
     const px = this.player.x;
     const py = this.player.y;
@@ -1330,8 +1864,7 @@ export class Battle {
     e.y = fy;
     e.facing = Math.atan2(py - fy, px - fx);
     // 随机的初始冷却，免得同一批出生的人到了跟前整齐划一地同时出手。
-    const initialGap = e.def.weapon === 'bow' ? ENEMY_ARCHER_SHOT_GAP : ENEMY_SWING_GAP;
-    e.attackCooldown = Math.random() * initialGap;
+    e.attackCooldown = Math.random() * this.enemySwingGap(e.def, stats);
     this.enemies.push(e);
     return true;
   }
@@ -1406,6 +1939,8 @@ export class Battle {
 
     this.clock += dt;
     if (!this.defeated) this.runTime += dt;
+
+    this.advanceSprint(dt, input);
     this.movePlayer(dt, input);
     this.advanceEnemyArrows(dt);
     this.syncEnemyVisibility(view);
@@ -1426,10 +1961,18 @@ export class Battle {
 
     this.effects.update(dt);
     this.debris.update(dt);
-    this.damageNumbers.update(dt);
-    this.collectibles.update(dt, player);
+    this.damageNumbers.update(dt, this.player.x, this.player.y);
+    // 吸附半径是玩家的一项属性（拾取范围），不再是 collectibles 里的一个常量。
+    this.pickupTarget.x = player.x;
+    this.pickupTarget.y = player.y;
+    this.pickupTarget.pickupRange = player.stats.pickupRange;
+    this.pickupTarget.accepts = this.acceptsPickup;
+    this.collectibles.update(dt, this.pickupTarget);
     this.collectedGems += this.collectibles.collected.gem;
     this.collectedCoins += this.collectibles.collected.coin;
+    for (const id of this.collectibles.collectedPickups) this.takeItem(id);
+    this.advanceTimedBonuses(dt);
+    if (this.itemFlash > 0) this.itemFlash = Math.max(0, this.itemFlash - dt);
     // 玩家作为地表反馈焦点：雪印、水波和水珠不能被同一帧的大量敌人特效覆盖。
     field.update(dt, this.actors(), player);
 
@@ -1441,6 +1984,7 @@ export class Battle {
       if (this.autoRespawn) {
         this.player.death = -1;
         this.player.hp = this.player.maxHp;
+        this.currentMp = this.player.stats.maxMp;
         this.player.hurt = 0;
         enemies.length = 0;
         // 和 reset 一样：清场就该是真的清场，不能让预留把上一条命的人海放回来。
@@ -1486,8 +2030,8 @@ export class Battle {
     // 突进期间不听输入：方向在起手那一刻就定死了。
     //
     // 允许中途转向的话，玩家会拿它当一个"更快的走"来用 —— 那就不是一招了，而且判定跟着
-    // 身体走，能转向就等于能画出一条任意折线的死亡走廊。冲多远由 dashSpeed × duration
-    // 定，一旦发动就是固定的一段。
+    // 身体走，能转向就等于能画出一条任意折线的死亡走廊。冲多远由速度 × duration 定，
+    // 一旦发动就是固定的一段。
     if (this.lunge) {
       // 这一帧从哪儿走到哪儿。判定用它连成的线段，见 advanceSkills。
       this.lunge.fromX = player.x;
@@ -1520,7 +2064,10 @@ export class Battle {
       this.playerVelocityY = 0;
       return;
     }
-    const speed = input.running ? PLAYER_RUN_SPEED : PLAYER_SPEED;
+    // 走多快是角色的属性，不再是两个常量。跑是走路乘一个固定倍率 —— 快多少是全局手感，
+    // 不该每个角色各调一遍。跑不跑由疾走那一格说了算，见 advanceSprint。
+    const walk = player.stats.moveSpeed;
+    const speed = this.sprinting ? walk * RUN_MULTIPLIER : walk;
     player.speed = speed;
     const to = moveWithCollision(
       field.terrain,
@@ -1538,15 +2085,42 @@ export class Battle {
   }
 
   /**
-   * 攻击是常态：到点就挥，不看周围有没有人、朝哪边、在不在跑。割草游戏里"挥不挥"根本不是
-   * 一个需要判断的问题 —— 基础攻击就是攻击力、攻击范围、攻击频率三个数，而**发动只由频率
-   * 决定**，其余的交给命中判定。
+   * 这一帧跑不跑：按住 R、蓝还够、人还活着、而且没在突进。
+   *
+   * 蓝是**边跑边扣**的，不是起步时一次性收 —— 一次性扣费的跑步等于"点一下开始跑，然后永远
+   * 免费"。扣不动就当场落回走路，不用玩家自己松手：他正被人追着，这时候要他去看蓝条是强人
+   * 所难。
+   *
+   * 突进期间不跑：那一段的速度由突进自己定死（见 movePlayer），再叠一层跑步只会让那 0.22
+   * 秒的距离变成一个说不清的数。
+   */
+  private advanceSprint(dt: number, input: BattleInput): void {
+    const held = input.heldSlots?.[SPRINT_SLOT] === true;
+    if (!held || !this.player.alive || this.lunge) {
+      this.sprinting = false;
+      return;
+    }
+    this.sprinting = this.spendMp(
+      skillById(SPRINT_SKILL).mpDrain * this.skillLoadout.mpScale(SPRINT_SKILL) * dt,
+    );
+  }
+
+  /**
+   * 攻击是常态：到点就挥，不看周围有没有人、朝哪边。割草游戏里"挥不挥"根本不是一个需要判断
+   * 的问题 —— 基础攻击就是攻击力、攻击范围、攻击频率三个数，而**发动只由频率决定**，其余的
+   * 交给命中判定。
    *
    * 挥空不是问题：落点那一刻放出的是**武器扫过的弧**，说的是"这一下从这儿扫过去了"，而不是
    * "打中了"。中不中由 inAttackArc 的扇形判定单独说了算。
+   *
+   * **但速度变了的时候不挥。** 突进和疾走期间自动攻击停下来，动作结束才接着挥。理由是招式
+   * 的形状和位置都挂在玩家的速度上：贴身的弧按 effectDrift 继承当前速度才跟得住人，而破空
+   * 这类飞出去的招连射程都要按出货视口夹一次（cappedReach）。在一个速度正在变的瞬间发招，
+   * 画出来的范围和真正杀到人的范围就对不上了 —— 而这个工程一贯的规矩是判定不能小于画面。
    */
   private swing(): void {
     if (!this.autoAttack || !this.player.alive) return;
+    if (this.dashing || this.sprinting) return;
     this.startPlayerAttack();
   }
 
@@ -1577,9 +2151,20 @@ export class Battle {
   /** Q/W/E/R 触发对应主动槽；技能未装备、尚在冷却或玩家正在位移时都不会发动。 */
   triggerActiveSkill(slot: ActiveSkillSlot, view: BattleView): boolean {
     const id = this.skillLoadout.activeSkillSlots[slot];
-    if (!id || !this.player.alive || this.dashing || !this.skillLoadout.ready(id)) return false;
+    if (!id || !this.player.alive || !this.skillLoadout.ready(id)) return false;
     const skill = skillById(id);
     if (skill.category !== 'active') return false;
+    // 按住型的技能没有"发动"这回事：按下去不触发什么，松开也不结束什么，它只是在按着的
+    // 每一帧生效（见 advanceSprint）。所以这条路直接不认它。
+    if (skill.kind === 'sustained') return false;
+    // 冲刺期间**只挡突进自己**，别的主动技照放。
+    //
+    // 以前是一冲起来什么都按不了。突进只有零点二秒，那零点二秒里禁掉一切，恰好把这一招最
+    // 该有的搭配也禁掉了：冲进人堆的路上开金钟罩，撞人的判定当场按罩子的外沿算（见
+    // guardReach）。那是玩家自己发现的连招，不该被一条顺手写下的守卫挡住。
+    if (this.dashing && skill.kind === 'lunge') return false;
+    // 蓝不够按不动。HUD 上那一格这时已经是灰的（canAfford），所以玩家不会觉得是按丢了。
+    if (!this.spendMp(skill.mpCost * this.skillLoadout.mpScale(skill.id))) return false;
     this.castSkill(skill, view);
     this.skillLoadout.consume(id);
     return true;
@@ -1601,7 +2186,7 @@ export class Battle {
   skillCooldownDuration(id: SkillId): number {
     const skill = skillById(id);
     if (skill.category === 'attack') {
-      return attackDuration(this.player.def) + PLAYER_SWING_GAP + skill.cooldown;
+      return playerSwingTime(this.player) + skill.cooldown;
     }
     return skill.cooldown;
   }
@@ -1609,17 +2194,29 @@ export class Battle {
   private startPlayerAttack(): boolean {
     const skill = skillById(this.skillLoadout.attackSkill);
     if (!this.skillLoadout.ready(skill.id)) return false;
-    const started = this.player.swing(attackDuration(this.player.def) + PLAYER_SWING_GAP + skill.cooldown);
+    const started = this.player.swing(playerSwingTime(this.player) + skill.cooldown);
     if (!started) return false;
     this.pendingAttackSkill = skill.id;
     this.skillLoadout.consume(skill.id);
     return true;
   }
 
-  /** 所有自动型技能各减各的冷却；同一帧到点也可以同时发动。 */
+  /**
+   * 所有自动型技能各减各的冷却，法力也在这里回。同一帧到点的自动技可以一起发动。
+   *
+   * **冲刺期间一个也不发。** 和自动攻击停下是同一条理由（见 swing）：发射类技能的射程按
+   * 施放者的属性折算、还要按出货视口夹一次（cappedReach），而冲刺一帧跨二十几个单位，发出
+   * 去的招和画出来的形状对不上。冷却照常走，所以冲完立刻就会补上。
+   *
+   * 玩家**手动**按的主动技不在此列：冲进人堆的路上开金钟罩是这一招最该有的搭配，那是他自己
+   * 的选择，不是系统替他发的。
+   */
   private advanceSkillSchedule(dt: number, view: BattleView): void {
     this.skillLoadout.tick(dt);
-    if (!this.player.alive) return;
+    // 回蓝。死了也照回 —— 倒地那一秒多回的几点蓝不影响任何事，而加一个"活着才回"的分支
+    // 只会让重开那一刻的蓝量取决于躺了多久。
+    this.currentMp = Math.min(this.player.stats.maxMp, this.currentMp + this.player.stats.mpRegen * dt);
+    if (!this.player.alive || this.dashing) return;
     for (const skill of this.skillLoadout.automaticSkills()) {
       if (!this.skillLoadout.ready(skill.id)) continue;
       this.castSkill(skill, view);
@@ -1658,32 +2255,58 @@ export class Battle {
    */
   private advancePlayerAttack(dt: number, view: BattleView): void {
     const { player } = this;
+    // 已经起手的那一下，在突进或疾走开始的那一帧收回去。
+    //
+    // 光靠 swing() 那道"不再起新招"的闸是不够的：玩家经常是**挥到一半**才按下 R 或者突进，
+    // 而落点还没到。让它照常落下去，就正好落在速度突变的那一帧上 —— 而招式的范围是按速度
+    // 算的（见 swing 上面那段）。收回去只损失这一下，比放出一个范围对不上的招好。
+    if ((this.dashing || this.sprinting) && player.attack >= 0) player.attack = -1;
     if (!player.update(dt)) return;
     this.castSkill(skillById(this.pendingAttackSkill), view);
   }
 
   /**
-   * 杀掉一个敌人：击飞、溅碎片、记账。
+   * 敌人打玩家。
    *
-   * 所有杀伤都从这里走，免得四个技能各写一遍"kill 完别忘了加 kills"。
+   * 走的是**同一个**伤害公式：攻击力经防御递减、按浮动掷一次。玩家凭什么打中，敌人就凭
+   * 什么打中；玩家的防御怎么挡，敌人的防御就怎么挡，谁也不吃暗亏。这条和 combat.ts 顶上
+   * 那段"敌我共用同一个判定"是同一个取向。
+   *
+   * power 给 1：敌人身上还没有技能，一律按平砍算。
+   *
+   * @returns 这一下是不是致命。
+   */
+  private hitPlayer(actor: Character): boolean {
+    return this.damagePlayer(actor.stats.attack, actor.x, actor.y);
+  }
+
+  private damagePlayer(attack: number, fromX: number, fromY: number): boolean {
+    const roll = rollDamage(attack, this.player.stats.defense, 1);
+    return this.player.takeHit(fromX, fromY, roll.value);
+  }
+
+  /**
+   * 打一个敌人：算伤害、扣血、飘数字；血空了才倒。
+   *
+   * 所有杀伤都从这里走，免得每个技能各写一遍扣血和记账。
+   *
+   * **这是这一版真正变了的那件事。** 以前叫 slay，碰到就死 —— 敌人根本没有血量，飘出来的
+   * 数字是掷着玩的。现在第一波的杂兵仍然一刀一个（一级武将实收约 115 伤害，杂兵 40 血），
+   * 但越往后的兵越要补刀：末波的枪骑兵得挨四下平砍，或者两下技能。割草的手感在开局保持
+   * 原样，压力从后面长出来。
    *
    * @param fromX/fromY 打击来自哪儿，决定往哪边飞。
-   * @param power       1 = 平砍（只溅血），2 = 技能（血 + 甲片）。这是平砍和技能在画面上
-   *                    唯一的区别 —— 两者都是碰到就死，但技能得看着更狠。
+   * @param power       1 = 平砍（只溅血），2 = 技能（血 + 甲片，伤害也翻一档）。
    */
-  private slay(
+  private strike(
     e: Character,
     fromX: number,
     fromY: number,
     power: number,
     launch: { force?: number; freeze?: number } = {},
   ): void {
-    e.kill(fromX, fromY, launch);
-    this.kills++;
-    // 掉落二选一：绝大多数是灵石，偶尔出一枚金币。概率低是故意的 —— 金币要当成
-    // 一局里能记住的小惊喜，掉多了就和灵石一样变成背景噪音。
-    if (Math.random() < COIN_DROP_CHANCE) this.collectibles.dropCoin(e.x, e.y);
-    else this.collectibles.dropGem(e.x, e.y);
+    if (!e.alive) return;
+    const roll = rollDamage(this.player.stats.attack, e.stats.defense, power);
 
     let dx = e.x - fromX;
     let dy = e.y - fromY;
@@ -1695,14 +2318,30 @@ export class Battle {
       dx /= len;
       dy /= len;
     }
-    this.debris.burst(e.x, e.y, dx, dy, power, e.palette);
 
-    // 扣血数字。目前**没有接数值** —— 场上是碰到就死，掉血量根本不存在。这里掷出来的数只
-    // 是为了让画面先长出这一层：等伤害真的算出来了，把 rollDamage 换成那个数就行，特效这
-    // 一侧一行都不用改。
-    const roll = rollDamage(power);
     // dx/dy 就是这个人被掀飞的去向 —— 数字拿它往反方向让开，把飞行轨迹留给画面。
     this.damageNumbers.spawn(e.x, e.y, roll.value, { crit: roll.crit, dirX: dx, dirY: dy });
+
+    // 没死就只闪一下白光（takeHit 里做的），不溅碎片也不掉东西。碎片是"这个人碎了"的信号，
+    // 挨一下还站着的人溅出甲片会让玩家以为他已经死了。
+    if (!e.takeHit(fromX, fromY, roll.value, launch)) return;
+
+    this.kills++;
+    this.gainExp(e.expValue);
+    /*
+     * 掉什么：绝大多数是灵石，偶尔一枚金币，偶尔一件药或符。
+     *
+     * 一次掷骰分三段而不是各掷各的：分段保证三者互斥，一个人身上不会同时爆出两样。金币和
+     * 药符同一个量级（各 1/50），剩下的全是灵石 —— 灵石是这一局的节奏（攒够就抽牌），另外
+     * 两样是插曲。
+     */
+    const drop = Math.random();
+    if (drop < COIN_DROP_CHANCE) this.collectibles.dropCoin(e.x, e.y);
+    else if (drop < COIN_DROP_CHANCE + PICKUP_DROP_CHANCE) {
+      this.collectibles.dropPickup(rollPickup().id, e.x, e.y);
+    } else this.collectibles.dropGem(e.x, e.y);
+
+    this.debris.burst(e.x, e.y, dx, dy, power, e.palette);
   }
 
   /**
@@ -1716,14 +2355,18 @@ export class Battle {
   private castSkill(skill: SkillDef, view: BattleView): void {
     const { player } = this;
     const at = weaponImpactPoint(player.pose, player.def, player.x, player.y, player.facing);
-    const reach = player.def.attackRange * skill.reach;
+    // 技能等级只动两样：作用距离和法力开销（见 data/balance.ts）。距离是这一行。
+    const reach = player.stats.attackRange * skill.reach * this.skillLoadout.reachScale(skill.id);
 
     switch (skill.kind) {
+      // 这两种在这条路上什么都不做：被动一直生效，按住型的每一帧自己生效（advanceSprint），
+      // 两者都没有"发动"这个时刻。
       case 'passive':
+      case 'sustained':
         return;
 
       case 'instant': {
-        const arc = skill.arc ?? player.def.attackArc;
+        const arc = skill.arc ?? player.stats.attackArc;
         // 整圈那一招的圆心是**人**，不是武器落点：转一圈扫开身周，落点在身前一侧没有意义。
         const full = arc >= Math.PI * 1.99;
         if (full) {
@@ -1737,7 +2380,7 @@ export class Battle {
         {
           // 横扫是外三、内二的两层扇面。五片各自够宽、够粗，但不附带通用余波，避免自动挥击
           // 每隔零点几秒就在画面里叠出十几道弧。外层画到判定边缘，画面与实际杀伤保持一致。
-          const fanOrigin = player.def.attackRange * 0.12;
+          const fanOrigin = player.stats.attackRange * 0.12;
           const fan: { side: number; distance: number; weight: number; tint: ReturnType<typeof rgb> }[] = [
             // 外层三片：完整横扫距离，负责把整个攻击扇区撑开。
             { side: -0.36, distance: 1, weight: 2.05, tint: rgb(255, 178, 58) },
@@ -1772,13 +2415,13 @@ export class Battle {
         }
         for (const e of this.enemies) {
           if (!e.alive) continue;
-          if (inSector(player, e, reach, arc)) this.slay(e, player.x, player.y, skill.power);
+          if (inSector(player, e, reach, arc)) this.strike(e, player.x, player.y, skill.power);
         }
         return;
       }
 
       case 'wave': {
-        const arc = skill.arc ?? player.def.attackArc;
+        const arc = skill.arc ?? player.stats.attackArc;
         const wave: SkillWave = {
           x: at.x,
           y: at.y,
@@ -1789,7 +2432,7 @@ export class Battle {
           life: skill.duration,
           from: 2,
           // 打不出画面。见 cappedReach —— 屏幕外一片人无声消失不是爽快，是茫然。
-          to: cappedReach(at.x, at.y, player.facing, arc, reach, player.def.attackRange, view.spawn),
+          to: cappedReach(at.x, at.y, player.facing, arc, reach, player.stats.attackRange, view.spawn),
           arc,
           power: skill.power,
         };
@@ -1882,7 +2525,7 @@ export class Battle {
           power: 0.8,
           span: 0.48,
           from: 1,
-          to: player.def.attackRange * 1.5,
+          to: player.stats.attackRange * 1.5,
           life: 0.18,
           weight: 1.2,
           overhead: true,
@@ -1892,22 +2535,36 @@ export class Battle {
         return;
       }
 
-      case 'lunge':
+      case 'lunge': {
+        /*
+         * 冲刺速度 = 这个角色的奔跑速度 × 技能表里那个倍数，冲多远由它乘 duration 得出。
+         *
+         * **这一招不能用上面那个 reach。** 那个数是 `attackRange × skill.reach`，对别的招
+         * 来说是"够多远"，而突进的 skill.reach 是"冲刺是奔跑的几倍"（8.2），两件事借用了
+         * 同一个字段。乘出来是 34 × 8.2 = 279 个单位，两倍半于真正冲出去的距离 —— 前推弧
+         * 照着它画，出来就是一道横贯半个屏幕的大波，而人只冲了一百来个单位。
+         */
+        // 突进升级同样是"冲得更远"，只是它的远靠的是快：距离 = 速度 × 固定的动作时长，
+        // 所以倍数只能加在速度上。升到满级是每秒六百多、一下冲一百五十个单位。
+        const dashSpeed =
+          player.stats.moveSpeed * RUN_MULTIPLIER * skill.reach * this.skillLoadout.reachScale(skill.id);
+        const dashDistance = dashSpeed * skill.duration;
         this.lunge = {
           left: skill.duration,
           heading: player.facing,
-          speed: reach / LUNGE_TIME_SCALE,
+          speed: dashSpeed,
           power: skill.power,
-          finishRing: player.def.attackRange * skill.finishRing,
+          // 收招那一圈是**判定**半径，所以它照旧按 attackRange 折算，和上面那条不是一回事。
+          finishRing: player.stats.attackRange * skill.finishRing,
           fromX: player.x,
           fromY: player.y,
         };
-        // 突进：一道窄而急的前推弧，跟着人一起冲出去。
+        // 突进：一道窄而急的前推弧，跟着人一起冲出去。弧的长度按**真正冲出去的距离**给。
         this.effects.spawn(at.x, at.y, player.facing, {
           power: 1,
           span: 1.1,
           from: 2,
-          to: reach * 0.62,
+          to: dashDistance * 0.62,
           life: 0.42,
           weight: 2.2 * player.def.bulk,
           overhead: true,
@@ -1915,6 +2572,7 @@ export class Battle {
           tint: rgb(255, 232, 190),
         });
         return;
+      }
     }
   }
 
@@ -1950,7 +2608,7 @@ export class Battle {
       if (!e.alive) continue;
       const dx = e.x - x;
       const dy = e.y - y;
-      if (dx * dx + dy * dy <= (reach + e.radius) * (reach + e.radius)) this.slay(e, x, y, power);
+      if (dx * dx + dy * dy <= (reach + e.radius) * (reach + e.radius)) this.strike(e, x, y, power);
     }
   }
 
@@ -1975,7 +2633,7 @@ export class Battle {
       for (const e of this.enemies) {
         if (!e.alive) continue;
         if (sweptBy(e, w.x, w.y, w.heading, radius, w.arc, WAVE_NEAR_HALF_WIDTH)) {
-          this.slay(e, w.x, w.y, w.power);
+          this.strike(e, w.x, w.y, w.power);
         }
       }
       if (w.age >= w.life) {
@@ -2010,7 +2668,7 @@ export class Battle {
       for (const e of this.enemies) {
         if (!e.alive) continue;
         if (inSector(player, e, this.aegis.radius, Math.PI * 2)) {
-          this.slay(e, player.x, player.y, this.aegis.power);
+          this.strike(e, player.x, player.y, this.aegis.power);
         }
       }
       if (this.aegis.left <= 0) this.aegis = null;
@@ -2021,7 +2679,7 @@ export class Battle {
       for (const e of this.enemies) {
         if (!e.alive) continue;
         if (inSector(player, e, this.dharma.radius, Math.PI * 2)) {
-          this.slay(e, player.x, player.y, this.dharma.power);
+          this.strike(e, player.x, player.y, this.dharma.power);
         }
       }
       if (this.dharma.left <= 0) this.dharma = null;
@@ -2040,7 +2698,7 @@ export class Battle {
 
       // 上一帧的柄到这一帧的剑尖是一条连续线段，包含整截剑身和这一帧扫过的距离。判定半径
       // 与画出来的刃宽一致；命中后的横向击飞与定格则直接走突进的同一个函数。
-      this.slayAlongLunge(
+      this.strikeAlongLunge(
         fromX,
         fromY,
         blade.x + dirX * SKY_BLADE_LENGTH,
@@ -2062,13 +2720,13 @@ export class Battle {
       // 而且漏的位置是散的（第 0、1、5、8、9 个），玩家读作"从人身上穿过去了"。
       const ax = this.lunge.fromX;
       const ay = this.lunge.fromY;
-      this.slayAlongLunge(
+      this.strikeAlongLunge(
         ax,
         ay,
         player.x,
         player.y,
         this.lunge.heading,
-        player.radius + LUNGE_BODY_MARGIN,
+        this.guardReach(player.radius + LUNGE_BODY_MARGIN),
         this.lunge.power,
       );
       if (this.lunge.left <= 0) {
@@ -2086,10 +2744,30 @@ export class Battle {
   }
 
   /**
+   * 玩家身上此刻**最外面**那一层罩子有多大，世界单位。
+   *
+   * 这是"技能搭配"那条规则的唯一实现点：身上挂着的罩子（金钟罩、天地法相，以后还会有别的）
+   * 各有各的半径，而一次碰撞该按其中最大的那个算 —— 开着金钟罩去撞人，撞上的边界就是罩子
+   * 的边界，不是人的身体。人比罩子宽的时候（罩子还没开，或者开的是个贴身的小罩）就按人算，
+   * 所以这个函数永远不会让判定变小。
+   *
+   * 加一种新的持续罩子时，往下面这个数组里再加一行就够了，调用点一处都不用动。
+   *
+   * @param base 没有任何罩子时的判定半径，通常是人自己的身体加一点余量。
+   */
+  private guardReach(base: number): number {
+    let reach = base;
+    for (const aura of [this.aegis, this.dharma]) {
+      if (aura && aura.left > 0) reach = Math.max(reach, aura.radius);
+    }
+    return reach;
+  }
+
+  /**
    * 按突进规则扫过一条线段：连续碰撞、向路径两侧击飞，并使用突进的力度和短定格。
    * 玩家突进与开天的剑体共用这一份，保证“按照突进技能处理”不是近似相同而是同一条代码路径。
    */
-  private slayAlongLunge(
+  private strikeAlongLunge(
     ax: number,
     ay: number,
     bx: number,
@@ -2119,7 +2797,7 @@ export class Battle {
       const kl = Math.hypot(kx, ky) || 1;
       kx /= kl;
       ky /= kl;
-      this.slay(e, e.x - kx * 10, e.y - ky * 10, power, {
+      this.strike(e, e.x - kx * 10, e.y - ky * 10, power, {
         force: LUNGE_FORCE,
         freeze: LUNGE_FREEZE,
       });
@@ -2142,6 +2820,7 @@ export class Battle {
     const startZ = Math.max(6, local.z);
 
     this.enemyArrows.push({
+      attack: archer.stats.attack,
       fromX,
       fromY,
       targetX,
@@ -2193,7 +2872,7 @@ export class Battle {
       const dy = player.y - arrow.targetY;
       const hit = player.radius + ENEMY_ARROW_HIT_MARGIN;
       if (player.alive && dx * dx + dy * dy <= hit * hit) {
-        if (player.takeHit(arrow.fromX, arrow.fromY)) this.deaths++;
+        if (this.damagePlayer(arrow.attack, arrow.fromX, arrow.fromY)) this.deaths++;
         arrows[i] = arrows[arrows.length - 1];
         arrows.pop();
         continue;
@@ -2245,7 +2924,7 @@ export class Battle {
         // 每帧推回来，于是他永远以为自己还在赶路，一直播着走路动画原地踏步。取两者的大者，
         // 他就停在真正站得住的地方，然后老老实实出手。
         const stop = Math.max(
-          e.def.attackRange * 0.8,
+          e.stats.attackRange * 0.8,
           (player.spacing + e.spacing) * this.crowdSpacing,
         );
         if (dist > stop) {
@@ -2324,11 +3003,10 @@ export class Battle {
           const decision = this.crowdDecisions.get(e);
           if (decision) decision.stale = true; // 重新起步时不能沿用站定前的邻居。
           if (i < activeCount) {
-            const cooldown =
-              e.def.weapon === 'bow'
-                ? ENEMY_ARCHER_SHOT_GAP + Math.random() * ENEMY_ARCHER_SHOT_JITTER
-                : ENEMY_SWING_GAP + Math.random() * ENEMY_SWING_JITTER;
-            this.enemies[i].swing(cooldown);
+            // 基准间隔除以这个兵的攻击频率（波次越往后越快），再加一点随机抖动 —— 少了抖动，
+            // 同一批到位的人会整齐划一地同时挥。
+            const jitter = e.def.weapon === 'bow' ? ENEMY_ARCHER_SHOT_JITTER : ENEMY_SWING_JITTER;
+            this.enemies[i].swing(this.enemySwingGap(e.def, e.stats) + Math.random() * jitter);
           }
         }
       }
@@ -2337,7 +3015,7 @@ export class Battle {
         const actor = this.enemies[i];
         if (actor.update(dt, onScreen) && player.alive) {
           if (actor.def.weapon === 'bow') this.fireEnemyArrow(actor);
-          else if (inAttackArc(actor, player) && player.takeHit(actor.x, actor.y)) this.deaths++;
+          else if (inAttackArc(actor, player) && this.hitPlayer(actor)) this.deaths++;
         }
       }
     }

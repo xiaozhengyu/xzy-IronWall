@@ -1,12 +1,16 @@
 import skill01Url from '../../assets/hud/item/skill/skill-01.png';
+import skill02Url from '../../assets/hud/item/skill/skill-02.png';
 import skill03Url from '../../assets/hud/item/skill/skill-03.png';
+import skill04Url from '../../assets/hud/item/skill/skill-04.png';
 import skill05Url from '../../assets/hud/item/skill/skill-05.png';
+import skill06Url from '../../assets/hud/item/skill/skill-06.png';
 import skill08Url from '../../assets/hud/item/skill/skill-08.png';
 import skill09Url from '../../assets/hud/item/skill/skill-09.png';
 import type { SkillId } from '../game/skills';
 import type { HudText } from './text/hudText';
 import type { HudTextKey } from './text/hudText.types';
 import { createHudSkillLevel } from './hudSkillLevel';
+import { SKILL_MAX_LEVEL } from '../data/balance';
 import './hudCooldownPanel.css';
 
 type CooldownEntryDefinition = {
@@ -23,6 +27,9 @@ type CooldownEntryView = {
   lastStep: number;
   lastActive: boolean;
   lastVisible: boolean | null;
+  /** 那一排菱形，以及上一次画到第几颗。没有这一排的条目是 null。 */
+  levels: HTMLElement | null;
+  lastLevel: number;
 };
 
 type ActiveTimedEffect = HudTimedEffect & {
@@ -40,12 +47,27 @@ export interface HudTimedEffect {
 /** 冷却进度写进 CSS 前量化到多少档。见 updateEntry。 */
 const COOLDOWN_STEPS = 128;
 
+/**
+ * 这一栏里摆的是**不用玩家按的招**：自动攻击技，自动发射技，以及一直生效的护身技。
+ *
+ * 顺序就是屏幕上从左到右的顺序，而且是有讲究的 —— 前面几个各自有冷却、会一格一格暗下去又
+ * 亮回来，最后那个护身技**永远是亮的**（它没有冷却，见 skills.ts）。一排会动的东西末尾压一个
+ * 不动的，正好是这一栏和右边药效那一栏之间的分界。
+ *
+ * 每个角色只会亮其中几个：自动攻击技一人一个，发射技要抽到才有，护身技也是。空的条目直接
+ * 收起来（setSkillState 的 visible），所以这一栏的长度就是"我这一局堆了多少被动输出"。
+ */
 export const HUD_COOLDOWN_SKILLS: readonly CooldownEntryDefinition[] = [
   { id: 'sweep', icon: skill01Url, label: 'skillSweep' },
   { id: 'spin', icon: skill09Url, label: 'skillSpin' },
   { id: 'wave', icon: skill03Url, label: 'skillWave' },
   { id: 'heavenSplit', icon: skill05Url, label: 'skillHeavenSplit' },
   { id: 'skyArrow', icon: skill08Url, label: 'skillSkyArrow' },
+  // 护身技摆最后，一人一张，抽到之后就一直亮着。
+  { id: 'ironBody', icon: skill06Url, label: 'skillIronBody' },
+  { id: 'bulwark', icon: skill06Url, label: 'skillBulwark' },
+  { id: 'keenEdge', icon: skill02Url, label: 'skillKeenEdge' },
+  { id: 'swiftStrike', icon: skill04Url, label: 'skillSwiftStrike' },
 ];
 
 /** 左下角的动态技能与药效 CD 汇总面板。 */
@@ -78,9 +100,14 @@ export class HudCooldownPanel {
     }
   }
 
-  setSkillState(id: SkillId, visible: boolean, remaining: number, duration: number): void {
+  setSkillState(id: SkillId, visible: boolean, remaining: number, duration: number, level = 1): void {
     const view = this.skillViews.get(id);
     if (!view) return;
+    // 那一排菱形。只在变了的时候重画 —— 这个方法每帧被调五次，而等级一局只涨三十来次。
+    if (view.levels && level !== view.lastLevel) {
+      view.lastLevel = level;
+      view.levels.replaceChildren(...createHudSkillLevel(level, SKILL_MAX_LEVEL).childNodes);
+    }
     if (view.lastVisible !== visible) {
       view.lastVisible = visible;
       view.root.hidden = !visible;
@@ -139,11 +166,16 @@ export class HudCooldownPanel {
     name.className = 'hud-text hud-text--pixel hud-cooldown-entry-name';
     name.textContent = label;
     root.append(icon, mask, value, name);
+    let levels: HTMLElement | null = null;
     if (showLevel) {
       root.classList.add('hud-cooldown-entry--skill');
-      root.appendChild(createHudSkillLevel(undefined, undefined, 'hud-cooldown-entry-levels'));
+      levels = createHudSkillLevel(1, SKILL_MAX_LEVEL, 'hud-cooldown-entry-levels');
+      root.appendChild(levels);
     }
-    return { root, value, lastValue: '', lastStep: -1, lastActive: false, lastVisible: null };
+    return {
+      root, value, lastValue: '', lastStep: -1, lastActive: false, lastVisible: null,
+      levels, lastLevel: -1,
+    };
   }
 
   private updateEntry(view: CooldownEntryView, remaining: number, duration: number): boolean {

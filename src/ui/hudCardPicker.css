@@ -174,7 +174,16 @@
   animation-delay: 120ms;
 }
 
+/*
+ * 选完那一刻这一层就**不再吃点击**了，尽管它还要再淡出 200 毫秒。
+ *
+ * 这是一个真实的 bug：这一层是 inset: 0 加 pointer-events: auto，铺满整屏。选完牌之后玩家
+ * 通常立刻按住左键接着走，而那一下 mousedown 落在这块还没消失的幕布上，根本到不了画布 ——
+ * Controls 的 moving 只在**画布**收到 mousedown 时才立起来，于是人按着不动，直到松手再按
+ * 一次。按得快就中招，按得慢就没事，表现正是"有一定概率点不动"。
+ */
 .hud-card-picker[data-phase='out'] {
+  pointer-events: none;
   animation: hud-card-scrim-out 200ms ease-in both;
 }
 

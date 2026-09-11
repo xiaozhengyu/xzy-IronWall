@@ -5,13 +5,19 @@ import { Battle, HUMAN_PACE, PLAYER_RUN_SPEED, PLAYER_SPEED, PlayerPresets, play
 import { Character } from './game/character';
 import { ImpactEffects } from './effects/impact';
 import { skillById } from './game/skills';
-import { GameMaps, type GameMapDef } from './game/maps';
-import { Roster, heroUnitDef, type HeroDef } from './game/roster';
+import { GameMaps, type GameMapDef } from './data/maps';
+import { Heroes } from './data/heroes';
+import type { HeroDef } from './data/types';
+import { SKILL_MAX_LEVEL, expToNextLevel } from './data/balance';
+import { unitAppearance } from './characters/unitDef';
+import { Profile } from './game/profile';
+import { gemsPerCard, resolveHeroStats } from './game/stats';
 import { Skills } from './game/skills';
-import { ACTIVE_SKILL_CODES, type ActiveSkillSlot } from './game/skillLoadout';
+import { ACTIVE_SKILL_CODES, SPRINT_SKILL, type ActiveSkillSlot } from './game/skillLoadout';
 import { Field } from './game/field';
 import { ItemCatalog } from './items/catalog';
 import { ItemSheet } from './items/renderer';
+import { loadPickupTextures } from './items/pickupIcons';
 import { clamp, v2 } from './core/math';
 import { Camera } from './render/camera';
 import type { MapView, StageFigure } from './render/scene';
@@ -66,6 +72,15 @@ let state: GameState = 'loading';
 function frozen(): boolean {
   return state === 'interlude' || state === 'result' || state === 'paused';
 }
+
+/**
+ * 存档。金币、每个角色各自的等级与经验、已经解锁的主动技都在这里面。
+ *
+ * 在最上面建：备战界面一开屏就要读它（列表上每个角色后面那个 Lv、右下角那行金币），而那
+ * 发生在地面烘完的那一刻。读不出来就是一份全新的存档，不报错也不弹窗 —— 存档丢了最多从头
+ * 练，而一个打不开的游戏比一份空存档糟得多。
+ */
+const profile = Profile.load();
 
 /** 场地：正方形，边长 1200 个世界单位 —— 一个人 19 单位高，所以是六十三个人宽。 */
 const FIELD_W = 1200;
@@ -222,7 +237,7 @@ for (let i = 0; i < Field.BAKE_SLICES; i++) {
   bootDone += 1;
 }
 
-/**
+/**3
  * 每张地图一块地，用到才建。
  *
  * 建一块要生成地形（几十毫秒）再把底图整片烘出来（又几十毫秒），还占一张几百 KB 的
@@ -256,6 +271,9 @@ await boot('加载物品贴图');
 // false，图鉴里显示一行提示，别的什么都不受影响。
 const itemSheet = new ItemSheet();
 await itemSheet.load();
+// 药和符的图标。地上那一件和快捷栏那一格用的是同一张，这里一次性加载好 ——
+// 取图得走 Assets.load，Pixi 的 Texture.from 只认缓存里的 id，不是加载器。
+await loadPickupTextures();
 bootDone += SHEET_WEIGHT;
 
 const battle = new Battle(field);
@@ -401,7 +419,7 @@ function onKeyPressed(code: string): void {
   // 卡牌弹着的时候数字键先归它，不然选牌会顺手把药喝了。
   if (hud.cards.open && digit >= 1 && hud.cards.choose(digit - 1)) return;
   if (state === 'playing' && digit >= 1 && digit <= 4) {
-    hud.useItem(digit - 1);
+    hud.useItem(digit - 1, (slot) => battle.useItemAt(slot));
   } else if (state === 'paused' && digit >= 1 && digit <= PlayerPresets.length) {
     // 调试用的那一排形象。正经的选人在备战界面里（见 ui/setup.ts），这里能翻到八个全部
     // 预设，包括杂兵和弓手这些本来就不给玩家选的。
@@ -470,13 +488,24 @@ function layout(): void {
   camera.follow(battle.player.x, battle.player.y, field.width, field.height);
 }
 
+/**
+ * 四个主动键位这一帧按着没有。数组复用，别长期持有。
+ *
+ * 目前只有 R 那一格（疾走）会去读它。跑步以前是按住 Shift，那条路已经拆了 —— 跑步现在是
+ * 一个要花蓝的技能，和别的主动技走同一套键位和同一份预算。
+ */
+const heldSlots = [false, false, false, false];
+
 /** 把这一帧的输入翻译成"玩家想干什么"。 */
 function readInput() {
   const player = battle.player;
+  for (let i = 0; i < ACTIVE_SKILL_CODES.length; i++) {
+    heldSlots[i] = controls.held(ACTIVE_SKILL_CODES[i]);
+  }
   return {
     facing: camera.aimAngle(player.x, player.y, controls.cursor.x, controls.cursor.y),
     moving: controls.moving,
-    running: controls.running,
+    heldSlots,
   };
 }
 
@@ -537,8 +566,34 @@ function summaryStats(): SummaryStats {
     waves: wave.waves,
     cleared: wave.cleared,
     defeated: battle.defeated,
+    exp: Math.floor(battle.earnedExp),
+    level: profile.level(battle.heroId),
+    levelUp: lastLevelUp,
   };
 }
+
+/**
+ * 把这一局的收获结进存档：金币进家底，经验进这个角色的等级。
+ *
+ * 只在一局**真正结束**的时候调一次（endRun），临时结算不调 —— 那一块的出口是"继续游戏"，
+ * 这一局还没完。而且它是幂等的：settled 立起来之后再调不会重复入账，因为最终结算那一步可能
+ * 被别处再触发一次（玩家倒下和主动结束会走到同一个地方）。
+ *
+ * 灵石不入账。它是一局之内的东西 —— 收满一轮弹一次三选一，打完就清零，这是它和金币唯一也是
+ * 全部的区别。
+ */
+let settled = false;
+
+function settleRun(): void {
+  if (settled) return;
+  settled = true;
+  profile.addCoins(battle.collectedCoins);
+  const result = profile.addExp(battle.heroId, battle.earnedExp);
+  if (result.levels > 0) lastLevelUp = result.level;
+}
+
+/** 这一局升到了几级。结算画面上要写一句，没升级就是 0。 */
+let lastLevelUp = 0;
 
 /** ESC 或者 HUD 上的暂停按钮：把世界停住，弹临时结算。 */
 function openInterlude(): void {
@@ -563,6 +618,8 @@ function openDebugMenu(): void {
 function endRun(): void {
   if (state === 'result') return;
   state = 'result';
+  // 先结账再显示：结算画面上那几行要写升到了几级、家底变成多少。
+  settleRun();
   controls.pause();
   menu.hide();
   showItems = false;
@@ -578,6 +635,8 @@ function endRun(): void {
  * 一起换掉。这里只负责把界面切回去，让备战界面重新长出来。
  */
 function returnToSetup(): void {
+  settled = false;
+  lastLevelUp = 0;
   summary.hide();
   menu.hide();
   hud.setVisible(false);
@@ -642,7 +701,7 @@ const PREVIEW_TURN = 0.38;
  * 光标只会互相打架；而且选人这件事本来就该是"他自己演给你看"，不是"你先学会怎么操作他"。
  */
 const preview = {
-  actor: new Character(heroUnitDef(Roster[0]), PALETTE_HERO, HUMAN_PACE),
+  actor: new Character(unitAppearance(Heroes[0].appearance), PALETTE_HERO, HUMAN_PACE),
   /** 这一台自己的冲击弧。和战斗那套 ImpactEffects 是同一份代码，只是活在台子的局部坐标里。 */
   effects: new ImpactEffects(),
   beat: 0,
@@ -681,10 +740,9 @@ const PREVIEW_SWAY = 0.5;
  * 这是选人界面唯一能把"这个人打起来什么样"说清楚的地方，三个人放同一道弧就白放了。
  */
 function spawnPreviewSkill(): void {
-  const attack = setup.currentHero.skills
-    .map((id) => skillById(id))
-    .find((skill) => skill.category === 'attack');
-  const shape: StageSkillShape = attack?.id === 'spin' ? 'ring' : attack?.id === 'wave' ? 'wave' : 'fan';
+  // 自动攻击技现在直接写在角色表上（每个角色只有一个），不用再从一串技能里挑出来。
+  const attack = skillById(setup.currentHero.attackSkill);
+  const shape: StageSkillShape = attack.id === 'spin' ? 'ring' : attack.id === 'wave' ? 'wave' : 'fan';
   spawnStageSkill(preview.effects, preview.actor, shape, STAGE_TILE_RADIUS * HERO_TILE_ZOOM);
 }
 
@@ -748,7 +806,10 @@ function heroStageFigure(): StageFigure {
   return {
     actor: preview.actor,
     at: stageAnchor(),
+    // 骑马的角色**人**缩一档（否则头顶出台子的上沿），**地块不缩** —— 四个角色点过去，
+    // 脚下那块地必须是同一个大小，忽大忽小读作界面在跳。
     grain: preview.actor.def.mounted ? HERO_GRAIN * MOUNTED_STAGE_SHRINK : HERO_GRAIN,
+    tileGrain: HERO_GRAIN,
     scrollX: preview.scrollX,
     scrollY: preview.scrollY,
     tileScale: HERO_TILE_ZOOM,
@@ -851,7 +912,7 @@ function foeStageFigures(): StageFigure[] {
 
 /** 一个角色的头像。列表和底栏都要，画一次存着，见 SetupScreen.portraitOf。 */
 function heroPortrait(hero: HeroDef): HTMLCanvasElement | null {
-  const model = new Character(heroUnitDef(hero), PALETTE_HERO, HUMAN_PACE);
+  const model = new Character(unitAppearance(hero.appearance), PALETTE_HERO, HUMAN_PACE);
   model.facing = Math.PI * 0.5 + PREVIEW_TURN;
   // 走几帧把姿势搭出来 —— 没跑过 update 的骨架是一堆零。
   for (let i = 0; i < 20; i++) model.update(1 / 60, true);
@@ -1040,10 +1101,15 @@ function mapPinsOf(map: GameMapDef, rect: { w: number; h: number }): MapPin[] {
   return pins;
 }
 
-/** 换角色：形象 + 那一套默认技能。数值还没有，所以只有这两样。 */
+/**
+ * 换角色：形象、属性、技能一起换。
+ *
+ * 三样都从存档里取那一份 —— 等级决定属性长到哪儿，已解锁的技能决定他能带哪几招。没解锁的
+ * 装不上，那正是"主动技能要在游戏里获得"这条规则落地的地方。
+ */
 function applyHero(hero: HeroDef): void {
-  battle.setPreset(hero.preset);
-  battle.skillLoadout.apply(hero.skills);
+  const entry = profile.progress(hero.id);
+  battle.setHero(hero, entry.level, entry.exp);
 }
 
 /**
@@ -1057,6 +1123,11 @@ function applyHero(hero: HeroDef): void {
  */
 function applyMap(map: GameMapDef): void {
   battle.setSpawnTemplate(map.template);
+  // 这张图对敌人的加成。同一个持盾兵在隘口比在荒原更推不动，靠的就是这一行。
+  battle.setMapModifier(map.modifier);
+  // 攒多少灵石弹一次三选一，按这张图自己的出兵表倒推 —— 波数少、出兵少的图门槛更低，
+  // 不然那张图上的技能永远练不满。见 game/stats.ts 的 gemsPerCard。
+  hud.setGemsPerCycle(gemsPerCard(map.template));
   showField(map);
   battle.setField(field);
   camera.follow(battle.player.x, battle.player.y, field.width, field.height);
@@ -1073,8 +1144,11 @@ function enterMap(hero: HeroDef, map: GameMapDef, weather: WeatherKind): void {
   state = 'entering';
   requestAnimationFrame(() =>
     setTimeout(() => {
+      settled = false;
+      lastLevelUp = 0;
       applyHero(hero);
       applyMap(map);
+      profile.remember(hero.id, map.id);
       // 天气用备战界面上选的那一档，不是地图自己写的默认值 —— 玩家刚在右栏点过，
       // 而且地图预览已经按那一档重烘过了，进去再换回来会是"我选的没作数"。
       //
@@ -1111,12 +1185,30 @@ const summary = new SummaryScreen({
 
 const setup = new SetupScreen(
   {
-    heroes: Roster,
+    heroes: [...Heroes],
+    /**
+     * 备战界面要读的存档。全是读，一个写都没有 —— 升级和收钱发生在一局结束的时候
+     * （settleRun），花钱以后发生在商店里。
+     */
+    progress: {
+      coins: () => profile.coins,
+      level: (hero) => profile.level(hero.id),
+      exp: (hero) => {
+        const entry = profile.progress(hero.id);
+        const need = expToNextLevel(entry.level);
+        // 满级时 expToNextLevel 给 Infinity，进度条画成满格。
+        return Number.isFinite(need) ? { have: entry.exp, need } : { have: 1, need: 1 };
+      },
+      stats: (hero) => resolveHeroStats(hero, profile.level(hero.id)),
+      // 技能条上摆的是**开局手里的那两张**：这个角色的自动攻击技，和钉在 R 上的疾走。
+      // 别的招都要进去之后抽牌拿，摆在选人界面上会让人以为带着就能上场。
+      skills: (hero) => [hero.attackSkill, SPRINT_SKILL],
+    },
     maps: GameMaps,
     portrait: heroPortrait,
     mapImage: mapCanvas,
     onHeroChange: (hero) => {
-      preview.actor.def = heroUnitDef(hero);
+      preview.actor.def = unitAppearance(hero.appearance);
       // 换人从头演一遍：不重置的话新角色可能正好接在"放招"那一拍上，一上来就抡一下。
       preview.beat = 0;
       preview.clock = 0;
@@ -1143,6 +1235,14 @@ const setup = new SetupScreen(
       drawSetupScreen(0);
     },
     onStart: enterMap,
+    /*
+     * 商店。模块还没有，这里只把口子留好。
+     *
+     * 接上的时候要动的就是这一个函数：弹出商店界面，货架从 profile.lockedSkills(heroId)
+     * 和以后的属性表出，付钱走 profile.spendCoins，买到的技能走 profile.unlock。那三样
+     * 在 game/profile.ts 上已经是现成的了。
+     */
+    onShop: () => setup.notice('商店还没有开张。金币先攒着 —— 它是这一局打完唯一带得走的东西。'),
   },
   menu.text,
 );
@@ -1226,5 +1326,27 @@ draw();
 // 除了多一次点击什么也没给。"铁壁"这块招牌搬到了备战界面的顶栏上。
 state = 'setup';
 menu.hide();
+/**
+ * 灵石收满弹出的三选一，接上结算。三种牌，**全都只在这一局有效**：
+ *
+ *   属性牌   基础属性上加一份百分比：攻击力、攻击频率、拾取范围这一类。
+ *   获取牌   拿到一招还没有的技能 —— 主动技、发射技、这个角色的护身技。
+ *   升级牌   把一个已经在用的招升一级。
+ *
+ * 一局是从"一个自动攻击技 + R 上的靴子"开始的，一套配置就是这样一张一张堆出来的。跨局带得
+ * 走的只有金币和角色等级，那两样在存档里；这一局堆出来的强度打完就没，和灵石一样。
+ */
+hud.cards.connect({
+  obtainableSkills: () => battle.obtainableSkills(),
+  upgradableSkills: () => battle.upgradableSkills().map((id) => ({
+    id,
+    level: battle.skillLevel(id),
+    max: SKILL_MAX_LEVEL,
+  })),
+  onStatCard: (bonus) => battle.addRunBonus(bonus),
+  onObtainSkill: (skill) => battle.obtainSkill(skill),
+  onUpgradeSkill: (skill) => battle.upgradeSkill(skill),
+});
+
 hud.setVisible(false);
 setup.show();

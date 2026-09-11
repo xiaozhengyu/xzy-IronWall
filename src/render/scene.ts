@@ -15,6 +15,7 @@ import { enemyArrowPosition, type Battle } from '../game/battle';
 import type { Field } from '../game/field';
 import type { ItemDef } from '../items/itemDef';
 import type { ItemSheet } from '../items/renderer';
+import { pickupTexture } from '../items/pickupIcons';
 import { v2, type Vec2 } from '../core/math';
 import { rgb, rgba } from './color';
 import type { Camera } from './camera';
@@ -52,6 +53,13 @@ export interface StageFigure {
   scrollY: number;
   /** 只放大地块，不动人。不给就是 1。 */
   tileScale?: number;
+  /**
+   * 地块自己的颗粒度。不给就跟着人走。
+   *
+   * 只有骑马的角色会用到：人要缩小才装得进台子，而地块不缩 —— 一排角色点过去，脚下那块地
+   * 的大小必须是恒定的。见 figureStage.ts 的 drawFigureStage。
+   */
+  tileGrain?: number;
   /** 这一台自己的冲击弧。演示放招时才有。 */
   effects?: ImpactEffects | null;
 }
@@ -167,6 +175,20 @@ export class Scene {
   private readonly itemSprites: Sprite[] = [];
 
   /**
+   * 地上那些药和符的贴图。
+   *
+   * 和图鉴那一层是两码事，所以两个容器：图鉴是一屏静态网格，这一层每帧跟着掉落物动。
+   *
+   * **它压在图元那一批之上**，也就是说药和符永远画在人和树的前面。这是有意的，不是偷懒：
+   * 屏幕上随时站着几百个人，一件躺在草地上的药只有几个像素高，参与深度排序的话十有八九被
+   * 一条腿盖住 —— 而捡不到的掉落等于没掉。脚下那圈光环是**参与**排序的（在 Collectibles
+   * 里用图元画的），所以"它在地上哪个位置"仍然是对的，只有图标本身浮上来。
+   */
+  private readonly pickupLayer = new Container();
+  private readonly pickupSprites: Sprite[] = [];
+
+
+  /**
    * 地面精灵和地图预览共用的一层。
    *
    * 单独裹一个容器是为了**遮罩**：选图那一步要把真实地图画在界面上那个框里，而画布是整块的，
@@ -210,7 +232,7 @@ export class Scene {
     this.camera = camera;
     this.surface = new PixelSurface(renderer, camera.magnify);
     this.itemLayer.visible = false;
-    this.surface.units.addChild(this.prim.mesh, this.itemLayer);
+    this.surface.units.addChild(this.prim.mesh, this.itemLayer, this.pickupLayer);
     this.worldGround.addChild(this.mapPrim.mesh);
     // 遮罩本体要挂在显示树上（Pixi 要靠它算变换），但它不会被画到颜色缓冲里 —— 被当成
     // 遮罩用的对象自动排除在正常绘制之外。所以这里**不能**把它设成 visible = false：那样
@@ -302,6 +324,8 @@ export class Scene {
       { width: this.surface.width, height: this.surface.height },
     );
 
+    this.drawPickupIcons(battle);
+
     // 按**矩形**剔除，不是圆。
     //
     // 屏幕是矩形，而以视口对角线为半径的圆比它大一倍 —— 人堆密起来的时候，画出去的人里有
@@ -324,9 +348,24 @@ export class Scene {
     if (dharma) {
       drawDharmaAspect(shapes, battle.player, playerAt, grain, dharma.left, dharma.total);
     }
+    /*
+     * 玩家身上那层光，两个来源走同一条路（drawCharacterAt 的最后一个参数）：
+     *
+     *   铁布衫   一直带着，两秒一个来回地呼吸。它说的是"我身上有这个护身技"。
+     *   刚用了药 按下去的那零点四秒，从满亮迅速退回去。它说的是"我刚才按了一下"。
+     *
+     * 用药那一下**压过**呼吸，而且取的是它自己那条快速衰减的曲线 —— 两者叠加的话，正好赶上
+     * 呼吸的低谷时用药就几乎看不出来，而那一下恰恰是最需要被看见的。
+     */
     const ironBody = battle.skillLoadout.isEquipped('ironBody');
     const ironBreath = 0.5 + 0.5 * Math.sin((battle.elapsed * Math.PI * 2) / 2.1);
-    this.drawCharacterAt(battle.player, true, battle.dashing, ironBody ? ironBreath : null);
+    // 乘到 1 以上：提亮那条公式是 0.1 + v × 0.16，v 顶到 1 只有 0.26，和铁布衫的峰值一样亮 ——
+    // 那就等于"用了药和站着不动长得一样"。2.2 把它推到 0.45，明显是另一档。
+    const itemFlash = battle.itemFlash > 0
+      ? Math.min(1, battle.itemFlash / 0.62) * 2.2
+      : null;
+    const glow = itemFlash ?? (ironBody ? ironBreath : null);
+    this.drawCharacterAt(battle.player, true, battle.dashing, glow);
 
     this.drawEnemyArrows(battle, camX, camY, rootX, rootY, grain);
 
@@ -465,6 +504,7 @@ export class Scene {
         stage.scrollY,
         stage.tileScale,
         stage.effects ?? null,
+        stage.tileGrain,
       );
     }
     this.primitives = shapes.primitiveCount;
@@ -599,6 +639,48 @@ export class Scene {
   private setGroundVisible(field: Field, on: boolean): void {
     field.ground.sprite.visible = on;
     field.ground.shadowSprite.visible = on;
+  }
+
+  /**
+   * 把这一帧地上的药和符贴上去。
+   *
+   * 位置和大小全部来自 Collectibles 那一遍（iconDrops）—— 那边已经按同一份悬浮高度和同一个
+   * 投影算过了，这里再算一次迟早会差出半个像素，那时图标就和它脚下的描边分家了。
+   *
+   * 精灵留着复用、多出来的藏起来：一局里这个数在零和几百之间来回跳，反复 new 和 destroy 比
+   * 画它们本身贵得多。
+   */
+  private drawPickupIcons(battle: Battle): void {
+    const drops = battle.collectibles.iconDrops;
+    let shown = 0;
+    for (let i = 0; i < drops.length; i++) {
+      const drop = drops[i];
+      const texture = pickupTexture(drop.id);
+      // 图还没加载好就不画图标。脚下那圈光环是图元画的，照旧在，所以玩家仍然看得见这儿有
+      // 东西、也照样捡得起来。
+      if (!texture) continue;
+      const sprite = this.pickupSpriteAt(shown++);
+      if (sprite.texture !== texture) sprite.texture = texture;
+      sprite.position.set(Math.round(drop.x), Math.round(drop.y));
+      sprite.width = drop.size;
+      sprite.height = drop.size;
+      sprite.visible = true;
+    }
+    for (let i = shown; i < this.pickupSprites.length; i++) {
+      this.pickupSprites[i].visible = false;
+    }
+    this.pickupLayer.visible = shown > 0;
+  }
+
+  private pickupSpriteAt(i: number): Sprite {
+    let sprite = this.pickupSprites[i];
+    if (!sprite) {
+      sprite = new Sprite();
+      sprite.anchor.set(0.5);
+      this.pickupSprites.push(sprite);
+      this.pickupLayer.addChild(sprite);
+    }
+    return sprite;
   }
 
   /** 第 i 个图鉴精灵，不够就补一个。 */
@@ -894,7 +976,9 @@ export class Scene {
     const p = new Projector(at, c.facing, Projection.groundSquash, grain);
     const palette = ironBreath === null
       ? c.palette
-      : brightenPalette(c.palette, 0.1 + ironBreath * 0.16, IRON_BODY_GLOW);
+      // 夹在 0.55：再往上整个人就白成一片，轮廓和武器都读不出来了。铁布衫的峰值是 0.26，
+      // 用药那一下是 0.45，两者都在这条线以下 —— 夹一下只是不让以后新的来源越界。
+      : brightenPalette(c.palette, Math.min(0.55, 0.1 + ironBreath * 0.16), IRON_BODY_GLOW);
     // rim 只有玩家会传，所以这一条同时也是"玩家不降档"。
     drawCharacter(this.shapes, c.pose, p, palette, c.def, {
       hurt: c.hurt,
@@ -928,7 +1012,10 @@ export class Scene {
     const palette = hot
       ? HERO_DASH_PALETTE
       : iron
-        ? flatPalette(rgba(255, 245, 198, Math.round(218 + ironBreath * 37)))
+        // 夹住 255：用药那一下传进来的值会超过 1（见上面 itemFlash 那段），而 alpha 一旦越界，
+        // 离线那套光栅化会把混合系数算成大于 1，颜色直接绕回去。浏览器里 Pixi 会自己夹，但
+        // 一个值在两条渲染路径上表现不一样，迟早要在别处咬人。
+        ? flatPalette(rgba(255, 245, 198, Math.min(255, Math.round(218 + ironBreath * 37))))
         : HERO_RIM_PALETTE;
     // 压在自己身后半个屏幕行。再深就会被身后那一排人盖住，再浅就会盖住自己的腿。
     const depthRow = at.y - 0.5;

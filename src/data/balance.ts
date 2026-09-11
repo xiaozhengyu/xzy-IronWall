@@ -1,0 +1,289 @@
+/**
+ * 全局曲线和公式常量：等级、经验、波次成长、伤害、掉落。
+ *
+ * 单独一个文件，因为这里每一个数都不属于任何一个具体的角色、兵种或地图 —— 它们是这四张表
+ * 之间的**换算关系**。调一个角色的攻击力只影响那个角色，调这里的 DEFENSE_SCALE 会同时改变
+ * 场上每一次伤害结算。所以它们不该混在一起。
+ */
+
+import type { StatBonus, StatGrowth, UnitStats } from './types';
+
+// ---------------------------------------------------------------- 等级与经验
+
+/**
+ * 等级上限。
+ *
+ * 三十级而不是无限：成长表是**绝对增量**的直线（见 StatGrowth），没有上限的直线迟早会让
+ * 移动速度超过冲刺、攻击范围盖满半个屏幕。有上限，满级是多少一眼能算出来。
+ */
+export const MAX_LEVEL = 30;
+
+/**
+ * 从第 level 级升到下一级需要多少经验。
+ *
+ * 平方曲线，不是指数：指数曲线的末段会陡到只能靠数值膨胀去填，而平方的增速一直是可算的 ——
+ * 升到 10 级要 8,250 点，升到 30 级要 855,500 点，正好是一百倍的关系。
+ *
+ * 参照系是一局的产出：满配那一局玩家每秒杀四十来个，二十二分钟下来三万上下的击杀，按杂兵
+ * 一点经验算就是三万点。所以**一整局大约推到十级**，往后每一级都得靠多打几局，这正是等级
+ * 该有的节奏 —— 第一局就满级的话，后面所有局的成长都没有了。
+ */
+export const expToNextLevel = (level: number): number => {
+  if (level >= MAX_LEVEL) return Infinity;
+  return 100 * level * level;
+};
+
+// ---------------------------------------------------------------- 伤害
+
+/**
+ * 防御的递减系数：防御 d 挡掉 d / (d + DEFENSE_SCALE) 的伤害。
+ *
+ * 用递减而不是"攻减防"：减法在两端都会出事 —— 防御高过攻击就完全免疫，防御低的时候一点
+ * 防御又毫无感觉。递减公式里每一点防御都有用，而且永远挡不满。
+ *
+ * 100 这个量级是按玩家的攻击力定的（一级武将 120）：杂兵 4 点防御只挡掉 3.8%，一刀照样
+ * 秒；持盾兵 16 点挡掉 13.8%，能看出"这个人硬"；末波的枪骑兵四十多点挡掉三成，得补第二刀。
+ */
+export const DEFENSE_SCALE = 100;
+
+export const damageAfterDefense = (attack: number, defense: number): number =>
+  attack * (1 - defense / (defense + DEFENSE_SCALE));
+
+/**
+ * 技能相对平砍的伤害倍率。
+ *
+ * skills.ts 的 power 字段本来只管"打中时溅多少碎片"（1 = 只飙血，2 = 血加甲片），那是画面
+ * 上平砍和技能唯一的区别。现在它同时当伤害倍率用：power 每高一档，伤害乘一次这个数。两件
+ * 事共用一个字段是有意的 —— 看着更狠的那一下本来就该更疼，分成两个字段迟早会调出"画面很
+ * 炸但不疼"的招。
+ */
+export const SKILL_DAMAGE_PER_POWER = 2.2;
+
+/** 暴击。技能更容易出，让大招偶尔炸出一个特别烫的数。 */
+export const CRIT_CHANCE_BASIC = 0.09;
+export const CRIT_CHANCE_SKILL = 0.18;
+export const CRIT_MULTIPLIER = 2.4;
+
+/** 每一下的随机浮动，±12%。完全固定的伤害数字看久了像是假的。 */
+export const DAMAGE_VARIANCE = 0.12;
+
+/** 伤害的下限。防御再高也得掉一点血，否则会出现打不动的怪。 */
+export const MIN_DAMAGE = 1;
+
+// ---------------------------------------------------------------- 波次成长
+
+/**
+ * 波次曲线：第 n 波的敌人比第一波强多少。
+ *
+ * 全是"每多一波再加这么多"的线性增量，乘在兵种的基础属性上。
+ *
+ * **速度那一条压得特别低，而且另有一条硬上限。** 敌人的追击速度是这个工程里唯一一个不能
+ * 随便涨的数：driveEnemies 在远距离还会乘 1.8 的追击倍率，而整套走位设计建立在"走路甩不掉、
+ * 冲刺能甩掉"上（见 battle.ts 的 CHASE_BOOST）。波次再把速度乘上去，末波的骑兵会追过玩家
+ * 的冲刺，冲刺这张脱身牌就废了。所以速度每波只涨 1.5%，还要被 MAX_ENEMY_SPEED 夹住。
+ */
+export const WAVE_HP_PER_WAVE = 0.34;
+export const WAVE_ATTACK_PER_WAVE = 0.18;
+export const WAVE_DEFENSE_PER_WAVE = 0.22;
+export const WAVE_SPEED_PER_WAVE = 0.015;
+export const WAVE_ATTACK_SPEED_PER_WAVE = 0.03;
+
+/**
+ * 敌人移动速度的硬上限，世界单位每秒。
+ *
+ * 这条上限是**防止波次和地图把速度堆上去**，不是给速度定一个理想值 —— 36 就是场上本来最快
+ * 的那个兵（骑射 35）再留一点点余量。换句话说：练到末波、在赤沙荒原上，敌人也不会比这个
+ * 游戏一直以来最快的那个人更快。
+ *
+ * 为什么偏偏是速度要有这么一道闸：driveEnemies 在远距离还会乘 1.8 的追击倍率，而整套走位
+ * 设计建立在"走路甩不掉、冲刺能甩掉"上（见 battle.ts 的 CHASE_BOOST）。36 × 1.8 = 64.8，
+ * 和基准角色的冲刺 60 是同一个量级 —— 骑射能吊着玩家跑，但他停在八十多个单位外放箭，本来
+ * 也不追上来。真要让后面几波更难缠，该加的是血和防御，不是速度。
+ */
+export const MAX_ENEMY_SPEED = 36;
+
+/** 经验：波次越高，同一个兵给的经验越多。 */
+export const WAVE_EXP_PER_WAVE = 0.15;
+
+// ---------------------------------------------------------------- 技能等级
+
+/**
+ * 技能等级上限。
+ *
+ * 五级不是随手定的：HUD 上每个技能格底下那排菱形就是五颗（hudSkillLevel.ts），那排东西一直
+ * 在那儿，只是以前填的是写死的预览值。等级的上限得和玩家看得见的格子数一样，多一级少一级都
+ * 会让那排菱形要么填不满、要么填不下。
+ */
+export const SKILL_MAX_LEVEL = 5;
+
+/**
+ * 一套完整配置有几个技能：4 个主动（含疾走）、1 个自动攻击、2 个发射、1 个护身。
+ *
+ * 它决定"一局要抽多少次牌"，所以以后加槽位（比如主动开到五格）必须同步改这里，否则卡牌的
+ * 节奏会慢慢跟不上技能的数量。
+ */
+export const BUILD_SKILL_COUNT = 8;
+
+/**
+ * 一局开始时手上有几个技能：一个自动攻击技，加一个钉在 R 上的疾走。
+ *
+ * 剩下的六个（三个主动、两个发射、一个护身）都要靠抽牌拿，所以"抽满一套"要算上这六张
+ * "获取"牌，不只是升级那部分。
+ */
+export const BUILD_SKILL_STARTING = 2;
+
+/**
+ * 把一整套配置堆齐并顶满，一共要抽多少次牌。
+ *
+ * 两笔账：先把缺的六个技能一张一张抽到手，再把八个技能各从 1 级升到 5 级。
+ */
+export const CARD_PICKS_FOR_FULL_BUILD =
+  (BUILD_SKILL_COUNT - BUILD_SKILL_STARTING) + BUILD_SKILL_COUNT * (SKILL_MAX_LEVEL - 1);
+
+/**
+ * 满级该提前几波达成。
+ *
+ * 2 = 倒数第三波打完的时候就该顶满。留出这一段是有意的：最后两波是**用满配打**的，那是一局
+ * 的高潮；如果满级正好落在最后一帧，玩家从来没机会用上自己攒了二十分钟的那套东西。
+ */
+export const FULL_BUILD_WAVES_EARLY = 2;
+
+/**
+ * 每升一级：作用距离 +10%，法力开销 -8%。
+ *
+ * 只动这两项是定下来的（升级不改冷却、不改动作时长）—— 那两个改的是节奏，而一招的节奏是它
+ * 的身份。满级（5 级）就是范围 +40%、开销 -32%。
+ */
+/**
+ * 一份出兵预算换算成多少颗**收到手里**的灵石。
+ *
+ * 出兵预算是纯数据（每波的爆兵加密度乘时长，见 data/waves.ts 的 spawnsThroughWave），而实际
+ * 收到多少灵石取决于一堆跑起来才知道的事：场上人数上限、走出画面的回收、掉落物本身有 1800
+ * 个的上限、以及玩家的拾取范围。所以这个系数是**离线空跑量出来的**，不是推的。
+ *
+ * 量法：无敌的玩家一直走位、开自动攻击，把四张图各空跑完整一局，记下每一波打完时收到的灵石
+ * （tools 之外的一次性脚本）。结果在"满配那一波"上高度一致：
+ *
+ *   演武荒原 第 6 波打完  预算 21400  灵石 23907  比值 1.12
+ *   黑石隘口 第 4 波打完  预算 11330  灵石 12839  比值 1.13
+ *
+ * 比值大于 1 是对的：预算只数出兵那条路放出来的人，而从画面外走进来的那一批（跑步机的回收
+ * 与恢复）不经过出兵，却照样会被杀、照样掉灵石。
+ *
+ * 它在前几波更高（1.5 上下）、后几波更低（0.88）—— 因为后期出兵量涨得比玩家的清场速度快。
+ * 取的是**满配那一波**上的值，因为卡牌节奏就是照着那一刻定的。
+ */
+export const GEMS_PER_SPAWN = 1.12;
+
+/**
+ * 第 k 张牌比第一张贵多少：门槛按 base × (1 + 0.06 × k) 往上走。
+ *
+ * 门槛要是从头到尾一个数，第一张牌会来得非常晚 —— 灵石收入本身就是往后越来越猛的（第一波
+ * 一千颗，第八波九千颗），平的门槛摊下去就是"开局一分钟只弹一次，最后两分钟连弹五次"。玩家
+ * 对"这一局在变强"的感觉恰恰是在**前几分钟**建立的。
+ *
+ * 往上走的门槛把这条曲线掰平：开局那一波能抽两三张，往后每张都更贵一点，而三十二张抽完的
+ * 时刻**一点没动**（base 是按累计值倒解出来的，见 gemsPerCard）。
+ */
+export const CARD_COST_GROWTH = 0.06;
+
+/** 抽满 picks 张牌一共要多少个 base。∑(1 + growth × k)，k 从 0 到 picks-1。 */
+export const cardCostTotalUnits = (picks: number): number =>
+  picks + (CARD_COST_GROWTH * picks * (picks - 1)) / 2;
+
+/** 第 index 张牌（从 0 数起）的门槛。 */
+export const cardCost = (base: number, index: number): number =>
+  base * (1 + CARD_COST_GROWTH * Math.max(0, index));
+
+export const SKILL_LEVEL_REACH = 0.1;
+export const SKILL_LEVEL_MP_DISCOUNT = 0.08;
+
+/**
+ * 被动技能每升一级，那一包加成放大多少。满级（5 级）就是两倍。
+ *
+ * 被动没有"作用距离"也没有"法力开销"，上面那两个旋钮在它身上一个都拧不动 —— 不单给它一条，
+ * 玩家把护身技升到五级会得到一个什么都没变的技能，而它明明占着八分之一的升级预算。
+ */
+export const SKILL_LEVEL_PASSIVE = 0.25;
+
+export const skillPassiveScale = (level: number): number =>
+  1 + SKILL_LEVEL_PASSIVE * (Math.max(1, Math.min(level, SKILL_MAX_LEVEL)) - 1);
+
+export const skillReachScale = (level: number): number =>
+  1 + SKILL_LEVEL_REACH * (Math.max(1, Math.min(level, SKILL_MAX_LEVEL)) - 1);
+
+export const skillMpScale = (level: number): number =>
+  1 - SKILL_LEVEL_MP_DISCOUNT * (Math.max(1, Math.min(level, SKILL_MAX_LEVEL)) - 1);
+
+// ---------------------------------------------------------------- 掉落
+
+/**
+ * 敌人死亡掉金币的概率，剩下的都掉灵石。
+ *
+ * 1/50 是故意压低的：金币是**跨局**的货币，一局里掉几百枚的话商店那一侧的定价就没法做了。
+ */
+export const COIN_DROP_CHANCE = 1 / 50;
+
+/**
+ * 敌人掉一件药或符的概率，四种分这一份（按 data/pickups.ts 里的权重）。
+ *
+ * 1/300，比金币（1/50）低一档。先按金币那个量级试过，太多了：离线跑三分钟就有三格摞到上限
+ * 九件，之后一直在掉、一直被挡回去。快捷栏一旦长期是满的，"要不要现在按药"就不再是个决定 ——
+ * 而那正是这四格存在的全部理由。
+ *
+ * 现在的量级是二十来秒一件。一局下来一百多件，够用、又不至于溢出，每一件掉下来都还算个事。
+ */
+export const PICKUP_DROP_CHANCE = 1 / 300;
+
+// ---------------------------------------------------------------- 玩家
+
+/**
+ * 奔跑速度是走路速度的几倍。
+ *
+ * 1.875 不是随便定的：它让基准角色的 32 正好变成 60，也就是接数据层之前那两个写死的常量
+ * （PLAYER_SPEED / PLAYER_RUN_SPEED）。换句话说双锤武将一级时的手感和以前**一模一样**，
+ * 这一层加进来没有偷偷改掉基准。
+ */
+export const RUN_MULTIPLIER = 1.875;
+
+// ---------------------------------------------------------------- 组合工具
+
+/** 把成长表按等级摊进基础属性。等级 1 就是原样。 */
+export function applyGrowth(base: UnitStats, growth: StatGrowth, level: number): UnitStats {
+  const steps = Math.max(0, Math.min(level, MAX_LEVEL) - 1);
+  const out = { ...base };
+  for (const key of Object.keys(growth) as (keyof UnitStats)[]) {
+    out[key] = base[key] + (growth[key] ?? 0) * steps;
+  }
+  return out;
+}
+
+/**
+ * 把若干份乘算加成合到属性上。
+ *
+ * 同一项上的多个来源是**相加再乘一次**（1 + a + b），不是连乘 —— 连乘会让两个 +50% 变成
+ * +125%，玩家算不出自己身上到底有多少加成。
+ */
+export function applyBonuses(stats: UnitStats, ...bonuses: StatBonus[]): UnitStats {
+  const sum: StatBonus = {};
+  for (const bonus of bonuses) {
+    for (const key of Object.keys(bonus) as (keyof UnitStats)[]) {
+      sum[key] = (sum[key] ?? 0) + (bonus[key] ?? 0);
+    }
+  }
+  const out = { ...stats };
+  for (const key of Object.keys(sum) as (keyof UnitStats)[]) {
+    out[key] = stats[key] * (1 + (sum[key] ?? 0));
+  }
+  return out;
+}
+
+/** 加成表按等级摊开：bonus + perLevel × (等级 − 1)。被动技能用。 */
+export function scaleBonus(bonus: StatBonus, perLevel: StatBonus, level: number): StatBonus {
+  const steps = Math.max(0, Math.min(level, MAX_LEVEL) - 1);
+  const out: StatBonus = { ...bonus };
+  for (const key of Object.keys(perLevel) as (keyof UnitStats)[]) {
+    out[key] = (out[key] ?? 0) + (perLevel[key] ?? 0) * steps;
+  }
+  return out;
+}

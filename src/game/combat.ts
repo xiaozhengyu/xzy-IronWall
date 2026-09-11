@@ -11,7 +11,7 @@ import type { Character } from './character';
  * 敌我用的是同一个函数。玩家凭什么打中，敌人就凭什么打中，谁也不吃暗亏。
  */
 export function inAttackArc(attacker: Character, target: Character): boolean {
-  return inSector(attacker, target, attacker.def.attackRange, attacker.def.attackArc);
+  return inSector(attacker, target, attacker.stats.attackRange, attacker.stats.attackArc);
 }
 
 /**

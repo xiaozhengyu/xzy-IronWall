@@ -109,7 +109,28 @@ function bake(rows: readonly string[]): Glyph {
   return { fill, edge };
 }
 
+/**
+ * 数字前面那个符号的点阵。和十个数字**同一套烘法**（同宽同高、同样自己带描边），所以它们
+ * 并排站着时笔画粗细和基线是一样的 —— 换成别的画法，符号会立刻读作"贴上去的一个装饰"。
+ *
+ *   加号   立刻回了多少：+384 血、+41 蓝。数是绝对值。
+ *   乘号   百分比加成：×18 就是那一项乘了 1.18。加号在这里是错的 —— "+18" 会被读成回了
+ *          十八点，而符是按比例加的，差着一个数量级。
+ *
+ * 两个符号占中间五行、满五列：数字是七行高的，符号照着七行画会比数字还高一头（它没有数字
+ * 那种上下收窄的字形），而只占三行又缩成一个小点。五行正好和数字的"腰"齐平。
+ */
+const SIGN_ROWS: readonly string[][] = [
+  ['00000', '00100', '00100', '11111', '00100', '00100', '00000'], // +
+  ['00000', '10001', '01010', '00100', '01010', '10001', '00000'], // ×
+];
+
 const GLYPHS: readonly Glyph[] = DIGIT_ROWS.map(bake);
+const SIGNS: readonly Glyph[] = SIGN_ROWS.map(bake);
+
+/** 数字前面挂什么。0 = 什么都不挂（打人那些数字本来就不带符号）。 */
+export type DamageNumberSign = 'none' | 'plus' | 'times';
+const SIGN_INDEX: Record<DamageNumberSign, number> = { none: -1, plus: 0, times: 1 };
 
 /**
  * 池子容量。
@@ -159,6 +180,39 @@ const BOTTOM = rgb(255, 186, 74);
 /** 重击：同样的白起手，落到血橙。色相和常规那档拉得开，余光里就分得出轻重。 */
 const CRIT_TOP = rgb(255, 252, 244);
 const CRIT_BOTTOM = rgb(255, 96, 42);
+
+/*
+ * 回血、回蓝、上符各一套。上缘亮、下缘是色相 —— 这是这套数字一贯的画法：亮的那一头负责在
+ * 人堆里被看见，色相那一头负责说明这是什么。
+ *
+ * **回血回蓝直接取血条和蓝条的颜色**（hudPlayerPanel.css 里那两条渐变：#e14e45→#9d1819 和
+ * #278bf2→#1257b6）。先给过一版绿色的回血，错了：屏幕上没有任何别的东西是绿的，玩家看到一个
+ * 绿数字只知道"是个好事"，不知道好在哪儿。而血条就在左上角一直亮着 —— 飘出来的数和那条槽
+ * 同色，它说明什么就不用再猜了。
+ *
+ * 取的是两条渐变的**亮端**（#e14e45 / #278bf2），不是暗端。先按暗端试过一版，出图一看就废了：
+ * 那一档深红压在人堆那种偏红的底色上几乎糊没，而血条本身是贴在左上角的深色槽里才读得出来，
+ * 飘字没有那个槽。上缘再各自往白里提一档，于是这两个数在草地和人堆两种底上都跳得出来，色相
+ * 仍然是血条蓝条那两个色。
+ */
+const HEAL_TOP = rgb(255, 236, 232);
+const HEAL_BOTTOM = rgb(225, 78, 69);
+const MANA_TOP = rgb(226, 241, 255);
+const MANA_BOTTOM = rgb(39, 139, 242);
+const BUFF_TOP = rgb(255, 250, 230);
+const BUFF_BOTTOM = rgb(226, 170, 255);
+
+const STYLE_COLORS = [
+  [TOP, BOTTOM],
+  [CRIT_TOP, CRIT_BOTTOM],
+  [HEAL_TOP, HEAL_BOTTOM],
+  [MANA_TOP, MANA_BOTTOM],
+  [BUFF_TOP, BUFF_BOTTOM],
+] as const;
+
+const STYLE_INDEX: Record<DamageNumberStyle, number> = {
+  damage: 0, crit: 1, heal: 2, mana: 3, buff: 4,
+};
 /** 描边色。和 PixelSurface 那圈合成描边同一个色温，数字才像和画面烘在一起。 */
 const EDGE = rgb(24, 18, 16);
 
@@ -173,13 +227,40 @@ const DEPTH_FILL = DEPTH_EDGE + 2;
 /** 拆位用的暂存，最多六位。每帧几十个数字，不该为这个分配数组。 */
 const digits = new Int32Array(6);
 
+/**
+ * 这个数是什么颜色的。
+ *
+ * 加进来是因为用药那一下也要飘一个数，而"回了三百八十四点血"和"打掉了三百八十四点血"读起来
+ * 必须是两件事 —— 同一个橙色数字往头顶一飘，玩家第一反应是自己挨了一下。
+ */
+export type DamageNumberStyle = 'damage' | 'crit' | 'heal' | 'mana' | 'buff';
+
 export interface DamageNumberOptions {
   crit?: boolean;
+  /** 不给就按 crit 定（真 = crit，假 = damage）。 */
+  style?: DamageNumberStyle;
   /** 这个人被掀飞的去向。数字往它的反方向让开一步，见 BACK_OFF。 */
   dirX?: number;
   dirY?: number;
   /** 从多高冒出来，世界单位。默认头顶。 */
   z?: number;
+  /**
+   * 数字前面挂一个符号。
+   *
+   * 打人那些数字不挂 —— 屏幕上飘的十有八九是伤害，给它加一个"−"只是给每一个数字都加一列
+   * 噪点。挂符号的是那几种少见的：回血回蓝挂加号，百分比加成挂乘号。
+   */
+  sign?: DamageNumberSign;
+  /**
+   * 跟着玩家走。
+   *
+   * 打人那些数字是**钉在落点上**的：那一下发生在那个地方，人走开了它也该留在原地。而回血
+   * 回蓝是发生在**玩家身上**的，他一边跑一边回，数字钉在原地就成了掉在地上的一串数。
+   *
+   * 以后还会有持续回血、持续回蓝的药，那时候是每跳一次飘一个 —— 一串数字拖在身后的话，
+   * 玩家根本分不清哪个是这一跳的。
+   */
+  follow?: boolean;
 }
 
 export class DamageNumbers {
@@ -191,6 +272,12 @@ export class DamageNumbers {
   private readonly life = new Float32Array(CAPACITY);
   private readonly value = new Int32Array(CAPACITY);
   private readonly crit = new Uint8Array(CAPACITY);
+  /** 1 = 跟着玩家走，x/y 每帧由锚点加下面那个偏移算出来。 */
+  private readonly follow = new Uint8Array(CAPACITY);
+  /** 前缀符号的下标，255 = 不挂。用 Uint8 是为了和别的字段一样是定型数组。 */
+  private readonly sign = new Uint8Array(CAPACITY);
+  private readonly offX = new Float32Array(CAPACITY);
+  private readonly offY = new Float32Array(CAPACITY);
 
   private count = 0;
 
@@ -221,18 +308,36 @@ export class DamageNumbers {
     const len = Math.hypot(dx, dy);
     this.x[i] = len > 1e-4 ? x - (dx / len) * BACK_OFF : x;
     this.y[i] = len > 1e-4 ? y - (dy / len) * BACK_OFF : y;
-    this.z[i] = options.z ?? HEAD_Z;
+    // 回血回蓝那几种从更高一点冒出来：玩家自己身上一直有伤害数字在飘，同一个高度会混进去。
+    const style = options.style ?? (crit ? 'crit' : 'damage');
+    this.z[i] = options.z ?? (STYLE_INDEX[style] >= STYLE_INDEX.heal ? HEAD_Z + 6 : HEAD_Z);
     this.drift[i] = (Math.random() - 0.5) * 2 * DRIFT;
     this.age[i] = 0;
     this.life[i] = FADE_IN + LIFE * (crit ? 1.25 : 1) * (0.9 + Math.random() * 0.2);
     this.value[i] = Math.max(0, Math.round(value));
-    this.crit[i] = crit ? 1 : 0;
+    this.crit[i] = STYLE_INDEX[style];
+    const sign = SIGN_INDEX[options.sign ?? 'none'];
+    this.sign[i] = sign < 0 ? 255 : sign;
+    this.follow[i] = options.follow ? 1 : 0;
+    // 跟随的那些错开一点点再出来：同一刻回血又回蓝，两个数字叠在一起就只看得见一个。
+    this.offX[i] = options.follow ? (Math.random() - 0.5) * 9 : 0;
+    this.offY[i] = options.follow ? (Math.random() - 0.5) * 5 : 0;
   }
 
-  update(dt: number): void {
+  /**
+   * @param anchorX/anchorY 玩家这一帧在哪儿。带 follow 的数字每帧重新挂到他身上。
+   */
+  update(dt: number, anchorX = 0, anchorY = 0): void {
     for (let i = this.count - 1; i >= 0; i--) {
       this.age[i] += dt;
-      if (this.age[i] >= this.life[i]) this.swapRemove(i);
+      if (this.age[i] >= this.life[i]) {
+        this.swapRemove(i);
+        continue;
+      }
+      if (this.follow[i]) {
+        this.x[i] = anchorX + this.offX[i];
+        this.y[i] = anchorY + this.offY[i];
+      }
     }
   }
 
@@ -247,6 +352,10 @@ export class DamageNumbers {
     this.life[i] = this.life[last];
     this.value[i] = this.value[last];
     this.crit[i] = this.crit[last];
+    this.follow[i] = this.follow[last];
+    this.sign[i] = this.sign[last];
+    this.offX[i] = this.offX[last];
+    this.offY[i] = this.offY[last];
   }
 
   /**
@@ -274,7 +383,16 @@ export class DamageNumbers {
 
       const wx = this.x[i] + this.drift[i] * ease;
       const wz = this.z[i] + RISE * ease;
-      const px = base * (this.crit[i] ? 2 : 1);
+      /*
+       * 字号分三档。
+       *
+       *   重击      两倍。全场最烫的那一下，本来就该压过别的一切。
+       *   回血回蓝  1.6 倍。它一局只出现几十次，而且是**玩家自己按出来的** —— 他按下去那一刻
+       *             正等着看发生了什么。和满地一样大的伤害数字混在一起就等于没飘。
+       *   其余      一倍。
+       */
+      const style = this.crit[i];
+      const px = base * (style === STYLE_INDEX.crit ? 2 : style >= STYLE_INDEX.heal ? 1.6 : 1);
 
       // 拆位。低位先出，画的时候倒着走。
       let v = this.value[i];
@@ -284,16 +402,19 @@ export class DamageNumbers {
         v = Math.floor(v / 10);
       } while (v > 0 && n < digits.length);
 
+      // 符号占一格，和数字一样宽 —— 它是这一串里的第一个"字"，不是挂在外面的装饰。
+      const sign = this.sign[i] === 255 ? null : SIGNS[this.sign[i]];
+      const cells = n + (sign ? 1 : 0);
+
       // 整个数字的左上角，**取整到缓冲像素**。这一步是像素感的全部：不取整的话每帧的亚像素
       // 位置都不同，笔画会在上升途中自己抖起来。
-      const spanX = (n * GLYPH_W + (n - 1) * GLYPH_GAP) * px;
+      const spanX = (cells * GLYPH_W + (cells - 1) * GLYPH_GAP) * px;
       const sx = Math.round(rootX + (wx - camX) * scale - spanX * 0.5);
       const sy = Math.round(
         rootY + ((this.y[i] - camY) * Projection.groundSquash - wz * Projection.heightSquash) * scale - GLYPH_H * px,
       );
 
-      const top = this.crit[i] ? CRIT_TOP : TOP;
-      const bottom = this.crit[i] ? CRIT_BOTTOM : BOTTOM;
+      const [top, bottom] = STYLE_COLORS[this.crit[i]] ?? STYLE_COLORS[0];
       const edge = rgba(EDGE.r, EDGE.g, EDGE.b, Math.round(alpha * 0.88));
 
       // 一行一个颜色：整个数字上白下暖，而不是每个字各渐变各的。
@@ -310,8 +431,8 @@ export class DamageNumbers {
         );
       }
 
-      for (let d = 0; d < n; d++) {
-        const glyph = GLYPHS[digits[n - 1 - d]];
+      for (let d = 0; d < cells; d++) {
+        const glyph = sign ? (d === 0 ? sign : GLYPHS[digits[cells - 1 - d]]) : GLYPHS[digits[n - 1 - d]];
         const gx = sx + d * (GLYPH_W + GLYPH_GAP) * px;
         // 描边先铺，字身压上去。两者不重叠，所以整体化掉时接缝处不会叠深。
         for (const run of glyph.edge) this.blit(shapes, gx, sy, run, px, edge, DEPTH_EDGE);

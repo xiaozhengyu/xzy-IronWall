@@ -32,6 +32,11 @@ export interface HudMessages {
   skillLunge: string;
   skillAegis: string;
   skillDharma: string;
+  skillSprint: string;
+  skillIronBody: string;
+  skillBulwark: string;
+  skillKeenEdge: string;
+  skillSwiftStrike: string;
 }
 
 export type HudTextKey = keyof HudMessages;

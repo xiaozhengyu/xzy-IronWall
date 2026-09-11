@@ -1,7 +1,8 @@
 import './setup.css';
-import type { HeroDef } from '../game/roster';
-import type { GameMapDef } from '../game/maps';
+import type { HeroDef, UnitStats } from '../data/types';
+import type { GameMapDef } from '../data/maps';
 import { SkillCategoryRules, skillById, type SkillCategory, type SkillId } from '../game/skills';
+import { ARCHETYPE_LABEL } from '../data/heroes';
 import type { WeatherKind } from '../world/weather';
 import { createHudIcon, type HudIconName } from './hudIcons';
 import { HudText } from './text/hudText';
@@ -65,6 +66,13 @@ export interface MapPin {
 
 export interface SetupBridge {
   readonly heroes: HeroDef[];
+  /**
+   * 存档里的那一份：金币、每个角色的等级和经验、已经解锁的技能。
+   *
+   * 界面只读不写 —— 花钱和升级都发生在别处，这里只负责把数摆出来。做成回调而不是让界面
+   * 拿着 Profile，理由和别处一样：这是一块 DOM，它不该认识存档。
+   */
+  readonly progress: SetupProgress;
   readonly maps: GameMapDef[];
   /**
    * 角色头像。渲染归 Scene，这里只负责摆。
@@ -81,6 +89,27 @@ export interface SetupBridge {
   onWeatherChange(kind: WeatherKind): void;
   /** 开始游戏。界面这时候已经把自己锁住了，不会再来第二次。 */
   onStart(hero: HeroDef, map: GameMapDef, weather: WeatherKind): void;
+  /**
+   * 顶栏那个"商店"按钮。
+   *
+   * 留的是一个口子：商店模块还没有，按下去现在只弹一行字。做成回调而不是在这里写死一个
+   * 提示，是因为商店接上之后这一行就是它唯一的入口，界面这一侧不用再改。
+   */
+  onShop(): void;
+}
+
+/** 备战界面要从存档里读的东西。 */
+export interface SetupProgress {
+  /** 跨局的金币总数。灵石不在这里 —— 那是一局之内的东西，打完就清零。 */
+  coins(): number;
+  /** 这个角色现在几级。每个角色各记各的。 */
+  level(hero: HeroDef): number;
+  /** 这一级已经攒了多少经验、这一级一共要多少。满级时给 (1, 1)。 */
+  exp(hero: HeroDef): { have: number; need: number };
+  /** 这个角色此刻的最终属性：基础值摊上等级成长，再乘被动。 */
+  stats(hero: HeroDef): UnitStats;
+  /** 这个角色已经解锁的主动技，外加被动和自动攻击技。技能条按它画。 */
+  skills(hero: HeroDef): SkillId[];
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -135,8 +164,6 @@ function groupSkills(
 }
 
 /** 还没接上数值的字段统一显示这个。 */
-const NOT_WIRED = '—';
-
 const WEATHERS: { kind: WeatherKind; name: string }[] = [
   { kind: 'clear', name: '晴' },
   { kind: 'rain', name: '雨' },
@@ -189,6 +216,15 @@ export class SetupScreen {
   private readonly foeBox = el('div', 'setup-foes');
   private readonly startButton = el('button', 'setup-main', '开始游戏');
   private readonly summary = el('div', 'setup-summary');
+  /**
+   * 金币。摆在开始按钮旁边而不是塞进角色那一栏：它是**跨局**的家底，不属于任何一个角色，
+   * 以后的商店花的就是它。灵石不在这里 —— 那是一局之内的东西，打完就清零。
+   */
+  private readonly purse = el('span', 'setup-purse');
+  private readonly shopButton = el('button', 'setup-shop', '商店');
+  /** 顶栏底下那行会自己消失的提示。 */
+  private readonly noticeBox = el('div', 'setup-notice');
+  private noticeTimer = 0;
 
   /** 进入战场时盖住整屏的那一层。 */
   private readonly entryVeil = el('div', 'setup-veil');
@@ -242,6 +278,29 @@ export class SetupScreen {
 
   hide(): void {
     this.root.hidden = true;
+    this.clearNotice();
+  }
+
+  /**
+   * 顶栏底下飘一行字，几秒后自己消失。
+   *
+   * 不用 alert：那会把整个页面冻住，而且在一个全屏的游戏界面里弹一个系统对话框读起来像是
+   * 出错了。目前只有"商店还没开张"用它。
+   */
+  notice(text: string): void {
+    this.noticeBox.textContent = text;
+    this.noticeBox.hidden = false;
+    this.clearNotice();
+    this.noticeTimer = setTimeout(() => {
+      this.noticeTimer = 0;
+      this.noticeBox.hidden = true;
+    }, 3200) as unknown as number;
+  }
+
+  private clearNotice(): void {
+    if (!this.noticeTimer) return;
+    clearTimeout(this.noticeTimer);
+    this.noticeTimer = 0;
   }
 
   // ---------------------------------------------------------------- 左栏：带谁去
@@ -257,7 +316,11 @@ export class SetupScreen {
       else face.textContent = hero.name.slice(0, 1);
       item.appendChild(face);
       const box = el('div', 'setup-item-text');
-      box.appendChild(el('span', 'setup-item-k', hero.name));
+      const nameRow = el('div', 'setup-item-name');
+      nameRow.appendChild(el('span', 'setup-item-k', hero.name));
+      // 等级贴在名字后面，不另起一行：每个角色各记各的等级，列表上一眼看出练了谁。
+      nameRow.appendChild(el('span', 'setup-item-lv', `Lv.${this.bridge.progress.level(hero)}`));
+      box.appendChild(nameRow);
       box.appendChild(el('span', 'setup-item-v', hero.tagline));
       item.appendChild(box);
       item.addEventListener('click', () => this.selectHero(index));
@@ -302,7 +365,7 @@ export class SetupScreen {
     this.heroTags.appendChild(head);
 
     const chips = el('div', 'setup-chips');
-    for (const group of groupSkills(hero.skills)) {
+    for (const group of groupSkills(this.bridge.progress.skills(hero))) {
       for (const skill of group.skills) {
         const chip = el('span', 'setup-chip');
         chip.appendChild(createHudIcon(group.icon, 'setup-chip-icon'));
@@ -313,15 +376,36 @@ export class SetupScreen {
     }
     this.heroTags.appendChild(chips);
 
-    // 等级和属性：位置先留着，数值一个都没有 —— 摆一串假数比空着更容易被当真。
-    const stats = el('div', 'setup-stats');
-    for (const key of ['等级', '生命', '法力']) {
-      const one = el('span', 'setup-stat');
-      one.appendChild(el('span', 'setup-stat-k', key));
-      one.appendChild(el('span', 'setup-stat-v', NOT_WIRED));
-      stats.appendChild(one);
-    }
-    this.heroTags.appendChild(stats);
+    // 等级、经验和六项基础属性。
+    //
+    // 以前这一整块是三个破折号 —— 注释里写着"摆一串假数比空着更容易被当真"。现在数是真的：
+    // 由角色的基础值摊上等级成长、再乘被动算出来（见 game/stats.ts），和进去之后身上挂的
+    // 是同一份。
+    const level = this.bridge.progress.level(hero);
+    const exp = this.bridge.progress.exp(hero);
+    const stats = this.bridge.progress.stats(hero);
+
+    const levelRow = el('div', 'setup-stats');
+    const one = (parent: HTMLElement, key: string, value: string) => {
+      const cell = el('span', 'setup-stat');
+      cell.appendChild(el('span', 'setup-stat-k', key));
+      cell.appendChild(el('span', 'setup-stat-v', value));
+      parent.appendChild(cell);
+    };
+    one(levelRow, '等级', `${level}`);
+    one(levelRow, '成长', ARCHETYPE_LABEL[hero.archetype]);
+    one(levelRow, '经验', `${Math.floor(exp.have)} / ${exp.need}`);
+    this.heroTags.appendChild(levelRow);
+
+    const statRow = el('div', 'setup-stats');
+    one(statRow, '生命', `${Math.round(stats.maxHp)}`);
+    one(statRow, '攻击', `${Math.round(stats.attack)}`);
+    one(statRow, '防御', `${Math.round(stats.defense)}`);
+    one(statRow, '速度', `${Math.round(stats.moveSpeed)}`);
+    one(statRow, '范围', `${Math.round(stats.attackRange)}`);
+    one(statRow, '频率', `${stats.attackSpeed.toFixed(2)}x`);
+    one(statRow, '拾取', `${Math.round(stats.pickupRange)}`);
+    this.heroTags.appendChild(statRow);
   }
 
   // ---------------------------------------------------------------- 中栏：去哪儿
@@ -450,6 +534,7 @@ export class SetupScreen {
 
   private refreshSummary(): void {
     this.summary.textContent = `${this.currentHero.name} · ${this.currentMap.name}`;
+    this.purse.textContent = String(this.bridge.progress.coins());
   }
 
   // ---------------------------------------------------------------- 进入
@@ -477,7 +562,20 @@ export class SetupScreen {
     this.text.bindText(brand, 'gameTitle');
     top.appendChild(brand);
     top.appendChild(el('span', 'setup-lead', '选择出战角色与地图'));
+    // 顶栏右边：金币和商店入口。
+    //
+    // 摆在这儿而不是角色那一栏：金币是**跨局**的家底，不属于任何一个角色，换谁上场它都
+    // 是那个数。灵石不在这里 —— 那是一局之内的东西，打完就清零。
+    const purseBox = el('div', 'setup-top-right');
+    purseBox.appendChild(createHudIcon('coin', 'setup-purse-icon'));
+    purseBox.appendChild(this.purse);
+    this.shopButton.type = 'button';
+    this.shopButton.addEventListener('click', () => this.bridge.onShop());
+    purseBox.appendChild(this.shopButton);
+    top.appendChild(purseBox);
     this.root.appendChild(top);
+    this.noticeBox.hidden = true;
+    this.root.appendChild(this.noticeBox);
 
     const body = el('div', 'setup-body');
 

@@ -36,6 +36,12 @@ export interface SummaryStats {
   cleared: number;
   /** 结束的原因是玩家被打倒，而不是自己按的"结束游戏"。 */
   defeated: boolean;
+  /** 这一局挣到的经验。 */
+  exp: number;
+  /** 结算之后这个角色是几级。 */
+  level: number;
+  /** 这一局升到了几级，0 表示没升。升了就单独写一行 —— 那是玩家最想看到的一条。 */
+  levelUp: number;
 }
 
 export interface SummaryHooks {
@@ -111,12 +117,18 @@ export class SummaryScreen {
     // 一局的"得分"还没有正经公式，所以照实写成它的来源：击杀加收集。摆一个凭空算出来的
     // 分数比不摆更糟 —— 玩家会去猜它怎么来的，而它并不来自任何地方。
     this.stats.loot.textContent = String(stats.coins + stats.gems);
+    this.stats.exp.textContent = `+${stats.exp}`;
+    this.stats.level.textContent = stats.levelUp > 0 ? `Lv.${stats.level} ↑` : `Lv.${stats.level}`;
 
+    // 升级是玩家最想看到的一条，所以它顶掉那两句常规说明。金币也在这句里点一下：那是
+    // 唯一一样带得走的东西，而灵石打完就没了。
     this.note.textContent = final
-      ? stats.defeated
-        ? '这一局到此为止。确认之后回到选人画面，可以换个角色或者换张地图再来。'
-        : '这一局由你主动结束。确认之后回到选人画面。'
-      : '继续游戏会回到刚才那一刻，场上的人和捡到的东西都还在。';
+      ? stats.levelUp > 0
+        ? `升到了 ${stats.level} 级。金币 +${stats.coins} 已存入，灵石只在本局有效。`
+        : stats.defeated
+          ? '这一局到此为止。确认之后回到选人画面，可以换个角色或者换张地图再来。'
+          : '这一局由你主动结束。确认之后回到选人画面。'
+      : '继续游戏会回到刚才那一刻，场上的人和捡到的东西都还在。经验和金币要打完这一局才结算。';
 
     this.actions.replaceChildren();
     if (final) {
@@ -161,6 +173,8 @@ export class SummaryScreen {
     this.stats.wave = this.stat(stats, '波次');
     this.stats.cleared = this.stat(stats, '已清');
     this.stats.loot = this.stat(stats, '收集物');
+    this.stats.exp = this.stat(stats, '经验');
+    this.stats.level = this.stat(stats, '等级');
     card.appendChild(stats);
 
     card.appendChild(this.note);

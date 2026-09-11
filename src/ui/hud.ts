@@ -15,6 +15,8 @@ import { HudPlayerPanel } from './hudPlayerPanel';
 import { HudQuickbar } from './hudQuickbar';
 import { HUD_COOLDOWN_SKILLS, HudCooldownPanel } from './hudCooldownPanel';
 import { HudText, type HudLocale } from './text/hudText';
+import { cardCost } from '../data/balance';
+import { ITEM_SLOT_COUNT } from '../data/pickups';
 export { createHudButton, type HudButtonOptions, type HudButtonSkin } from './hudButton';
 export { HudProgressBar, type HudProgressBarOptions } from './hudProgressBar';
 export { HudFrame, type HudFrameOptions, type HudFrameSkin } from './hudFrame';
@@ -43,11 +45,16 @@ export const MINIMAP_SETTINGS = {
   zoom: 1.35,
 };
 
-/** 宝石进度只做循环显示，暂不接升级或奖励。 */
 export const GEM_PROGRESS_SETTINGS = {
   width: '60%',
   height: '20px',
-  gemsPerCycle: 100,
+  /**
+   * 只在**还没进图**的那一小会儿用得上。
+   *
+   * 真正的门槛按每张图的出兵表倒推，进图时由 main 调 setGemsPerCycle 换掉（见
+   * game/stats.ts 的 gemsPerCard）。留一个数在这儿只是为了让 HUD 在第一帧有东西可画。
+   */
+  gemsPerCycle: 300,
   sideOverhang: 0,
 };
 
@@ -100,7 +107,20 @@ export class Hud {
   private readonly hudPointer = document.createElement('div');
   private readonly quickbarResizeObserver: ResizeObserver;
   private readonly viewportResizeObserver: ResizeObserver;
-  private readonly gemsPerCycle: number;
+  /**
+   * 第一张三选一要攒多少灵石。往后每张按 CARD_COST_GROWTH 递增，见下面那三个字段。
+   *
+   * 不再是构造时定死的一个数：每张地图的波数和出兵量差着一截，门槛跟着那张图走（见
+   * game/stats.ts 的 gemsPerCard），换图时由 main 调 setGemsPerCycle 换掉。
+   */
+  private gemsPerCycle: number;
+
+  /** 这一局已经弹过几次牌。下一张的门槛按它算。 */
+  private gemCards = 0;
+  /** 上一张牌弹出来时的灵石总数。进度条的起点。 */
+  private gemFloor = 0;
+  /** 下一张牌要攒到的灵石总数。进度条的终点。 */
+  private gemNext: number;
   private readonly gemProgressSideOverhang: number;
   private lastCollectedGems = 0;
   private lastCollectedCoins = 0;
@@ -111,7 +131,18 @@ export class Hud {
     this.root.style.height = `${HUD_DESIGN_HEIGHT}px`;
     this.text = new HudText(options.locale ?? 'zh-CN');
 
-    this.playerInfo = new HudPlayerPanel(this.text, { className: 'hud-player-info' });
+    // 血、蓝、等级、经验全部由 draw 每帧喂真值，所以初值给 0：面板自带的那套占位数
+    // （22 级、268/300 血、82/120 蓝）会在第一帧之前闪一下，那一下说的是假话。
+    this.playerInfo = new HudPlayerPanel(this.text, {
+      className: 'hud-player-info',
+      level: 1,
+      health: 0,
+      maxHealth: 1,
+      mana: 0,
+      maxMana: 1,
+      experience: 0,
+      maxExperience: 1,
+    });
     this.waveInfo = new HudWavePanel(this.text, { className: 'hud-wave-info' });
     this.currencyInfo = this.createCurrencyFrame();
     this.root.appendChild(this.waveInfo.root);
@@ -171,7 +202,8 @@ export class Hud {
       height: gemProgressHeight,
     });
     this.text.bindAttribute(this.gemProgress.root, 'aria-label', 'gemProgress');
-    this.gemProgress.setValue(0, this.gemsPerCycle, false);
+    this.gemNext = cardCost(this.gemsPerCycle, 0);
+    this.gemProgress.setValue(0, this.gemNext, false);
     this.quickbar = new HudQuickbar(this.text);
     this.combatPanel.content.append(this.vitals, this.quickbar.root);
     this.cooldownInfo = new HudCooldownPanel(this.text);
@@ -258,12 +290,20 @@ export class Hud {
     this.text.setLocale(locale);
   }
 
-  useItem(index: number): boolean {
-    const effect = this.quickbar.consumeItem(index);
-    if (!effect) return false;
+  /**
+   * 按下数字键：用掉这一格里的一件。
+   *
+   * 顺序要紧 —— 先问结算那边这一下**用不用得上**（格子空着、人死了），用得上才在界面上走
+   * 那一套。反过来的话按一下就少一个，而什么都没发生。
+   */
+  useItem(index: number, apply: (slot: number) => boolean): boolean {
+    const effect = this.quickbar.itemEffectAt(index);
+    if (!effect || !apply(index)) return false;
     this.cooldownInfo.activateTimedEffect(effect);
     return true;
   }
+
+
 
   update(dt: number): void {
     this.cooldownInfo.update(dt);
@@ -303,8 +343,33 @@ export class Hud {
     this.root.hidden = !on;
   }
 
+  /**
+   * 换一张图就换一个门槛。
+   *
+   * 顺带把这一局的进度清零：上一局收的灵石不算数，而进度条上剩的那一截会让新的一局看着像是
+   * 已经打了一会儿。
+   */
+  setGemsPerCycle(gems: number): void {
+    const next = Number.isFinite(gems) ? Math.max(1, Math.floor(gems)) : this.gemsPerCycle;
+    this.gemsPerCycle = next;
+    this.lastCollectedGems = 0;
+    this.gemCards = 0;
+    this.gemFloor = 0;
+    this.gemNext = cardCost(next, 0);
+    this.gemProgress.setValue(0, this.gemNext, false);
+  }
+
   draw(field: Field, battle: Battle, camera: Camera): void {
     this.playerInfo.setHealth(Math.max(0, Math.ceil(battle.player.hp)), battle.player.maxHp);
+    // 等级和经验条。以前这两样是面板自己带的占位数（22 级、2845/4500），谁也没喂过它们。
+    // 现在它们来自存档：等级是这个角色练到的那一级，经验条是这一级攒了多少。
+    //
+    // 法力那一格还是空的 —— 技能不耗蓝（skills.ts 里一个耗蓝字段都没有），摆一条假的蓝条
+    // 比空着更容易被当真。
+    this.playerInfo.setLevel(battle.level);
+    this.playerInfo.setExperience(battle.expIntoLevel, battle.expForLevel);
+    // 蓝条。主动技能的开销从这里出，自己按每秒回复涨回来。
+    this.playerInfo.setMana(Math.max(0, Math.floor(battle.mp)), battle.maxMp);
     // 波次面板：三个数都自己判重，值没变时一个 DOM 节点也不会碰。
     const wave = battle.waveStatus;
     this.waveInfo.setWave(wave.wave);
@@ -316,11 +381,22 @@ export class Hud {
       this.quickbar.setSkillCooldown(index,
         skillId ? battle.skillCooldown(skillId) : 0,
         skillId ? battle.skillCooldownDuration(skillId) : 0);
+      // 蓝不够就压暗这一格，和进冷却是同一种压暗。
+      this.quickbar.setSkillAffordable(index, !skillId || battle.canAfford(skillId));
+      // 格子底下那排菱形。以前填的是写死的预览值（3/5），现在是这一局真的练到了几级。
+      this.quickbar.setSkillLevel(index, skillId ? battle.skillLevel(skillId) : 0);
+    }
+    // 药和符那几格。装什么、装几个都在 Battle 上（它是这一局的状态），这里只把它画出来。
+    // 格位不固定：先捡到的先占前面，所以每一格的图标也要跟着换。
+    for (let index = 0; index < ITEM_SLOT_COUNT; index++) {
+      const held = battle.itemAt(index);
+      this.quickbar.setItem(index, held?.id ?? null, held?.count ?? 0);
     }
     for (const definition of HUD_COOLDOWN_SKILLS) {
       this.cooldownInfo.setSkillState(definition.id,
         battle.skillLoadout.isEquipped(definition.id),
-        battle.skillCooldown(definition.id), battle.skillCooldownDuration(definition.id));
+        battle.skillCooldown(definition.id), battle.skillCooldownDuration(definition.id),
+        battle.skillLevel(definition.id));
     }
     this.minimap.draw(field, battle, camera);
     if (battle.collectedCoins !== this.lastCollectedCoins) {
@@ -332,12 +408,21 @@ export class Hud {
     if (total !== this.lastCollectedGems) {
       const energyValue = this.currencyValues.get('energy');
       if (energyValue) energyValue.textContent = String(total);
-      const sameCycle = Math.floor(total / this.gemsPerCycle) === Math.floor(this.lastCollectedGems / this.gemsPerCycle);
-      this.gemProgress.setValue(total % this.gemsPerCycle, this.gemsPerCycle,
-        total > this.lastCollectedGems && sameCycle);
-      // 跨过一整轮就是"灵石收满"。用 sameCycle 而不是 total % n === 0：一帧可能一次收好
-      // 几颗，正好落在整数上的机会并不可靠。
-      if (this.cardsEnabled && !sameCycle && total > this.lastCollectedGems) this.cards.show();
+      // 攒够下一张的门槛就弹牌。用"越过 gemNext"而不是取模：门槛是一张比一张高的，取模
+      // 没有意义；而且一帧可能一次收好几颗，正好落在某个整数上的机会本来也不可靠。
+      //
+      // while 而不是 if：末波一帧能收十几颗，理论上可以一次跨过两张牌的门槛。牌本身一次只
+      // 弹一张（show 开着的时候不再抽），但账要记全，不然后面每一张都会偏。
+      let popped = false;
+      while (total >= this.gemNext) {
+        this.gemCards++;
+        this.gemFloor = this.gemNext;
+        this.gemNext += cardCost(this.gemsPerCycle, this.gemCards);
+        popped = true;
+      }
+      this.gemProgress.setValue(total - this.gemFloor, this.gemNext - this.gemFloor,
+        total > this.lastCollectedGems && !popped);
+      if (this.cardsEnabled && popped) this.cards.show();
       this.lastCollectedGems = total;
     }
   }

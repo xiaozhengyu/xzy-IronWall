@@ -341,7 +341,7 @@ export class Menu {
     this.keysBox.appendChild(el('div', 'menu-rule'));
     const keys = el('div', 'menu-keys');
     keys.innerHTML =
-      '<b>按住左键</b> 移动 · <b>Shift</b> 跑 · <b>空格</b> 挥击 · <b>Q/W/E/R</b> 主动技能 · ' +
+      '<b>按住左键</b> 移动 · <b>按住 R</b> 跑（耗蓝） · <b>空格</b> 挥击 · <b>Q/W/E</b> 主动技能 · ' +
       '<b>J</b> 换自动攻击 · <b>O/P</b> 上下一波 · <b>\\</b> 末波压测 · <b>滚轮</b> 缩放 · <b>I</b> 物品图鉴 · ' +
       '<b>ESC</b> 结算画面（这块调试菜单只由 HUD 上的系统按钮开）';
     this.keysBox.appendChild(keys);

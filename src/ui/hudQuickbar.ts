@@ -1,17 +1,17 @@
 import skillFrameLeftUrl from '../../assets/hud/skill/skill-frame-left.png';
 import skillFrameMiddleUrl from '../../assets/hud/skill/skill-frame-middle.png';
 import skillFrameRightUrl from '../../assets/hud/skill/skill-frame-right.png';
-import pill01Url from '../../assets/hud/item/pill/pill-01.png';
-import pill02Url from '../../assets/hud/item/pill/pill-02.png';
 import skill01Url from '../../assets/hud/item/skill/skill-01.png';
 import skill06Url from '../../assets/hud/item/skill/skill-06.png';
 import skill07Url from '../../assets/hud/item/skill/skill-07.png';
-import talisman01Url from '../../assets/hud/item/talisman/talisman-01.png';
-import talisman02Url from '../../assets/hud/item/talisman/talisman-02.png';
+import bootsUrl from '../../assets/hud/icon/boots.png';
+import { ITEM_SLOT_COUNT, pickupById } from '../data/pickups';
+import { pickupIcon } from '../items/pickupIcons';
 import type { SkillId } from '../game/skills';
 import type { HudText } from './text/hudText';
 import type { HudTextKey } from './text/hudText.types';
 import { createHudSkillLevel } from './hudSkillLevel';
+import { SKILL_MAX_LEVEL } from '../data/balance';
 import './hudQuickbar.css';
 
 export interface HudQuickSlotOptions {
@@ -44,11 +44,16 @@ type HudQuickSlotView = {
   /** 上一次写进 CSS 的冷却进度，量化过；见 setSkillCooldown。 */
   lastCooldownStep: number;
   lastCooling: boolean;
+  /** 上一次写进 DOM 的"蓝不够"状态。见 setSkillAffordable。 */
+  lastBroke: boolean;
+  /** 上一次画出来的技能等级。见 setSkillLevel。 */
+  lastLevel: number;
   skillId: SkillId | null | undefined;
 };
 
 type HudItemSlot = {
   view: HudQuickSlotView;
+  /** 这一格现在装的是什么。格位不固定，所以它是会变的。 */
   options: HudQuickSlotOptions;
   count: number;
 };
@@ -71,14 +76,30 @@ const ACTIVE_SKILL_PRESENTATION: Partial<Record<SkillId, { icon: string; name: H
   lunge: { icon: skill01Url, name: 'skillLunge' },
   aegis: { icon: skill06Url, name: 'skillAegis' },
   dharma: { icon: skill07Url, name: 'skillDharma' },
+  // 疾走固定占 R。一双靴子，和别的招那几张符箓一眼就分得开 —— 它本来也不是一招，是走位。
+  sprint: { icon: bootsUrl, name: 'skillSprint' },
 };
 
-const DEFAULT_ITEMS: readonly HudQuickSlotOptions[] = [
-  { key: '1', id: 'pill-01', icon: pill01Url, label: 'itemSlot', count: 3, effectDuration: 8 },
-  { key: '2', id: 'pill-02', icon: pill02Url, label: 'itemSlot', count: 3, effectDuration: 10 },
-  { key: '3', id: 'talisman-01', icon: talisman01Url, label: 'itemSlot', count: 2, effectDuration: 12 },
-  { key: '4', id: 'talisman-02', icon: talisman02Url, label: 'itemSlot', count: 2, effectDuration: 14 },
-];
+/** 药用掉之后在左下角那条上闪多久，秒。它不是效果时长，只是一个"生效了"的回执。 */
+const ITEM_FLASH = 1.2;
+
+/**
+ * 快捷栏那几格：**开局全空，而且不属于任何一件东西**。
+ *
+ * 以前这里写着三颗红药、三颗蓝药、两张符 —— 摆界面用的假存货，玩家没做任何事就在手里。后来
+ * 改成开局为 0，但格位还是钉死的（一号永远回血）。现在连格位也放开：先捡到的先占前面的格子。
+ *
+ * 钉死格位在只有四件东西时还行，可东西会越加越多，钉死就意味着永远只有前四种能被拿到，后面
+ * 的全是摆设。按先后排之后，这几格装的是"这一局你身上有什么"。
+ *
+ * 所以这张表里只有键位，没有图也没有 id —— 那两样每一帧跟着 Battle 走（setItem）。
+ */
+const DEFAULT_ITEMS: readonly HudQuickSlotOptions[] = Array.from(
+  { length: ITEM_SLOT_COUNT },
+  (_, index) => ({ key: String(index + 1), label: 'itemSlot' as const, count: 0 }),
+);
+
+
 
 /** 底部快捷栏的纯显示组件；技能和物品逻辑接入时只需更新各槽位图标与状态。 */
 export class HudQuickbar {
@@ -125,6 +146,37 @@ export class HudQuickbar {
     this.refreshSkillPresentation(slot);
   }
 
+  /**
+   * 蓝够不够放这一招。不够就把整格压暗，**和进冷却是同一种压暗**。
+   *
+   * 用同一种表现是有意的：对玩家来说"现在按不动"就是一件事，没必要分成两种灰。区别只在
+   * 冷却那一格上有一个倒数的数字，而蓝不够没有数字 —— 因为它没有一个确定的时刻，取决于
+   * 接下来这几秒还放不放别的招。
+   */
+  setSkillAffordable(index: number, affordable: boolean): void {
+    const slot = this.skillSlots[index];
+    if (!slot) return;
+    const broke = !affordable;
+    if (broke === slot.lastBroke) return;
+    slot.lastBroke = broke;
+    slot.root.classList.toggle('hud-quick-slot--broke', broke);
+  }
+
+  /**
+   * 格子底下那排菱形填到第几颗。
+   *
+   * 只在**变了**的时候重画：这个方法每帧被调四次，而等级一局只涨三十来次。重画一次是把五个
+   * img 的 src 全换一遍，每帧干四次是白扔。
+   */
+  setSkillLevel(index: number, level: number): void {
+    const slot = this.skillSlots[index];
+    if (!slot?.levels) return;
+    const next = Math.max(0, Math.floor(level));
+    if (next === slot.lastLevel) return;
+    slot.lastLevel = next;
+    slot.levels.replaceChildren(...createHudSkillLevel(next, SKILL_MAX_LEVEL).childNodes);
+  }
+
   setSkillCooldown(index: number, remaining: number, total: number): void {
     const slot = this.skillSlots[index];
     if (!slot?.cooldown || !slot.cooldownValue) return;
@@ -156,13 +208,50 @@ export class HudQuickbar {
     slot.cooldownValue.textContent = cooldownText;
   }
 
+  /**
+   * 把某一格画成"装着 id 这件东西、共 count 个"。id 给 null 就是空格。
+   *
+   * 这一层不记账，只显示 —— 真正的账本在 Battle 上（它是这一局的状态，和血、蓝、技能等级
+   * 一样）。判重是因为这个方法每帧被调几次，而格子的内容一局只变几十次。
+   */
+  setItem(index: number, id: string | null, count: number): void {
+    const item = this.itemSlots[index];
+    if (!item) return;
+    const next = Math.max(0, Math.floor(count));
+    if (item.options.id === (id ?? undefined) && next === item.count) return;
+    const def = id ? pickupById(id) : null;
+    item.options = def
+      ? {
+        ...item.options,
+        id: def.id,
+        icon: pickupIcon(def.id),
+        // 药没有持续时间（立刻回血），但左下角那条计时还是要闪一下，告诉玩家"这一口下去了"。
+        effectDuration: def.duration > 0 ? def.duration : ITEM_FLASH,
+      }
+      : { key: item.options.key, label: item.options.label, count: 0 };
+    item.count = next;
+    const icon = item.view.icon;
+    if (icon) {
+      const src = item.options.icon;
+      if (src && icon.src !== src) icon.src = src;
+      icon.alt = def?.name ?? '';
+    }
+    item.view.root.title = def ? `${def.name} · ${def.note}` : '';
+    this.refreshItemCount(item);
+  }
+
+  /** 这一格用掉一件会产生什么效果条。空格返回 null。 */
+  itemEffectAt(index: number): HudQuickbarItemUse | null {
+    return this.consumeItem(index);
+  }
+
   consumeItem(index: number): HudQuickbarItemUse | null {
     const item = this.itemSlots[index];
     const icon = item?.options.icon;
     const duration = item?.options.effectDuration ?? 0;
     if (!item || !icon || item.count <= 0 || duration <= 0) return null;
-    item.count--;
-    this.refreshItemCount(item);
+    // 不在这里扣数：账本在 Battle 上，下一帧 setItemCount 会把新的数画上来。两边各扣一次
+    // 看着没事（结果一样），但那时候就有两个地方都自称知道还剩几件了。
     return {
       id: item.options.id ?? `item-${index + 1}`,
       icon,
@@ -183,8 +272,12 @@ export class HudQuickbar {
     body.className = 'hud-quick-slot-body';
     slot.appendChild(body);
 
+    // 图标元素**一律建**，哪怕这一格现在是空的。
+    //
+    // 技能槽和物品格现在都是"内容会变"的：Q/W/E 抽到招才长出图标，物品格先捡到的先占。建不
+    // 建元素不该取决于**建的那一刻**有没有东西，否则第一次往里放东西时没地方放图。
     let icon: HTMLImageElement | null = null;
-    if (options.icon || skill) {
+    {
       icon = document.createElement('img');
       icon.className = 'hud-quick-slot-icon';
       if (options.icon) icon.src = options.icon;
@@ -206,7 +299,7 @@ export class HudQuickbar {
       name = document.createElement('span');
       name.className = 'hud-text hud-text--pixel hud-quick-slot-name';
       name.hidden = true;
-      levels = createHudSkillLevel(undefined, undefined, 'hud-quick-slot-levels');
+      levels = createHudSkillLevel(1, SKILL_MAX_LEVEL, 'hud-quick-slot-levels');
       levels.hidden = true;
       cooldown = document.createElement('span');
       cooldown.className = 'hud-quick-slot-cooldown';
@@ -242,6 +335,8 @@ export class HudQuickbar {
       lastCooldownText: '',
       lastCooldownStep: -1,
       lastCooling: false,
+      lastBroke: false,
+      lastLevel: -1,
       skillId: undefined,
     };
   }
@@ -260,8 +355,22 @@ export class HudQuickbar {
     slot.root.classList.toggle('hud-quick-slot--empty', !presentation);
   }
 
+  /**
+   * 把一格的件数画出来。**一件都没有时整格空着**，不是把图标压暗。
+   *
+   * 压暗（--depleted）是原来的做法，那时候快捷栏一进游戏就装着六颗药，压暗说的是"这一格的
+   * 药刚用完"。现在开局四格全是 0，一个灰图标读起来仍然是"我有这东西"—— 玩家看到的是一排
+   * 药和符，而他手上什么都没有。所以没有就不画，和 Q/W/E 三个空技能槽一个样子：只剩一个
+   * 空框，捡到第一件才长出图标来。
+   */
   private refreshItemCount(item: HudItemSlot): void {
-    if (item.view.countValue) item.view.countValue.textContent = String(item.count);
-    item.view.root.classList.toggle('hud-quick-slot--depleted', item.count <= 0);
+    const empty = item.count <= 0;
+    if (item.view.countValue) {
+      item.view.countValue.textContent = String(item.count);
+      item.view.countValue.hidden = empty;
+    }
+    if (item.view.icon) item.view.icon.hidden = empty;
+    item.view.root.classList.toggle('hud-quick-slot--empty', empty);
+    item.view.root.classList.toggle('hud-quick-slot--depleted', false);
   }
 }

@@ -1,9 +1,29 @@
 import { CharacterAnimator, attackDuration, attackImpact } from '../characters/animator';
+import type { UnitStats } from '../data/types';
 import { HorseAnimator, HorsePose, HorseSpec } from '../characters/horse';
 import type { CharacterPalette } from '../characters/palette';
 import { Pose, RigSpec } from '../characters/rig';
 import type { UnitDef } from '../characters/unitDef';
 import { clamp, type Vec3 } from '../core/math';
+
+/**
+ * 没有给属性时用的那一份，就是 data/units.ts 里杂兵的值。
+ *
+ * 存在的理由只有一个：tools/ 下的离线脚本经常只想看一段动画，为此先去结算一份属性是白绕。
+ * 战斗里每一个人的属性都是 Battle 明确赋上去的，不会落到这一份上。
+ */
+const DEFAULT_STATS: UnitStats = {
+  maxHp: 40,
+  maxMp: 0,
+  mpRegen: 0,
+  attack: 12,
+  defense: 4,
+  moveSpeed: 26,
+  attackRange: 11,
+  attackArc: 1.6,
+  attackSpeed: 1,
+  pickupRange: 0,
+};
 
 /**
  * 场上一个活的单位：位置、朝向，加上它自己那一份姿势和动画状态。
@@ -160,6 +180,24 @@ export class Character {
   trailHead = 0;
   private trailClock = 0;
 
+  /**
+   * 这个人有多强。血、攻、防、速度、范围、频率、拾取全在这一份里。
+   *
+   * 它是**结算好的**那一份，不是表里那一份：玩家的已经把等级成长、被动和本局加成都摊进去
+   * 了，敌人的已经乘过波次曲线和地图加成。谁来算见 game/stats.ts，Character 只负责带着它。
+   *
+   * 默认给一份基准杂兵的值，这样 tools/ 下那些只想看动画的离线脚本不必先造一份属性。
+   */
+  stats: UnitStats = { ...DEFAULT_STATS };
+
+  /**
+   * 杀掉这个人给玩家多少经验。出生时按兵种和当时的波次算好，之后不再变。
+   *
+   * 存一个算好的数而不是回头去查兵种表：一个第一波出生的杂兵走出画面又走回来时，仍然该是
+   * 第一波那个杂兵 —— 他只是走出过画面，不是重生。同理见 Reservation 上那段。
+   */
+  expValue = 0;
+
   maxHp = 1;
   hp = 1;
   /** 距离下一次可以出手还有多少秒。 */
@@ -254,12 +292,19 @@ export class Character {
    * 挨一下。掉血、闪白光；血空了就倒。
    * @returns 这一下是否致命。
    */
-  takeHit(fromX: number, fromY: number, damage = 1): boolean {
+  takeHit(
+    fromX: number,
+    fromY: number,
+    damage = 1,
+    launch: { force?: number; freeze?: number } = {},
+  ): boolean {
     if (!this.alive) return false;
     this.hp -= damage;
+    // 没死也要闪一下白光。这是"这一下打在他身上了"唯一的反馈 —— 加了血量之后场上会第一次
+    // 出现"挨了一下但还站着"的人，没有这层反馈，玩家会以为自己打空了。
     this.hurt = 1;
     if (this.hp <= 0) {
-      this.kill(fromX, fromY);
+      this.kill(fromX, fromY, launch);
       return true;
     }
     return false;

@@ -205,3 +205,33 @@
     radial-gradient(circle, rgba(75, 72, 67, 0.14), transparent 58%),
     rgba(5, 6, 8, 0.9);
 }
+
+/*
+ * 蓝不够：整格压暗，和进冷却是同一种压暗。
+ *
+ * 对玩家来说"现在按不动"就是一件事，分成两种灰只会让他去猜哪种是哪种。区别留给冷却那一格
+ * 上的倒数数字 —— 蓝不够没有数字，因为它没有一个确定的时刻。
+ */
+.hud-quick-slot--broke .hud-quick-slot-cooldown {
+  opacity: 1;
+  transform: none;
+}
+
+.hud-quick-slot--broke .hud-quick-slot-icon {
+  filter: grayscale(0.85) brightness(0.55);
+}
+
+.hud-quick-slot--broke .hud-quick-slot-name {
+  color: #7f8798;
+}
+
+/*
+ * 一件都没有的那一格：数字也收起来。
+ *
+ * 这条规则和上面那条 .hud-quick-slot-icon[hidden] 是一对 —— 图标藏了而角上还挂着一个 "0"，
+ * 读起来是"这一格有东西但用完了"，而开局四格本来就什么都没有。写出来是因为这个元素自己带着
+ * position: absolute，浏览器自带的 [hidden] 权重压不住任何类选择器。
+ */
+.hud-quick-slot-count[hidden] {
+  display: none;
+}

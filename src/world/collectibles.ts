@@ -8,7 +8,7 @@ import type { ShapeBatch } from '../render/shapeBatch';
  * 地图上的可收集物种类。生成、推进和拾取都走这个公共入口，加一种只要补一套配色和画法，
  * 不用再复制吸附逻辑。
  */
-export type CollectibleKind = 'gem' | 'coin';
+export type CollectibleKind = 'gem' | 'coin' | 'pickup';
 
 /** 一帧里各类型收走了多少。对象复用，调用方读完即可，不要长期持有。 */
 export type CollectedCounts = Record<CollectibleKind, number>;
@@ -16,10 +16,35 @@ export type CollectedCounts = Record<CollectibleKind, number>;
 export interface CollectibleTarget {
   x: number;
   y: number;
+  /**
+   * 吸附半径，世界单位。**三种掉落共用这一个圈**，进圈就往目标飞。
+   *
+   * 以前这是一个写死的常量（MAGNET_RADIUS = 68）。现在它是玩家的一项基础属性，跟着角色、
+   * 等级和局内的属性卡走 —— "拾取范围"这张卡在那之前是一行没有实现的说明文字。
+   *
+   * 药和符曾经单开过一个更小的圈，撤了：同样是地上的东西，有的走近就飞过来、有的要踩上去，
+   * 玩家会先感到别扭再想明白为什么。那件事改由**掉在哪儿**来办，见 PICKUP_TOSS_MIN。
+   */
+  pickupRange: number;
+  /**
+   * 这一件药 / 符现在收不收得下。收不下就让它留在地上。
+   *
+   * 不给就是照单全收。快捷栏只有四格，格子被别的东西占满时新的那一件应该躺在草地上等着，
+   * 而不是被捡起来然后无声地丢掉 —— 后者玩家完全不知道发生了什么。
+   */
+  accepts?: (id: string) => boolean;
 }
 
 interface CollectibleDrop {
   kind: CollectibleKind;
+  /**
+   * 这是哪一件药 / 符。只有 kind 'pickup' 有。
+   *
+   * 灵石和金币是**画出来**的（一堆图元拼的方块和圆片），药和符是**贴图**：地上那一件和快捷栏
+   * 那一格用同一张 icon。所以这一类在这里只走物理和地面那圈光，本体由 Scene 建一个精灵去画，
+   * 见 iconDrops。
+   */
+  pickup?: string;
   x: number;
   y: number;
   z: number;
@@ -82,6 +107,21 @@ const PALETTES: Record<CollectibleKind, CollectiblePalette> = {
     facet: [253, 235, 123],
     spark: [255, 251, 224],
   },
+  /*
+   * 药和符的本体是**贴图**，不是图元 —— 这一套颜色只画它脚下那圈光和被吸走时的光尾。
+   *
+   * 给一档偏白的暖绿：地上同时躺着一片青蓝的灵石和几枚金币，第三种颜色必须和那两种都分得开，
+   * 而且要比它们亮一点。一局里只掉几百件药符，和几万颗灵石比是稀罕物，脚下那圈光就是它在
+   * 一地蓝光里唯一的招手方式。
+   */
+  pickup: {
+    glow: [168, 255, 186],
+    shell: [22, 74, 44],
+    edge: [72, 160, 104],
+    body: [140, 232, 166],
+    facet: [200, 255, 214],
+    spark: [244, 255, 248],
+  },
 };
 
 /** 配色表里存的是纯 RGB，画的时候再配上各处不同的透明度。 */
@@ -99,8 +139,25 @@ const COIN_DEPTH_BIAS = Projector.DEPTH_PER_ROW * 6;
 const MAX_DROPS = 1800;
 const MAX_BURSTS = 96;
 const GRAVITY = 260;
-const MAGNET_RADIUS = 68;
 const MAGNET_DELAY = 0.48;
+
+/**
+ * 药和符弹出去多远。
+ *
+ * **"走过去捡"这件事只由这一个数负责，吸附半径一个字都不改。**
+ *
+ * 中间试过给药符单开一个更小的吸附圈（12，后来 40）。那是错的：场上三种掉落用两套吸附规则，
+ * 玩家会先感到别扭再想明白为什么 —— 同样是地上的东西，有的走近就飞过来、有的要踩上去，这
+ * 中间没有任何可讲的道理。吸附是这套掉落的基础手感，它必须只有一种。
+ *
+ * 所以差别全放在**掉在哪儿**：灵石金币抛 7~18 个单位，基本落在脚边，打完就到手；药和符抛
+ * 85~135，明显落在吸附圈（拾取范围，基准 68）之外。于是它天然要玩家朝它挪几步，走进圈里之后
+ * 该飞过来还是飞过来 —— 获得感来自那几步，不是来自一条不一样的规则。
+ *
+ * 上限压在 135：视口半宽只有一百五十来个单位，再远就掉到画面外去了，而看不见的掉落等于没掉。
+ */
+const PICKUP_TOSS_MIN = 85;
+const PICKUP_TOSS_MAX = 135;
 const COLLECT_DISTANCE = 3.5;
 const COLLECT_HEIGHT = 7;
 const BURST_LIFE = 0.24;
@@ -113,7 +170,13 @@ const BURST_LIFE = 0.24;
  */
 export class Collectibles {
   /** 上一次 update 里各类型收走的数量。每帧清零后重填，不要跨帧持有。 */
-  readonly collected: CollectedCounts = { gem: 0, coin: 0 };
+  readonly collected: CollectedCounts = { gem: 0, coin: 0, pickup: 0 };
+  /**
+   * 这一帧收走的药和符，按 id。对象复用，读完即可，不要跨帧持有。
+   *
+   * 和 collected 分开：那边只数个数，而这边要知道**收到的是哪一件** —— 四格快捷栏各记各的。
+   */
+  readonly collectedPickups: string[] = [];
   private readonly drops: CollectibleDrop[] = [];
   private readonly visibleDrops: CollectibleDrop[] = [];
   /** 最近一帧可见的掉落物数量，便于性能检查。 */
@@ -125,9 +188,41 @@ export class Collectibles {
     return this.drops.length;
   }
 
+  /**
+   * 这一帧画面里有哪些药和符，以及它们的屏幕位置。Scene 照着这张表摆精灵。
+   *
+   * 复用同一个数组、每帧重填：场上随时几百件掉落，每帧新建一批对象比画它们还贵。调用方读完
+   * 即用，不要跨帧持有。
+   *
+   * **必须在 draw 之后读**：位置是 draw 那一遍里按同一份 bob 和同一个投影算出来的，两处各算
+   * 一遍迟早会差出半个像素，那时图标和它的描边就分家了。
+   */
+  readonly iconDrops: { id: string; x: number; y: number; size: number }[] = [];
+
+  /**
+   * 还躺在地上没被捡走的药和符，**世界坐标**。小地图照着它摆标记。
+   *
+   * 和 iconDrops 是两码事：那一份是屏幕坐标、只含画面里的、而且要等 draw 跑过才有值。这一份
+   * 是全图的 —— 小地图的意义恰恰是告诉玩家**画面外**还有什么。
+   *
+   * 同样复用数组：一局里这个数在零和几十之间，每帧新建一批对象不值得。
+   */
+  readonly pickupMarkers: { id: string; x: number; y: number }[] = [];
+
+  /** 刷新上面那张表。小地图每帧调一次。 */
+  refreshPickupMarkers(): void {
+    this.pickupMarkers.length = 0;
+    for (const d of this.drops) {
+      if (d.kind !== 'pickup' || !d.pickup) continue;
+      this.pickupMarkers.push({ id: d.pickup, x: d.x, y: d.y });
+    }
+  }
+
   clear(): void {
     this.collected.gem = 0;
     this.collected.coin = 0;
+    this.collected.pickup = 0;
+    this.collectedPickups.length = 0;
     this.drops.length = 0;
     this.visibleDrops.length = 0;
     this.drawn = 0;
@@ -135,17 +230,22 @@ export class Collectibles {
     this.replaceAt = 0;
   }
 
-  spawn(kind: CollectibleKind, x: number, y: number): void {
+  spawn(kind: CollectibleKind, x: number, y: number, pickup?: string): void {
     const angle = Math.random() * Math.PI * 2;
-    const speed = 7 + Math.random() * 11;
+    const toss = kind === 'pickup';
+    const speed = toss
+      ? PICKUP_TOSS_MIN + Math.random() * (PICKUP_TOSS_MAX - PICKUP_TOSS_MIN)
+      : 7 + Math.random() * 11;
     const drop: CollectibleDrop = {
       kind,
+      pickup,
       x,
       y,
       z: 4 + Math.random() * 3,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
-      vz: 38 + Math.random() * 24,
+      // 抛得远的也要抛得高一点，否则那条弧是贴着地飞出去的，读作"滑走了"而不是"被抛出去"。
+      vz: toss ? 62 + Math.random() * 26 : 38 + Math.random() * 24,
       age: 0,
       phase: Math.random() * Math.PI * 2,
       bounces: 0,
@@ -171,6 +271,11 @@ export class Collectibles {
     this.spawn('gem', x, y);
   }
 
+  /** 掉一件药或符。本体是贴图，这里只管它怎么落地、怎么被吸走。 */
+  dropPickup(id: string, x: number, y: number): void {
+    this.spawn('pickup', x, y, id);
+  }
+
   dropCoin(x: number, y: number): void {
     this.spawn('coin', x, y);
   }
@@ -178,6 +283,8 @@ export class Collectibles {
   update(dt: number, target: CollectibleTarget): void {
     this.collected.gem = 0;
     this.collected.coin = 0;
+    this.collected.pickup = 0;
+    this.collectedPickups.length = 0;
 
     for (let i = this.drops.length - 1; i >= 0; i--) {
       const d = this.drops[i];
@@ -188,6 +295,7 @@ export class Collectibles {
           this.emitBurst(d.kind, target.x, target.y);
           this.swapRemoveDrop(i);
           this.collected[d.kind]++;
+          if (d.pickup) this.collectedPickups.push(d.pickup);
         }
         continue;
       }
@@ -195,7 +303,10 @@ export class Collectibles {
       this.fall(d, dt);
       const dx = target.x - d.x;
       const dy = target.y - d.y;
-      if (d.age >= MAGNET_DELAY && dx * dx + dy * dy <= MAGNET_RADIUS * MAGNET_RADIUS) {
+      // 三种掉落**同一个吸附半径**。药符只多一条：先问收不收得下，收不下就让它留在地上。
+      if (d.kind === 'pickup' && d.pickup && target.accepts && !target.accepts(d.pickup)) continue;
+      const reach = Math.max(COLLECT_DISTANCE, target.pickupRange);
+      if (d.age >= MAGNET_DELAY && dx * dx + dy * dy <= reach * reach) {
         d.pulling = true;
         d.resting = false;
         d.pullSpeed = 34;
@@ -302,6 +413,7 @@ export class Collectibles {
     };
     const visible = this.visibleDrops;
     visible.length = 0;
+    this.iconDrops.length = 0;
     for (const d of this.drops) {
       if (inView(d.x, d.y, d.z + 2) || inView(d.x, d.y, 0) ||
           (d.pulling && inView(d.trailX, d.trailY, Math.max(1.4, d.z)))) visible.push(d);
@@ -342,7 +454,31 @@ export class Collectibles {
         shapes.disc(at, r * 1.9, tint(palette.glow, 32), depth - 0.1);
       }
 
-      if (d.kind === 'coin') {
+      if (d.kind === 'pickup') {
+        /*
+         * 药和符的**本体不在这里画**：那是一张 icon，由 Scene 建精灵贴上去（见 iconDrops）。
+         * 这里只画它落在草地上的那几笔标识：
+         *
+         *   脚下一圈光环   告诉你"这儿有东西"。一地灵石里，位置比长相先被看到。
+         *   身后一圈描边   贴图本身没有轮廓，压在一堆人腿之间会糊掉；一圈比图标略大的暗色
+         *                  压在底下，图标就从背景里跳出来了。
+         *   一点柔光       让它看着是"亮的"，而不是一张贴在草上的纸。
+         *
+         * 悬浮那一下（bob）上面已经算进 displayZ 了，精灵读的是同一个高度，所以描边和图标
+         * 一起上下飘，不会脱节。
+         */
+        // 比灵石金币大得多。它一局只有几十件，而且要在一地蓝光里被一眼认出来 —— 小了就只是
+        // 草地上又一个亮点。这个 R 同时是描边圈和图标的尺寸，两者永远一致。
+        const R = r * 3.6;
+        shapes.ellipseRing(
+          ground, (4.4 + pulse * 0.8) * scale, (1.75 + pulse * 0.3) * scale, 0,
+          Math.max(0.7, 0.46 * scale), tint(palette.glow, 92), depth - 0.34, 16,
+        );
+        shapes.disc(at, R * 1.08, tint(palette.shell, 190), depth);
+        shapes.disc(at, R * 0.94, tint(palette.glow, 58), depth + 0.01);
+        // 交给 Scene 去贴图标。尺寸跟着颗粒度走，所以缩放时它和场上的人一起变大变小。
+        if (d.pickup) this.iconDrops.push({ id: d.pickup, x: at.x, y: at.y, size: R * 2 });
+      } else if (d.kind === 'coin') {
         // 立着转的金币。用圆片而不是方块，是为了在一地宝石里靠"圆 + 暖色"一眼分出来。
         //
         // 关键是那条厚度带：s 是绕竖轴转角的余弦，|s| 决定正面被压扁多少，e = √(1-s²)

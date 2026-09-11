@@ -167,6 +167,12 @@ function drawStageTile(
  * @param scroll    走过的路，世界单位。人不动，草按它的反方向流 —— 见 drawStageTile。
  * @param tileScale 只放大**地块**，不动人。选人那一台用它把地放宽一点：那是玩家唯一会盯着
  *                  看的一块地，人还在上面走，地宽一点草才流得开。
+ * @param tileGrain 地块自己的颗粒度，默认跟着人走。
+ *
+ *                  分出来是给**骑马的角色**用的：他从脚底到头顶有 24.5 个单位，按同一个
+ *                  倍率画会顶出台子的上沿，所以人要按一个缩小过的颗粒度画（见 main.ts 的
+ *                  MOUNTED_STAGE_SHRINK）。但地块不该跟着缩 —— 一排角色点过去，脚下那块
+ *                  地忽大忽小，读作界面在跳，而它本来是这一屏唯一不该动的东西。
  * @param effects   这一台自己的冲击弧。台子的局部世界原点就是 at，所以镜头传 (0, 0)。
  *                  演示放招时用得上 —— 只播一个挥手动作是看不出"放了个技能"的。
  */
@@ -179,8 +185,9 @@ export function drawFigureStage(
   scrollY = 0,
   tileScale = 1,
   effects: ImpactEffects | null = null,
+  tileGrain = grain,
 ): void {
-  drawStageTile(shapes, at, STAGE_TILE_RADIUS * tileScale, grain, scrollX, scrollY);
+  drawStageTile(shapes, at, STAGE_TILE_RADIUS * tileScale, tileGrain, scrollX, scrollY);
   drawCharacter(
     shapes,
     actor.pose,

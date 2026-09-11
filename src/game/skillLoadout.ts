@@ -6,11 +6,21 @@ import {
   type SkillDef,
   type SkillId,
 } from './skills';
+import { SKILL_MAX_LEVEL, skillMpScale, skillReachScale } from '../data/balance';
 
 /** 主动槽与键位一一对应；UI、输入和战斗逻辑都从这里读，避免各写一份顺序。 */
 export const ACTIVE_SKILL_KEYS = ['Q', 'W', 'E', 'R'] as const;
 export const ACTIVE_SKILL_CODES = ['KeyQ', 'KeyW', 'KeyE', 'KeyR'] as const;
 export type ActiveSkillSlot = 0 | 1 | 2 | 3;
+
+/**
+ * 疾走固定占最后那一格（R），四个角色都一样，装不上也卸不掉。
+ *
+ * 它是走位本身，不是一个配招选择。而且跑步的键位必须永远是同一个 —— 跟着配招变的话，手就
+ * 没法记。所以它不进 apply 那一轮分配，而是在分配完之后直接钉在这一格上。
+ */
+export const SPRINT_SLOT: ActiveSkillSlot = 3;
+export const SPRINT_SKILL: SkillId = 'sprint';
 
 export interface SkillLoadoutSnapshot {
   attack: SkillId;
@@ -19,10 +29,14 @@ export interface SkillLoadoutSnapshot {
   active: (SkillId | null)[];
   equipped: SkillId[];
   cooldowns: Record<SkillId, number>;
+  levels: Record<SkillId, number>;
 }
 
 const cooldownTable = (): Record<SkillId, number> =>
   Object.fromEntries(Skills.map((skill) => [skill.id, 0])) as Record<SkillId, number>;
+
+const levelTable = (): Record<SkillId, number> =>
+  Object.fromEntries(Skills.map((skill) => [skill.id, 1])) as Record<SkillId, number>;
 
 /**
  * 技能装备与独立冷却。
@@ -34,13 +48,44 @@ const cooldownTable = (): Record<SkillId, number> =>
  * Battle 只问“这一项是否装备、是否冷却完”，不再自己维护互斥规则。以后加新技能时，通常只需
  * 在 skills.ts 登记 category 与 cooldown；只在出现全新结算形状时才需要扩展 Battle.castSkill。
  */
+/**
+ * 一局之内能抽到的招，按类别分好。自动攻击技和疾走不在里面 —— 那两样开局就带着。
+ *
+ * 从 Skills 表里现算而不是手写一份：加一个新的主动技或者发射技，牌库自己就长出来了，不用
+ * 再记得回来改一张清单。护身技是例外，一人一张，由角色表指定（HeroDef.passive）。
+ */
+export function runSkillPool(passive: SkillId | null): SkillId[] {
+  const pool = Skills
+    .filter((skill) => skill.id !== SPRINT_SKILL)
+    .filter((skill) => skill.category === 'active' || skill.category === 'projectile')
+    .map((skill) => skill.id);
+  if (passive) pool.push(passive);
+  return pool;
+}
+
+/**
+ * 玩家这一局带着哪些招、各自练到几级、各自冷却到哪儿。
+ *
+ * **开局是空的**：一个自动攻击技，加一双钉死在 R 上的靴子，别的全靠场上收灵石抽牌拿（见
+ * startRun）。以前这几个字段的初值是一整套配好的招 —— 那是**调试**用的，调试菜单一开就能
+ * 把每一招都摆出来看。把调试的方便当成开局状态，玩家第一分钟就拿着满配，一局里再没有"我
+ * 变强了"这回事。
+ */
 export class SkillLoadout {
-  attackSkill: SkillId = 'wave';
-  guardSkill: SkillId | null = 'ironBody';
-  readonly projectileSkills = new Set<SkillId>(['heavenSplit', 'skyArrow']);
-  readonly activeSkillSlots: (SkillId | null)[] = ['lunge', 'aegis', 'dharma', null];
+  attackSkill: SkillId = 'sweep';
+  guardSkill: SkillId | null = null;
+  readonly projectileSkills = new Set<SkillId>();
+  readonly activeSkillSlots: (SkillId | null)[] = [null, null, null, SPRINT_SKILL];
 
   private readonly cooldowns = cooldownTable();
+
+  /**
+   * 每个技能这一局练到了几级，1 起步。
+   *
+   * **一局之内的东西**，和灵石一样：等级是靠场上收灵石抽牌攒起来的，打完就清零。跨局留下来
+   * 的是角色等级和已经学会的招（存档，见 game/profile.ts），不是这一局堆出来的强度。
+   */
+  private readonly levels = levelTable();
 
   snapshot(): SkillLoadoutSnapshot {
     return {
@@ -50,7 +95,42 @@ export class SkillLoadout {
       active: [...this.activeSkillSlots],
       equipped: Skills.filter((skill) => this.isEquipped(skill.id)).map((skill) => skill.id),
       cooldowns: { ...this.cooldowns },
+      levels: { ...this.levels },
     };
+  }
+
+  level(id: SkillId): number {
+    return this.levels[id];
+  }
+
+  maxed(id: SkillId): boolean {
+    return this.levels[id] >= SKILL_MAX_LEVEL;
+  }
+
+  /** 升一级。已经满级返回 false。 */
+  raiseLevel(id: SkillId): boolean {
+    if (this.maxed(id)) return false;
+    this.levels[id]++;
+    return true;
+  }
+
+  /** 这一局还能升级的技能：装备着、而且没满级。三选一的货架就是它。 */
+  upgradable(): SkillDef[] {
+    return Skills.filter((skill) => this.isEquipped(skill.id) && !this.maxed(skill.id));
+  }
+
+  /** 这一招练到现在，作用距离是表里那个数的几倍。 */
+  reachScale(id: SkillId): number {
+    return skillReachScale(this.levels[id]);
+  }
+
+  /** 这一招练到现在，法力开销是表里那个数的几倍。 */
+  mpScale(id: SkillId): number {
+    return skillMpScale(this.levels[id]);
+  }
+
+  resetLevels(): void {
+    for (const skill of Skills) this.levels[skill.id] = 1;
   }
 
   isEquipped(id: SkillId): boolean {
@@ -87,14 +167,16 @@ export class SkillLoadout {
         return true;
 
       case 'active': {
+        // 疾走那一格谁也动不了：它不是配招的一部分，见 SPRINT_SLOT。
+        if (id === SPRINT_SKILL) return enabled;
         const current = this.activeSkillSlots.indexOf(id);
         if (!enabled) {
           if (current >= 0) this.activeSkillSlots[current] = null;
           return true;
         }
         if (current >= 0) return true;
-        const empty = this.activeSkillSlots.indexOf(null);
-        if (empty < 0) return false;
+        const empty = this.activeSkillSlots.indexOf(null, 0);
+        if (empty < 0 || empty === SPRINT_SLOT) return false;
         this.activeSkillSlots[empty] = id;
         return true;
       }
@@ -102,18 +184,23 @@ export class SkillLoadout {
   }
 
   /**
-   * 整套换掉：备战界面选了谁上场，就把那个角色带的几个技能摆进来。
+   * 开一局：清空一切，只留这个角色的自动攻击技和 R 上的疾走。
    *
-   * 一个一个 setEquipped 是不够的 —— 上一个角色留下的发射技和主动槽还在，装出来的会是两个
-   * 角色的并集。所以先清空可清的三类，再按类别规则装回去。**自动攻击那一栏清不掉**（它不
-   * 允许为空，见 setEquipped），角色没写自动攻击技时就保留原来那个。
+   * 清空是必须的，不是保险 —— 上一局抽到的发射技和主动槽还在的话，装出来的会是两局的并集，
+   * 而这一局的全部乐趣就是从零再堆一套。等级和冷却一起归零，理由相同。
+   *
+   * @param attack 这个角色的自动攻击技。**自动攻击那一栏不许为空**（见 setEquipped），它是
+   *               玩家手上唯一一件一直能用的东西。
    */
-  apply(ids: readonly SkillId[]): void {
+  startRun(attack: SkillId): void {
     this.projectileSkills.clear();
     this.guardSkill = null;
     for (let i = 0; i < this.activeSkillSlots.length; i++) this.activeSkillSlots[i] = null;
-    for (const id of ids) this.setEquipped(id, true);
+    this.setEquipped(attack, true);
+    // 疾走钉回 R。它不参与抽牌，也不占牌库的位置 —— 换谁上场、抽到什么，跑步都在同一个键上。
+    this.activeSkillSlots[SPRINT_SLOT] = SPRINT_SKILL;
     this.resetCooldowns();
+    this.resetLevels();
   }
 
   toggle(id: SkillId): boolean {
@@ -125,6 +212,8 @@ export class SkillLoadout {
   /** 把主动技能放到指定键位；同一技能换槽时会先从旧槽移走。 */
   assignActive(slot: ActiveSkillSlot, id: SkillId | null): boolean {
     if (slot < 0 || slot >= this.activeSkillSlots.length) return false;
+    // R 那一格是疾走的，换不了。
+    if (slot === SPRINT_SLOT || id === SPRINT_SKILL) return false;
     if (id === null) {
       this.activeSkillSlots[slot] = null;
       return true;

@@ -99,16 +99,11 @@ export interface UnitDef {
    */
   helmetTone: number;
 
-  /**
-   * 攻击判定：以自己为圆心、朝向为轴的一个扇形。范围是世界单位，张角是弧度。
-   *
-   * 判定不看武器实际扫过哪里 —— 发招的那一刻目标在扇形里就算中。武器、冲击弧这些
-   * 只负责表现。真按几何碰撞判会带来两个麻烦：判定跟着动画的每一次微调漂移，而且
-   * 同样一刀"看着中了却没中"的情况会非常多。范围调成比看上去略大一点，宁可宽一点。
-   */
-  attackRange: number;
-  attackArc: number;
 }
+
+// attackRange 和 attackArc 原来在这里。它们搬到 data/types.ts 的 UnitStats 上去了 ——
+// 这个文件开头那句话是"让一个单位看起来不同于另一个的全部东西"，而判定范围不是长相，
+// 是强度。现在每个兵种的范围和张角写在 data/units.ts，每个角色的写在 data/heroes.ts。
 
 const DEFAULTS: UnitDef = {
   weapon: 'none',
@@ -135,8 +130,6 @@ const DEFAULTS: UnitDef = {
   stature: 1,
   paunch: 0,
   helmetTone: 1,
-  attackRange: 10,
-  attackArc: 1.6,
 };
 
 export const makeUnitDef = (overrides: Partial<UnitDef> = {}): UnitDef => ({ ...DEFAULTS, ...overrides });
@@ -196,9 +189,6 @@ export const UnitPresets = {
       paunch: 0.28,
       reach: 1,
       helmetTone: 1.2,
-      // 武将扫得又远又宽，这是他能割草而杂兵不能的全部原因。
-      attackRange: 34,
-      attackArc: 1.9,
     }),
 
   /** 披风剑士，轮廓最大，一眼能在人堆里找到。 */
@@ -213,13 +203,11 @@ export const UnitPresets = {
       cape: true,
       bulk: 1.05,
       helmetTone: 1.25,
-      attackRange: 16,
-      attackArc: 1.7,
     }),
 
   /** 最基础的杂兵：无甲、软帽、一把刀。 */
   thug: (): UnitDef =>
-    makeUnitDef({ weapon: 'sword', helmet: 'soft', armor: 'cloth', bulk: 0.95, attackRange: 11, attackArc: 1.6 }),
+    makeUnitDef({ weapon: 'sword', helmet: 'soft', armor: 'cloth', bulk: 0.95 }),
 
   /** 持盾兵：正面难打，得绕后。 */
   shieldman: (): UnitDef =>
@@ -229,8 +217,6 @@ export const UnitPresets = {
       helmet: 'cap',
       armor: 'leather',
       helmetTone: 1.1,
-      attackRange: 11,
-      attackArc: 1.5,
     }),
 
   /** 长枪兵：够得远。 */
@@ -243,8 +229,6 @@ export const UnitPresets = {
       tassel: true,
       // 杆长 15 × 2.6 = 39 个世界单位；角色连头盔约 18.3，高度超过两个完整角色。
       reach: 2.6,
-      attackRange: 20,
-      attackArc: 0.9,
     }),
 
   /** 弓手：远程。 */
@@ -255,9 +239,6 @@ export const UnitPresets = {
       armor: 'cloth',
       quiver: true,
       bulk: 0.92,
-      // 停在约 77 单位外放箭，给箭留下足够飞行时间，让玩家能靠移动躲开固定落点。
-      attackRange: 96,
-      attackArc: 1.4,
     }),
 
   /**
@@ -308,8 +289,6 @@ export const UnitPresets = {
       skirt: true,
       bulk: 1.08,
       helmetTone: 1.1,
-      attackRange: 16,
-      attackArc: 1.7,
     }),
 
   /** 精英：重甲、大盾、刀。 */
@@ -324,8 +303,6 @@ export const UnitPresets = {
       bulk: 1.12,
       stature: 1.06,
       helmetTone: 0.9,
-      attackRange: 19,
-      attackArc: 1.5,
     }),
 
   /**
@@ -348,8 +325,6 @@ export const UnitPresets = {
       bulk: 1.02,
       reach: 1.7,
       helmetTone: 1.05,
-      attackRange: 16,
-      attackArc: 1.25,
     }),
 
   // ------------------------------------------------------------ 骑兵
@@ -377,8 +352,6 @@ export const UnitPresets = {
       skirt: true,
       bulk: 1.02,
       helmetTone: 1.1,
-      attackRange: 20,
-      attackArc: 1.6,
     }),
 
   /**
@@ -403,8 +376,6 @@ export const UnitPresets = {
       bulk: 1.06,
       reach: 2.0,
       helmetTone: 1.15,
-      attackRange: 30,
-      attackArc: 0.95,
     }),
 
   /** 骑射：马上开弓。跑得最快、最瘦，站得最远。 */
@@ -418,8 +389,13 @@ export const UnitPresets = {
       leatherKit: true,
       bulk: 0.94,
       helmetTone: 1.05,
-      // 比步弓手近一档：他能靠速度自己拉开距离，站得和步弓手一样远就永远打不到人。
-      attackRange: 84,
-      attackArc: 1.4,
     }),
 };
+
+/**
+ * 形象的名字。数据层用它指一份长相，而不是用下标 —— 下标的表"只能往后加"，中间插一条
+ * 就会把所有角色悄悄换成别人。
+ */
+export type UnitPresetId = keyof typeof UnitPresets;
+
+export const unitAppearance = (id: UnitPresetId): UnitDef => UnitPresets[id]();

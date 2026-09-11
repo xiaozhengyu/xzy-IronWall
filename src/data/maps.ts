@@ -1,21 +1,22 @@
 import type { CharacterPalette } from '../characters/palette';
-import { PALETTE_RED } from '../characters/palette';
-import { UnitPresets, type UnitDef } from '../characters/unitDef';
+import type { UnitDef } from '../characters/unitDef';
 import { DEFAULT_LAYOUT, type TerrainLayout } from '../world/terrain';
 import {
   DEFAULT_SPAWN_TEMPLATE,
-  EnemyKinds,
   PASS_SPAWN_TEMPLATE,
   SNOWFIELD_SPAWN_TEMPLATE,
   STEPPE_SPAWN_TEMPLATE,
-  type EnemyKindId,
   type SpawnTemplate,
 } from './waves';
+import { resolveKind, unitKind, type BossKindId, type UnitKindId } from './units';
+import { NEUTRAL_MODIFIER, type MapModifier } from './types';
 import type { WeatherKind } from '../world/weather';
 
 /**
- * 这张图上会遇到谁。名字和一句说明是界面用的，def 和 palette 是**真的**那一份 ——
- * 小兵直接取自 waves.ts 的出兵表，所以选图时看到的模型就是进去之后走过来的那个人。
+ * 这张图上会遇到谁。名字、说明、模型全部取自 units.ts 的兵种表 —— 选图时看到的那个人就是
+ * 进去之后走过来的那个人，连属性都是同一份。
+ *
+ * 以前这里要给每一条手写 name 和 note，同一个持盾兵在四张图上写了四遍。现在只写 id。
  */
 export interface MapFoe {
   name: string;
@@ -26,11 +27,17 @@ export interface MapFoe {
   boss?: boolean;
 }
 
-/** 从出兵表里取一种兵。取不到就说明 waves.ts 改过名字，宁可当场炸也别默默画错人。 */
-function foe(id: EnemyKindId, name: string, note: string): MapFoe {
-  const kind = EnemyKinds.find((entry) => entry.id === id);
-  if (!kind) throw new Error(`Unknown enemy kind: ${id}`);
-  return { name, note, def: kind.def, palette: kind.palette };
+/** 从兵种表里取一种兵。取不到当场炸 —— 宁可炸也别默默画错人。 */
+function foe(id: UnitKindId, note?: string): MapFoe {
+  const kind = resolveKind(id);
+  const def = unitKind(id);
+  return { name: def.name, note: note ?? def.note, def: kind.def, palette: kind.palette, boss: kind.boss || undefined };
+}
+
+/** 这张图的首领。每张图挑一个，名字各自不同，属性是同一档。 */
+function boss(id: BossKindId, name: string, note: string): MapFoe {
+  const kind = resolveKind(id);
+  return { name, note, def: kind.def, palette: kind.palette, boss: true };
 }
 
 /**
@@ -70,6 +77,14 @@ export interface GameMapDef {
   /** 这张图的出兵表。 */
   template: SpawnTemplate;
   weather: WeatherKind;
+  /**
+   * 这张图对敌人的加成。
+   *
+   * 加它之前，四张图的区别只有地形和出兵比例，所以"这张图难在哪儿"只能靠往模板里塞更多人
+   * 去表达 —— 而人数早就顶到帧耗时的预算了。有了这一层，同一个持盾兵在隘口比在荒原更推不动，
+   * 不用多放一个人。见 MapModifier。
+   */
+  modifier: MapModifier;
 }
 
 /**
@@ -87,13 +102,13 @@ const provingGround: GameMapDef = {
   weatherNote: '晴，局内可切雨雪',
   sight: '全场开阔，只有林地和树墙挡视线',
   foes: [
-    foe('thug', '杂兵', '数量最多，贴身砍'),
-    foe('spearman', '长枪兵', '够得比杂兵远一点'),
-    foe('shieldman', '持盾兵', '正面难打，绕后'),
-    foe('archer', '弓手', '站远处放箭'),
-    foe('cavalry', '骑兵', '后段才来，比谁都高、比谁都快'),
-    // 首领还没接进出兵模板，见 MapFoe.boss。
-    { name: '精锐统领', note: '塔盾与重甲，尚未出现在波次里', def: UnitPresets.elite(), palette: PALETTE_RED, boss: true },
+    foe('thug', '数量最多，贴身砍'),
+    foe('spearman', '够得比杂兵远一点'),
+    foe('shieldman', '正面难打，绕后'),
+    foe('archer', '站远处放箭'),
+    foe('cavalry', '后段才来，比谁都高、比谁都快'),
+    // 首领还没接进出兵模板，见 MapFoe.boss。属性已经有了（units.ts 的 elite），缺的只是出场。
+    boss('elite', '精锐统领', '塔盾与重甲，尚未出现在波次里'),
   ],
   objective: '抵御不断来袭的敌人。',
 
@@ -103,6 +118,8 @@ const provingGround: GameMapDef = {
   layout: DEFAULT_LAYOUT,
   template: DEFAULT_SPAWN_TEMPLATE,
   weather: 'clear',
+  // 基准图，全是 1。别的三张和它比。
+  modifier: NEUTRAL_MODIFIER,
 };
 
 /**
@@ -122,11 +139,11 @@ const blackstonePass: GameMapDef = {
   weatherNote: '阴，风大',
   sight: '最差的一张：中段两侧的林子挡死侧向视野',
   foes: [
-    foe('shieldman', '持盾兵', '这张图的主力，正面推不动'),
-    foe('halberdier', '戟兵', '举过头顶砸下来，够得比刀远'),
-    foe('spearman', '长枪兵', '躲在盾后面往外扎'),
-    foe('thug', '杂兵', '填在队列缝里'),
-    { name: '隘口守将', note: '塔盾与重甲，尚未出现在波次里', def: UnitPresets.elite(), palette: PALETTE_RED, boss: true },
+    foe('shieldman', '这张图的主力，正面推不动'),
+    foe('halberdier', '举过头顶砸下来，够得比刀远'),
+    foe('spearman', '躲在盾后面往外扎'),
+    foe('thug', '填在队列缝里'),
+    boss('elite', '隘口守将', '塔盾与重甲，尚未出现在波次里'),
   ],
   objective: '在窄谷里顶住六波推进。',
 
@@ -153,6 +170,17 @@ const blackstonePass: GameMapDef = {
   },
   template: PASS_SPAWN_TEMPLATE,
   weather: 'clear',
+  // 顶不顶得住：血厚一成半、防御高三成，而且越往后越硬。速度反过来压一档 —— 一堵墙不该
+  // 跑得快，它的压力来自推不动，不是来自追得上。
+  modifier: {
+    enemyHp: 1.15,
+    enemyAttack: 1,
+    enemyDefense: 1.3,
+    enemySpeed: 0.95,
+    hpPerWave: 0.04,
+    defensePerWave: 0.04,
+    expRate: 1.15,
+  },
 };
 
 /**
@@ -173,11 +201,12 @@ const redSandSteppe: GameMapDef = {
   weatherNote: '晴，日头很足',
   sight: '最好的一张：一眼能看到对面的林线',
   foes: [
-    foe('cavalry', '骑兵', '开局就有，冲得最快'),
-    foe('lancer', '枪骑兵', '披着马衣，够得最远'),
-    foe('horseArcher', '骑射', '边跑边放箭，追不上'),
-    foe('peasant', '流民', '徒步的那一部分，填数量'),
-    { name: '荒原头人', note: '塔盾与重甲，尚未出现在波次里', def: UnitPresets.elite(), palette: PALETTE_RED, boss: true },
+    foe('cavalry', '开局就有，冲得最快'),
+    foe('lancer', '披着马衣，够得最远'),
+    foe('horseArcher', '边跑边放箭，追不上'),
+    foe('peasant', '徒步的那一部分，填数量'),
+    // 荒原是骑兵的地方，首领也换成骑着马的那一个。
+    boss('knightBoss', '荒原头人', '面甲与圆盾，比精锐快，尚未出现在波次里'),
   ],
   objective: '在开阔地上撑过六波骑兵冲锋。',
 
@@ -203,6 +232,17 @@ const redSandSteppe: GameMapDef = {
   },
   template: STEPPE_SPAWN_TEMPLATE,
   weather: 'clear',
+  // 又快又脆，正好和隘口相反。速度只敢加一成二：再多，末波的骑兵经追击倍率放大之后会追过
+  // 玩家的冲刺，冲刺这张脱身牌就废了（见 balance.ts 的 MAX_ENEMY_SPEED）。
+  modifier: {
+    enemyHp: 0.9,
+    enemyAttack: 1,
+    enemyDefense: 0.85,
+    enemySpeed: 1.12,
+    hpPerWave: 0,
+    defensePerWave: 0,
+    expRate: 1.1,
+  },
 };
 
 /**
@@ -223,11 +263,11 @@ const whiteRidgeSnowfield: GameMapDef = {
   weatherNote: '雪，默认就在下',
   sight: '中等：湖面一览无余，林子里看不清',
   foes: [
-    foe('archer', '弓手', '这张图的主力，站得最远'),
-    foe('horseArcher', '骑射', '边跑边放，位置一直在变'),
-    foe('shieldman', '持盾兵', '压在前排替弓手挡'),
-    foe('spearman', '长枪兵', '贴着盾往外扎'),
-    { name: '雪原猎首', note: '塔盾与重甲，尚未出现在波次里', def: UnitPresets.elite(), palette: PALETTE_RED, boss: true },
+    foe('archer', '这张图的主力，站得最远'),
+    foe('horseArcher', '边跑边放，位置一直在变'),
+    foe('shieldman', '压在前排替弓手挡'),
+    foe('spearman', '贴着盾往外扎'),
+    boss('elite', '雪原猎首', '塔盾与重甲，尚未出现在波次里'),
   ],
   objective: '在箭雨底下撑过六波。',
 
@@ -252,6 +292,17 @@ const whiteRidgeSnowfield: GameMapDef = {
   },
   template: SNOWFIELD_SPAWN_TEMPLATE,
   weather: 'snow',
+  // 箭更疼。血和防御几乎不动 —— 这张图的难点是"躲不躲得开"，不是"打不打得动"，把敌人
+  // 调硬只会让人在箭雨底下站得更久。
+  modifier: {
+    enemyHp: 1,
+    enemyAttack: 1.15,
+    enemyDefense: 0.95,
+    enemySpeed: 1,
+    hpPerWave: 0,
+    defensePerWave: 0.02,
+    expRate: 1.2,
+  },
 };
 
 export const GameMaps: GameMapDef[] = [

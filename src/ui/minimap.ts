@@ -1,6 +1,7 @@
 import type { Battle } from '../game/battle';
 import type { Field } from '../game/field';
 import type { Camera } from '../render/camera';
+import { pickupImage } from '../items/pickupIcons';
 
 const CANVAS_SIZE = 256;
 const TERRAIN_SIZE = 192;
@@ -20,6 +21,17 @@ const MAX_ZOOM = 8;
  * 这张 256 像素的图上不足半个像素。玩家箭头不在这一层里，仍然逐帧画。
  */
 const ENEMY_LAYER_INTERVAL = 1000 / 12;
+
+/**
+ * 药和符在小地图上画多大，画布像素。
+ *
+ * 14 看着大（这张图才 256 见方），但小了就白画：这些图标本身是十几像素的像素画，缩到八像素
+ * 之后一瓶药和一张符长得一模一样，而"那边是什么"正是这个标记唯一要说的事。地上一次也就躺
+ * 十几件，不会糊住地图。
+ */
+const PICKUP_MARKER = 14;
+/** 贴边那一圈往里收多少，免得图标被外面那道金框切掉半个。 */
+const PICKUP_EDGE_INSET = 3;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -160,6 +172,7 @@ export class Minimap {
       ctx.imageSmoothingEnabled = smoothing;
     }
 
+    this.drawPickups(battle, mapX, mapY, radius);
     this.drawPlayer(mapX(battle.player.x), mapY(battle.player.y), battle.player.facing);
 
     // 内圈暗角既压住圆形裁剪边缘，也让贴边标记不和金框抢层次。
@@ -208,6 +221,59 @@ export class Minimap {
     this.enemyTop = top;
     this.enemyScale = scale;
     this.enemyAt = now;
+  }
+
+  /**
+   * 地上还没捡的药和符。
+   *
+   * 圈里的画在它该在的位置上，**圈外的贴到边上**，贴的仍然是那件东西自己的图标 —— 不是箭头。
+   * 箭头只能说"那边有东西"，而这一栏真正要回答的是"那边有什么，值不值得跑一趟"：地上同时
+   * 躺着一瓶血和一张符时，箭头把两者说成了同一件事。
+   *
+   * 图标一律画满不缩小，贴边的那些也一样：小地图上一个八像素的东西再按距离缩就读不出是什么
+   * 了。远近由位置交代，是什么由图交代，两件事不抢同一个通道。
+   */
+  private drawPickups(
+    battle: Battle,
+    mapX: (worldX: number) => number,
+    mapY: (worldY: number) => number,
+    radius: number,
+  ): void {
+    battle.collectibles.refreshPickupMarkers();
+    const markers = battle.collectibles.pickupMarkers;
+    if (markers.length === 0) return;
+
+    const ctx = this.context;
+    const size = PICKUP_MARKER;
+    const half = size * 0.5;
+    // 贴边那一圈压在暗角里侧一点，免得图标被金框切掉半个。
+    const edge = radius - half - PICKUP_EDGE_INSET;
+    const smoothing = ctx.imageSmoothingEnabled;
+    ctx.imageSmoothingEnabled = false;
+
+    for (const marker of markers) {
+      const image = pickupImage(marker.id);
+      if (!image) continue; // 图还没加载好，这一件这一帧不画。
+      let x = mapX(marker.x);
+      let y = mapY(marker.y);
+      const dx = x - radius;
+      const dy = y - radius;
+      const dist = Math.hypot(dx, dy);
+      if (dist > edge) {
+        // 贴到圆周上，方向不变 —— 玩家照着这个方向跑就能碰到它。
+        const k = edge / (dist || 1);
+        x = radius + dx * k;
+        y = radius + dy * k;
+        // 贴边的加一圈底，免得压在地形上读不出轮廓。
+        ctx.fillStyle = 'rgba(8, 12, 10, 0.62)';
+        ctx.beginPath();
+        ctx.arc(x, y, half + 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.drawImage(image, Math.round(x - half), Math.round(y - half), size, size);
+    }
+
+    ctx.imageSmoothingEnabled = smoothing;
   }
 
   private drawPlayer(x: number, y: number, facing: number): void {

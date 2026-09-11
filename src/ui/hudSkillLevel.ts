@@ -2,15 +2,16 @@ import skillLevelActiveUrl from '../../assets/hud/icon/diamond-complete.png';
 import skillLevelInactiveUrl from '../../assets/hud/icon/diamond-empty.png';
 import './hudSkillLevel.css';
 
-export const HUD_SKILL_LEVEL_PREVIEW = {
-  level: 3,
-  maximum: 5,
-};
-
-/** 技能等级的纯展示组件；当前使用预览值，后续接入数据时直接更新 level 即可。 */
+/**
+ * 技能等级那一排菱形。
+ *
+ * **两个参数都没有默认值**，必须由调用方给。它们原来的默认是一对预览值（3 级 / 满 5 级），
+ * 那是没接数据时摆着好看的，而"摆着好看的数"一旦当了默认值，接上真数据之后只要有一个调用点
+ * 忘了传，屏幕上就会多出一个永远停在 3 级的技能，而且看不出来是假的。
+ */
 export function createHudSkillLevel(
-  level = HUD_SKILL_LEVEL_PREVIEW.level,
-  maximum = HUD_SKILL_LEVEL_PREVIEW.maximum,
+  level: number,
+  maximum: number,
   className = '',
 ): HTMLElement {
   const root = document.createElement('span');

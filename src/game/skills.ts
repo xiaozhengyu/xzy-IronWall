@@ -9,8 +9,12 @@
  *   飞出去的波 一道波沿着朝向跑出去，路过谁谁死。够得最远，但只有一条线。
  *   突进走廊   人自己冲出去，身体扫过的一路全死。位移和杀伤是同一件事。
  *
- * 这个文件只描述形状，不描述强度。**数值全是占位的** —— 冷却、耗蓝、伤害、硬直一个都没有，
- * 碰到就死，和基础攻击的规则完全一致。先把四种形状摆出来看手感，数值等形状定了再谈。
+ * 这个文件描述的是**形状和节奏**：判定多远多宽、持续多久、冷却几秒。强度不在这里 ——
+ * 伤害由施放者的攻击力算（见 data/balance.ts 的 damageAfterDefense），技能只用 power 说
+ * "这一下比平砍重几档"。耗蓝和硬直仍然一个都没有。
+ *
+ * 被动技能是个例外：它没有形状，全部内容是一包属性加成，写在 data/passives.ts 上。这里只
+ * 登记名字和类别。
  */
 
 export type SkillId =
@@ -22,7 +26,11 @@ export type SkillId =
   | 'dharma'
   | 'heavenSplit'
   | 'skyArrow'
-  | 'ironBody';
+  | 'sprint'
+  | 'ironBody'
+  | 'bulwark'
+  | 'keenEdge'
+  | 'swiftStrike';
 
 /**
  * 技能放进哪一种槽。类别只规定“能装备几个、由谁触发”，kind 继续规定具体怎么结算。
@@ -55,7 +63,11 @@ export const SkillCategoryRules: Record<SkillCategory, SkillCategoryRule> = {
  *   lunge    人跨帧向前冲，每帧结算身体**这一帧碰到**的人。
  *   aura     一个罩子跟着人走，持续若干秒，每帧结算**碰到罩子**的人。
  */
-export type SkillKind = 'instant' | 'wave' | 'lunge' | 'aura' | 'dharma' | 'heavenSplit' | 'skyArrow' | 'passive';
+export type SkillKind =
+  | 'instant' | 'wave' | 'lunge' | 'aura' | 'dharma' | 'heavenSplit' | 'skyArrow'
+  /** 按住才生效的状态技，松开就停。目前只有疾走。 */
+  | 'sustained'
+  | 'passive';
 
 export interface SkillDef {
   id: SkillId;
@@ -70,6 +82,10 @@ export interface SkillDef {
    *
    * 用倍数而不是绝对值：范围本来就是兵种的属性（武将 34、杂兵 11），技能只说"比平时远
    * 多少"。这样换个兵种放同一个技能，远近关系仍然成立。
+   *
+   * **突进是唯一的例外**：它这一项是"冲刺速度是奔跑速度的几倍"。位移技的距离该跟着腿走，
+   * 不该跟着武器长度走 —— 按 attackRange 折算的话，武将（34）冲得比骑士（16）远一倍多，
+   * 而那两个数说的是两把武器有多长，和谁跑得快没有任何关系。
    */
   reach: number;
   /** 判定张角，弧度。null = 用兵种自己的 attackArc。 */
@@ -90,6 +106,21 @@ export interface SkillDef {
    * 位移大、覆盖广的招该等得久一点 —— 突进一下就跨过大半个屏幕，冷却太短等于一直在瞬移。
    */
   cooldown: number;
+  /**
+   * 发动一次要多少法力。
+   *
+   * 目前只有主动技（category 'active'）不为 0 —— 自动攻击和自动发射是一直在跑的底噪，给
+   * 它们记账等于给"活着"记账。蓝不够时按键无效，HUD 上那一格和进冷却时一样置灰。
+   */
+  mpCost: number;
+  /**
+   * 按住时每秒扣多少法力。0 = 这一招按一下就是一下，没有"按住"这回事。
+   *
+   * 只有 kind 'sustained' 用得上。它是**这一版新加的**：疾走把"跑步"从一个免费的按键变成
+   * 了一项要付账的能力，而付账的方式只能是持续的 —— 一次性扣费的跑步等于"点一下开始跑，
+   * 然后永远免费"。
+   */
+  mpDrain: number;
   /**
    * 收招时在落点补一圈，半径按施放者 attackRange 的倍数。0 = 不补。
    *
@@ -113,6 +144,8 @@ export const Skills: SkillDef[] = [
     // 横扫虽然是自动攻击，但命中仍应有完整破坏反馈；与破空、回旋统一为技能级碎片量。
     power: 2,
     cooldown: 0,
+    mpCost: 0,
+    mpDrain: 0,
     finishRing: 0,
   },
   {
@@ -130,6 +163,8 @@ export const Skills: SkillDef[] = [
     duration: 0,
     power: 2,
     cooldown: 0.25,
+    mpCost: 0,
+    mpDrain: 0,
     finishRing: 0,
   },
   {
@@ -144,6 +179,8 @@ export const Skills: SkillDef[] = [
     duration: 0.55,
     power: 2,
     cooldown: 0.45,
+    mpCost: 0,
+    mpDrain: 0,
     finishRing: 0,
   },
   {
@@ -152,13 +189,40 @@ export const Skills: SkillDef[] = [
     note: '向前冲，撞到的全死',
     category: 'active',
     kind: 'lunge',
-    // lunge 的 reach 不是判定距离而是**冲多远**：判定跟着身体走，宽度就是人的宽度。
-    reach: 3.2,
+    /*
+     * lunge 的 reach 不是判定距离，而是**冲刺速度是奔跑的几倍**：判定跟着身体走，宽度就是
+     * 人的宽度。
+     *
+     * 8.2 配 0.22 秒，算出来基准角色每秒 492、一下冲 108 个单位 —— 和这一招最早那一版
+     * （攻击范围 34 × 3.2 ÷ 0.22）分毫不差。中间试过慢到三倍速、并且能按住一直冲的那一版，
+     * 不好玩：这一招的爽点是"眼前一花人已经在那边了"，摊长了就什么都不是，而"按住"把一次
+     * 果断的出手变成了一个要一直盯着蓝条的操作。现在回到按一下就是一下、然后进冷却。
+     *
+     * 换成按奔跑速度折算这一条留着，它改的不是快慢而是**四个角色之间的一致性**：老公式按
+     * attackRange 折算，武将 34、骑士 16，同一招在两个人身上差出两倍多，而那两个数说的是
+     * 武器有多长，和谁跑得快没关系。
+     *
+     * **以后技能升级动的就是这两个数**：reach 往上（冲得更远）、mpCost 往下（放得更勤）。
+     * 冷却和 duration 不该跟着升 —— 那两个改的是节奏，而一招的节奏应该是它的身份。
+     */
+    reach: 8.2,
     arc: null,
     duration: 0.22,
     power: 2,
     // 一下跨过大半个屏幕，不该和平砍同一个频率 —— 那等于玩家一直在瞬移。
     cooldown: 1.5,
+    /*
+     * 放一次的开销。
+     *
+     * 25 点占基准角色蓝池的四分之一：放完还剩 75 点，金钟罩（26）和天地法相（32）都还放得
+     * 起，所以"冲进去再开罩子"是一个放得出来的连招，而不是一按突进就什么都不剩。蓝不够时
+     * 那一格和进冷却时一样置灰。
+     *
+     * 它和 1.5 秒的冷却是两条独立的闸：冷却管这一招自己多久能再放，蓝管它和另外几个主动技
+     * 加起来能放多少。只有冷却的话，最优解永远是三个键轮着按。
+     */
+    mpCost: 25,
+    mpDrain: 0,
     // 冲到头再炸一圈。
     finishRing: 0.95,
   },
@@ -175,6 +239,9 @@ export const Skills: SkillDef[] = [
     duration: 2,
     power: 2,
     cooldown: 3.3,
+    // 顶两秒无敌一样的罩子，是这套技能里最值钱的一个，所以也最贵。
+    mpCost: 26,
+    mpDrain: 0,
     finishRing: 0,
   },
   {
@@ -188,6 +255,8 @@ export const Skills: SkillDef[] = [
     duration: 2.8,
     power: 2,
     cooldown: 4.3,
+    mpCost: 32,
+    mpDrain: 0,
     finishRing: 0,
   },
   {
@@ -201,6 +270,8 @@ export const Skills: SkillDef[] = [
     duration: 0.5,
     power: 2,
     cooldown: 1.7,
+    mpCost: 0,
+    mpDrain: 0,
     finishRing: 0,
   },
   {
@@ -214,8 +285,54 @@ export const Skills: SkillDef[] = [
     duration: 0,
     power: 2,
     cooldown: 1.9,
+    mpCost: 0,
+    mpDrain: 0,
     finishRing: 0,
   },
+  {
+    /*
+     * 疾走：按住 R 就跑，松开就走，跑的时候一直扣蓝。
+     *
+     * 跑步以前是按住 Shift，不花任何代价，于是它根本不是一个决定 —— 没有人会在能跑的时候
+     * 选择走。做成技能之后它和别的主动技抢同一份蓝：跑一段路，就少一次金钟罩。
+     *
+     * **固定占 R 那一格**，四个角色都一样，卸不掉（见 SkillLoadout.apply）。它是走位本身，
+     * 不是一个配招选择；而且它必须永远在同一个键上 —— 跑步的键位跟着配招变，手就没法记。
+     *
+     * 它没有判定，所以 reach / arc / power / finishRing 全是 0：跑多快是全局的
+     * RUN_MULTIPLIER（data/balance.ts），因为那个倍数同时还被突进的速度公式用着，写两份迟早
+     * 会差出来。
+     *
+     * 每秒 30 点这个数是**按回蓝速度倒推**的，不是凭手感定的：回蓝最快的角色（骠骑将军，
+     * 满级每秒 17.9）必须明显慢于它，否则按住 R 就是净值为零甚至为正的免费移动 —— 一路跑
+     * 下去，跑步又变回不用做的决定了。
+     *
+     * 差出去的那一截决定了满蓝能跑多久：一级各角色五到六秒、三百到四百五十个世界单位，
+     * 大概是场地的四分之一。够你追上一队人或者脱开一次包围，不够你一路跑过去；跑完蓝见底，
+     * 突进和罩子都得等回蓝。
+     */
+    id: 'sprint',
+    name: '疾走',
+    note: '按住 R 加速移动，持续耗蓝',
+    category: 'active',
+    kind: 'sustained',
+    reach: 0,
+    arc: null,
+    duration: 0,
+    power: 0,
+    // 没有冷却：它是按住就生效的状态，松开就停，再按就又是它。能不能跑由蓝说了算。
+    cooldown: 0,
+    mpCost: 0,
+    mpDrain: 30,
+    finishRing: 0,
+  },
+  // ------------------------------------------------------------ 被动
+  //
+  // 四个被动，每个角色默认自带一个，卸不掉。它们在**画面上**什么也不做（只有铁布衫有那层
+  // 呼吸提亮，见 scene.ts），真正的内容是一包属性加成，写在 data/passives.ts 上 —— 这里
+  // 只登记"有这么一个技能、叫什么、归哪一类"。
+  //
+  // 加成随玩家等级一起长，所以一个被动在一级和三十级不是同一个东西。见 PassiveDef。
   {
     id: 'ironBody',
     name: '铁布衫',
@@ -227,6 +344,53 @@ export const Skills: SkillDef[] = [
     duration: 0,
     power: 0,
     cooldown: 0,
+    mpCost: 0,
+    mpDrain: 0,
+    finishRing: 0,
+  },
+  {
+    id: 'bulwark',
+    name: '磐石',
+    note: '永久生效，防御与生命上限提高',
+    category: 'guard',
+    kind: 'passive',
+    reach: 0,
+    arc: null,
+    duration: 0,
+    power: 0,
+    cooldown: 0,
+    mpCost: 0,
+    mpDrain: 0,
+    finishRing: 0,
+  },
+  {
+    id: 'keenEdge',
+    name: '锋锐',
+    note: '永久生效，攻击力与攻击范围提高',
+    category: 'guard',
+    kind: 'passive',
+    reach: 0,
+    arc: null,
+    duration: 0,
+    power: 0,
+    cooldown: 0,
+    mpCost: 0,
+    mpDrain: 0,
+    finishRing: 0,
+  },
+  {
+    id: 'swiftStrike',
+    name: '疾锋',
+    note: '永久生效，攻击频率与移动速度提高',
+    category: 'guard',
+    kind: 'passive',
+    reach: 0,
+    arc: null,
+    duration: 0,
+    power: 0,
+    cooldown: 0,
+    mpCost: 0,
+    mpDrain: 0,
     finishRing: 0,
   },
 ];
