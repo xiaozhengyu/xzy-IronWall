@@ -164,7 +164,7 @@ function drawDomeBeads(
       const py = Math.sin(a) * ct;
       const pz = Math.sin(a) * st;
       // 球面投到屏幕：横向按半径，纵向跟着壳子那圈一起压到 0.86。
-      const at2 = {
+      const at = {
         x: cx + (px * cs - py * sn) * radius,
         y: cy + (px * sn + py * cs) * radius * 0.86,
       };
@@ -185,22 +185,22 @@ function drawDomeBeads(
 
       if (k === 0) {
         if (glow > 3) {
-          shapes.disc(v2(at2.x, at2.y), size * 2.1, rgba(255, 196, 92, Math.round(glow * 0.42)), layer);
-          shapes.disc(v2(at2.x, at2.y), size, rgba(255, 236, 176, glow), layer + 0.01);
+          shapes.disc(v2(at.x, at.y), size * 2.1, rgba(255, 196, 92, Math.round(glow * 0.42)), layer);
+          shapes.disc(v2(at.x, at.y), size, rgba(255, 236, 176, glow), layer + 0.01);
           if (front) {
-            shapes.disc(v2(at2.x - size * 0.22, at2.y - size * 0.26), size * 0.44, rgba(255, 252, 236, glow), layer + 0.02);
+            shapes.disc(v2(at.x - size * 0.22, at.y - size * 0.26), size * 0.44, rgba(255, 252, 236, glow), layer + 0.02);
           }
         }
       } else if (head && glow > 3) {
         shapes.capsule(
           v2(head.x, head.y),
-          v2(at2.x, at2.y),
+          v2(at.x, at.y),
           Math.max(0.7, size * (0.2 + fade * 0.38)),
           rgba(255, 206, 120, Math.round(glow * 0.75)),
           layer - 0.01,
         );
       }
-      head = at2;
+      head = at;
     }
   }
 }

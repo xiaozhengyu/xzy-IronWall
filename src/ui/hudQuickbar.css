@@ -198,11 +198,6 @@
   text-align: center;
 }
 
-.hud-quick-slot--depleted .hud-quick-slot-icon {
-  opacity: 0.28;
-  filter: grayscale(1) brightness(0.72);
-}
-
 .hud-quick-slot--empty .hud-quick-slot-body {
   background:
     radial-gradient(circle, rgba(75, 72, 67, 0.14), transparent 58%),

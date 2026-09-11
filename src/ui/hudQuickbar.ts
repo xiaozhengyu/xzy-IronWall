@@ -1,9 +1,6 @@
 import skillFrameLeftUrl from '../../assets/hud/skill/skill-frame-left.png';
 import skillFrameMiddleUrl from '../../assets/hud/skill/skill-frame-middle.png';
 import skillFrameRightUrl from '../../assets/hud/skill/skill-frame-right.png';
-import skill01Url from '../../assets/hud/item/skill/skill-01.png';
-import skill06Url from '../../assets/hud/item/skill/skill-06.png';
-import skill07Url from '../../assets/hud/item/skill/skill-07.png';
 import { SKILL_ICONS } from './skillIcons';
 import { ITEM_SLOT_COUNT, pickupById } from '../data/pickups';
 import { pickupIcon } from '../items/pickupIcons';
@@ -65,12 +62,18 @@ export interface HudQuickbarItemUse {
   duration: number;
 }
 
-const DEFAULT_SKILLS: readonly HudQuickSlotOptions[] = [
-  { key: 'Q', icon: skill01Url, label: 'activeSkillSlot' },
-  { key: 'W', icon: skill06Url, label: 'activeSkillSlot' },
-  { key: 'E', icon: skill07Url, label: 'activeSkillSlot' },
-  { key: 'R', label: 'activeSkillSlot', emptyLabel: 'emptyActiveSkillSlot' },
-];
+/*
+ * 四个主动键位。**只有键位，没有图** —— 装的是哪一招每帧跟着 Battle 走（setSkill）。
+ *
+ * Q/W/E 原来各硬写着一张图（横扫、铁布衫、天地法相），那是塑界面时的占位。现在开局三个主动
+ * 槽本来就是空的，那三张图永远不是玩家真正装着的招，只会让这三格在第一帧里长成不属于它们
+ * 的样子。四格现在和 R 一样：空着，抽到才长出图来。
+ */
+const DEFAULT_SKILLS: readonly HudQuickSlotOptions[] = ['Q', 'W', 'E', 'R'].map((key) => ({
+  key,
+  label: 'activeSkillSlot' as const,
+  emptyLabel: 'emptyActiveSkillSlot' as const,
+}));
 
 const ACTIVE_SKILL_PRESENTATION: Partial<Record<SkillId, { name: HudTextKey }>> = {
   lunge: { name: 'skillLunge' },
@@ -372,7 +375,7 @@ export class HudQuickbar {
   /**
    * 把一格的件数画出来。**一件都没有时整格空着**，不是把图标压暗。
    *
-   * 压暗（--depleted）是原来的做法，那时候快捷栏一进游戏就装着六颗药，压暗说的是"这一格的
+   * 压暗是原来的做法，那时候快捷栏一进游戏就装着六颗药，压暗说的是"这一格的
    * 药刚用完"。现在开局四格全是 0，一个灰图标读起来仍然是"我有这东西"—— 玩家看到的是一排
    * 药和符，而他手上什么都没有。所以没有就不画，和 Q/W/E 三个空技能槽一个样子：只剩一个
    * 空框，捡到第一件才长出图标来。
@@ -387,6 +390,5 @@ export class HudQuickbar {
     }
     if (item.view.icon) item.view.icon.hidden = empty;
     item.view.root.classList.toggle('hud-quick-slot--empty', empty);
-    item.view.root.classList.toggle('hud-quick-slot--depleted', false);
   }
 }

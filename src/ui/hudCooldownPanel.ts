@@ -1,11 +1,4 @@
-import skill01Url from '../../assets/hud/item/skill/skill-01.png';
-import skill02Url from '../../assets/hud/item/skill/skill-02.png';
-import skill03Url from '../../assets/hud/item/skill/skill-03.png';
-import skill04Url from '../../assets/hud/item/skill/skill-04.png';
-import skill05Url from '../../assets/hud/item/skill/skill-05.png';
-import skill06Url from '../../assets/hud/item/skill/skill-06.png';
-import skill08Url from '../../assets/hud/item/skill/skill-08.png';
-import skill09Url from '../../assets/hud/item/skill/skill-09.png';
+import { SKILL_ICONS } from './skillIcons';
 import type { SkillId } from '../game/skills';
 import type { HudText } from './text/hudText';
 import type { HudTextKey } from './text/hudText.types';
@@ -15,7 +8,6 @@ import './hudCooldownPanel.css';
 
 type CooldownEntryDefinition = {
   id: SkillId;
-  icon: string;
   label: HudTextKey;
 };
 
@@ -57,17 +49,24 @@ const COOLDOWN_STEPS = 128;
  * 每个角色只会亮其中几个：自动攻击技一人一个，发射技要抽到才有，护身技也是。空的条目直接
  * 收起来（setSkillState 的 visible），所以这一栏的长度就是"我这一局堆了多少被动输出"。
  */
+/*
+ * 图不写在这张表里，按 id 去 `skillIcons.ts` 取。
+ *
+ * 它原来自己配一列，而那一列和快捷栏、牌、选人界面都对不上：开天在这儿是 skill-05、在牌上是
+ * skill-02，而铁布衫和磐石在这一栏里干脆共用一张。同一招在四个地方长四个样子，而玩家要么
+ * 记名字要么记样子 —— 换个界面就不认得了。
+ */
 export const HUD_COOLDOWN_SKILLS: readonly CooldownEntryDefinition[] = [
-  { id: 'sweep', icon: skill01Url, label: 'skillSweep' },
-  { id: 'spin', icon: skill09Url, label: 'skillSpin' },
-  { id: 'wave', icon: skill03Url, label: 'skillWave' },
-  { id: 'heavenSplit', icon: skill05Url, label: 'skillHeavenSplit' },
-  { id: 'skyArrow', icon: skill08Url, label: 'skillSkyArrow' },
+  { id: 'sweep', label: 'skillSweep' },
+  { id: 'spin', label: 'skillSpin' },
+  { id: 'wave', label: 'skillWave' },
+  { id: 'heavenSplit', label: 'skillHeavenSplit' },
+  { id: 'skyArrow', label: 'skillSkyArrow' },
   // 护身技摆最后，一人一张，抽到之后就一直亮着。
-  { id: 'ironBody', icon: skill06Url, label: 'skillIronBody' },
-  { id: 'bulwark', icon: skill06Url, label: 'skillBulwark' },
-  { id: 'keenEdge', icon: skill02Url, label: 'skillKeenEdge' },
-  { id: 'swiftStrike', icon: skill04Url, label: 'skillSwiftStrike' },
+  { id: 'ironBody', label: 'skillIronBody' },
+  { id: 'bulwark', label: 'skillBulwark' },
+  { id: 'keenEdge', label: 'skillKeenEdge' },
+  { id: 'swiftStrike', label: 'skillSwiftStrike' },
 ];
 
 /** 左下角的动态技能与药效 CD 汇总面板。 */
@@ -91,7 +90,7 @@ export class HudCooldownPanel {
     this.root.appendChild(this.content);
 
     for (const definition of HUD_COOLDOWN_SKILLS) {
-      const view = this.createEntry(definition.icon, text.value(definition.label), true);
+      const view = this.createEntry(SKILL_ICONS[definition.id], text.value(definition.label), true);
       const name = view.root.querySelector('.hud-cooldown-entry-name') as HTMLElement;
       text.bindText(name, definition.label);
       view.root.hidden = true;
