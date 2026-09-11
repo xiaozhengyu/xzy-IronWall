@@ -189,3 +189,10 @@
 .summary-btn.main:hover {
   background: #eadcb8;
 }
+
+/* 药和符那一行。样式在 itemStrip.css，这里只管它和上面那块战况隔开多远。 */
+.summary-items {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #232a38;
+}

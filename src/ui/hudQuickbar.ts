@@ -4,7 +4,7 @@ import skillFrameRightUrl from '../../assets/hud/skill/skill-frame-right.png';
 import skill01Url from '../../assets/hud/item/skill/skill-01.png';
 import skill06Url from '../../assets/hud/item/skill/skill-06.png';
 import skill07Url from '../../assets/hud/item/skill/skill-07.png';
-import bootsUrl from '../../assets/hud/icon/boots.png';
+import { SKILL_ICONS } from './skillIcons';
 import { ITEM_SLOT_COUNT, pickupById } from '../data/pickups';
 import { pickupIcon } from '../items/pickupIcons';
 import type { SkillId } from '../game/skills';
@@ -72,12 +72,12 @@ const DEFAULT_SKILLS: readonly HudQuickSlotOptions[] = [
   { key: 'R', label: 'activeSkillSlot', emptyLabel: 'emptyActiveSkillSlot' },
 ];
 
-const ACTIVE_SKILL_PRESENTATION: Partial<Record<SkillId, { icon: string; name: HudTextKey }>> = {
-  lunge: { icon: skill01Url, name: 'skillLunge' },
-  aegis: { icon: skill06Url, name: 'skillAegis' },
-  dharma: { icon: skill07Url, name: 'skillDharma' },
+const ACTIVE_SKILL_PRESENTATION: Partial<Record<SkillId, { name: HudTextKey }>> = {
+  lunge: { name: 'skillLunge' },
+  aegis: { name: 'skillAegis' },
+  dharma: { name: 'skillDharma' },
   // 疾走固定占 R。一双靴子，和别的招那几张符箓一眼就分得开 —— 它本来也不是一招，是走位。
-  sprint: { icon: bootsUrl, name: 'skillSprint' },
+  sprint: { name: 'skillSprint' },
 };
 
 /** 药用掉之后在左下角那条上闪多久，秒。它不是效果时长，只是一个"生效了"的回执。 */
@@ -177,7 +177,12 @@ export class HudQuickbar {
     slot.levels.replaceChildren(...createHudSkillLevel(next, SKILL_MAX_LEVEL).childNodes);
   }
 
-  setSkillCooldown(index: number, remaining: number, total: number): void {
+  /**
+   * @param countdown 要不要在格子上写秒数。按住型的招正放着的时候给 false：
+   *   那一格照样全灰（它确实按不动），但没有数字可数 —— 能再撑多久只看蓝条，
+   *   写一个不动的"5.0"在那里反而是假消息。技能收了之后数字才出现并开始跑。
+   */
+  setSkillCooldown(index: number, remaining: number, total: number, countdown = true): void {
     const slot = this.skillSlots[index];
     if (!slot?.cooldown || !slot.cooldownValue) return;
     const safeTotal = Number.isFinite(total) ? Math.max(0, total) : 0;
@@ -200,7 +205,7 @@ export class HudQuickbar {
       slot.root.classList.toggle('hud-quick-slot--cooling', cooling);
     }
 
-    const cooldownText = cooling
+    const cooldownText = cooling && countdown
       ? (safeRemaining >= 10 ? String(Math.ceil(safeRemaining)) : safeRemaining.toFixed(1))
       : '';
     if (slot.lastCooldownText === cooldownText) return;
@@ -252,10 +257,14 @@ export class HudQuickbar {
     if (!item || !icon || item.count <= 0 || duration <= 0) return null;
     // 不在这里扣数：账本在 Battle 上，下一帧 setItemCount 会把新的数画上来。两边各扣一次
     // 看着没事（结果一样），但那时候就有两个地方都自称知道还剩几件了。
+    // 效果条上写药的**真名字**，不是"物品 3 效果"。那一条出现的时刻玩家刚按下一个数字键，
+    // 他要确认的正是"我刚刚吃下去的是哪一颗" —— 把键位号再拿回来给他看一遍答的不是这个问题。
+    // 格子里有图就一定有 id（见 setItem），文本表那一条只是兼底。
+    const def = item.options.id ? pickupById(item.options.id) : null;
     return {
       id: item.options.id ?? `item-${index + 1}`,
       icon,
-      label: this.text.value('itemEffect', { key: item.options.key }),
+      label: def?.name ?? this.text.value('itemEffect', { key: item.options.key }),
       duration,
     };
   }
@@ -306,9 +315,13 @@ export class HudQuickbar {
       cooldownValue = document.createElement('span');
       cooldownValue.className = 'hud-text hud-text--pixel hud-quick-slot-cooldown-value';
       slot.append(cooldown, cooldownValue, name, levels);
-    } else if (options.icon) {
+    } else {
+      // 件数那个数字和图标一样，**一律建**。原来它挂在 `options.icon` 下面，而开局四格本来就是
+      // 空的、没有图 —— 于是这个 span 从来没被建过，之后捧到药也永远没地方写数字。
+      // 和上面图标那一段同一条理由：建不建不该取决于建的那一刻有没有东西。
       countValue = document.createElement('span');
       countValue.className = 'hud-text hud-text--pixel hud-quick-slot-count';
+      countValue.hidden = true;
       slot.appendChild(countValue);
     }
 
@@ -345,7 +358,8 @@ export class HudQuickbar {
     const presentation = slot.skillId ? ACTIVE_SKILL_PRESENTATION[slot.skillId] : undefined;
     if (slot.icon) {
       slot.icon.hidden = !presentation;
-      if (presentation) slot.icon.src = presentation.icon;
+      // 图取自全工程那一份表（skillIcons.ts）：快捷栏、三选一、选人界面上同一招是同一张图。
+      if (presentation && slot.skillId) slot.icon.src = SKILL_ICONS[slot.skillId];
     }
     if (slot.name) {
       slot.name.hidden = !presentation;
@@ -366,7 +380,9 @@ export class HudQuickbar {
   private refreshItemCount(item: HudItemSlot): void {
     const empty = item.count <= 0;
     if (item.view.countValue) {
-      item.view.countValue.textContent = String(item.count);
+      // 写成 ×N 而不是光一个数字：和结算、三选一那两排同一个写法（见 itemStrip.ts）。三处说的
+      // 本来就是同一件事，一个光杆的"3"在格子角上还要玩家自己猜它是个数还是快捷键。
+      item.view.countValue.textContent = `×${item.count}`;
       item.view.countValue.hidden = empty;
     }
     if (item.view.icon) item.view.icon.hidden = empty;

@@ -1,18 +1,9 @@
-import skill01Url from '../../assets/hud/item/skill/skill-01.png';
-import skill02Url from '../../assets/hud/item/skill/skill-02.png';
-import skill03Url from '../../assets/hud/item/skill/skill-03.png';
-import skill04Url from '../../assets/hud/item/skill/skill-04.png';
-import skill05Url from '../../assets/hud/item/skill/skill-05.png';
-import skill06Url from '../../assets/hud/item/skill/skill-06.png';
-import skill07Url from '../../assets/hud/item/skill/skill-07.png';
-import skill08Url from '../../assets/hud/item/skill/skill-08.png';
-import skill09Url from '../../assets/hud/item/skill/skill-09.png';
-import skill10Url from '../../assets/hud/item/skill/skill-10.png';
-import bootsUrl from '../../assets/hud/icon/boots.png';
 import { SkillCategoryRules, skillById, type SkillId } from '../game/skills';
 import type { StatBonus } from '../data/types';
 import { HUD_ICON_URLS } from './hudIcons';
+import { SKILL_ICONS } from './skillIcons';
 import { HudFrame } from './hudFrame';
+import { createItemStrip, fillItemStrip, type ItemStripEntry } from './itemStrip';
 import './hudCardPicker.css';
 
 /**
@@ -77,21 +68,6 @@ const STAT_CARDS: StatCard[] = [
  * 牌撞图 —— 那比和另一个技能撞图轻得多，因为它们说的本来就是同一件事（剑=攻击、火=频率），
  * 而 pick 那边还会保证同一轮里不会两张都出现。
  */
-const SKILL_ICONS: Record<SkillId, string> = {
-  sweep: skill01Url,
-  spin: skill09Url,
-  wave: skill03Url,
-  lunge: skill10Url,
-  aegis: skill05Url,
-  dharma: skill08Url,
-  heavenSplit: skill02Url,
-  skyArrow: skill04Url,
-  ironBody: skill06Url,
-  bulwark: skill07Url,
-  sprint: bootsUrl,
-  keenEdge: HUD_ICON_URLS.swords,
-  swiftStrike: HUD_ICON_URLS.fire,
-};
 
 const CARD_COUNT = 3;
 
@@ -150,6 +126,14 @@ export interface HudCardHooks {
   onObtainSkill(skill: SkillId): void;
   /** 玩家选了一张"升级"牌。 */
   onUpgradeSkill(skill: SkillId): void;
+  /**
+   * 手上有哪些药和符。摆在牌底下，图在上、字在下，排法和战场上的快捷栏一致。
+   *
+   * 为什么摆在这儿：抽牌是一局里**世界停住**的两个时刻之一（另一个是结算），而快捷栏上那几格
+   * 只有图和数字，说不出按下去会发生什么。玩家正要决定"这一轮拿什么"，那他手上已经有什么就
+   * 是这个决定的一半。
+   */
+  heldItems(): ItemStripEntry[];
 }
 
 export class HudCardPicker {
@@ -159,6 +143,8 @@ export class HudCardPicker {
 
   private readonly frame = new HudFrame({ skin: 'frame1', className: 'hud-card-panel' });
   private readonly row = document.createElement('div');
+  /** 牌底下那一行"我现在有什么"。 */
+  private readonly items = createItemStrip('hud-card-items item-strip--center');
   private readonly cards: HTMLButtonElement[] = [];
   private offers: HudCardOffer[] = [];
   /** 出场动画跑完才真正藏起来；这期间不再接受选择。 */
@@ -182,6 +168,7 @@ export class HudCardPicker {
     }
 
     this.frame.content.appendChild(this.row);
+    this.frame.content.appendChild(this.items);
     this.root.appendChild(this.frame.root);
   }
 
@@ -195,6 +182,7 @@ export class HudCardPicker {
     this.cancelClose();
     this.offers = this.roll();
     for (let i = 0; i < this.cards.length; i++) this.fill(this.cards[i], this.offers[i]);
+    fillItemStrip(this.items, this.hooks?.heldItems() ?? [], '手上的药与符');
     this.root.hidden = false;
     // 先清空再设回 'in'：菜单里直接关掉时不会经过 'out'，值没变的话入场动画不会重播。
     // 中间那下读 offsetWidth 是为了逼浏览器把清空这一步结算掉。

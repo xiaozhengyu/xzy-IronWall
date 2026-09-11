@@ -2,8 +2,9 @@ import pillHpUrl from '../../assets/hud/item/pill/pill-01.png';
 import pillMpUrl from '../../assets/hud/item/pill/pill-03.png';
 import charmSwiftUrl from '../../assets/hud/item/talisman/talisman-01.png';
 import charmWardUrl from '../../assets/hud/item/talisman/talisman-04.png';
+import pillHpOverTimeUrl from '../../assets/hud/item/pill/pill-05.png';
+import pillMpOverTimeUrl from '../../assets/hud/item/pill/pill-07.png';
 import { Assets, type Texture } from 'pixi.js';
-import { Pickups } from '../data/pickups';
 
 /**
  * 药和符用哪张图。**地上那一件和快捷栏那一格是同一张**，不另画。
@@ -18,16 +19,15 @@ import { Pickups } from '../data/pickups';
 export const PICKUP_ICONS: Record<string, string> = {
   'potion-hp': pillHpUrl,
   'potion-mp': pillMpUrl,
+  // 慢慢回那两种另给一张图：和一口闷的那两种是不同的东西，图一样的话地上躺着的时候分不出。
+  'potion-hp-over-time': pillHpOverTimeUrl,
+  'potion-mp-over-time': pillMpOverTimeUrl,
   'charm-swift': charmSwiftUrl,
   'charm-ward': charmWardUrl,
 };
 
 export const pickupIcon = (id: string): string => PICKUP_ICONS[id] ?? pillHpUrl;
 
-/** 按快捷栏格位排好的图，第 i 个就是第 i 格。界面直接铺这张表。 */
-export const PICKUP_SLOT_ICONS: readonly string[] = [...Pickups]
-  .sort((a, b) => a.slot - b.slot)
-  .map((entry) => pickupIcon(entry.id));
 
 /**
  * 药和符的贴图。**必须先 load 再用。**

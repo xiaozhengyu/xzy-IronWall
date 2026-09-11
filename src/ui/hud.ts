@@ -97,6 +97,8 @@ export class Hud {
 
   /** 灵石收满是否弹卡牌。菜单里可以关掉，关掉就是接这个功能之前的样子。 */
   cardsEnabled = true;
+  /** 门槛过了、但还没找到机会弹的牌。一次只记一张，弹完下一张自然会再攻下来。 */
+  private cardsPending = false;
 
   private readonly combatPanel = new HudFrame({ className: 'hud-combat-panel' });
   private readonly vitals = document.createElement('div');
@@ -378,9 +380,11 @@ export class Hud {
     for (let index = 0; index < battle.skillLoadout.activeSkillSlots.length; index++) {
       const skillId = battle.skillLoadout.activeSkillSlots[index];
       this.quickbar.setSkill(index, skillId);
+      // 正放着的按住型招式（疾走、法相）照样置灰，但不写秒数；收招之后那五秒才开始跑。
       this.quickbar.setSkillCooldown(index,
         skillId ? battle.skillCooldown(skillId) : 0,
-        skillId ? battle.skillCooldownDuration(skillId) : 0);
+        skillId ? battle.skillCooldownDuration(skillId) : 0,
+        !skillId || !battle.skillHolding(skillId));
       // 蓝不够就压暗这一格，和进冷却是同一种压暗。
       this.quickbar.setSkillAffordable(index, !skillId || battle.canAfford(skillId));
       // 格子底下那排菱形。以前填的是写死的预览值（3/5），现在是这一局真的练到了几级。
@@ -422,8 +426,14 @@ export class Hud {
       }
       this.gemProgress.setValue(total - this.gemFloor, this.gemNext - this.gemFloor,
         total > this.lastCollectedGems && !popped);
-      if (this.cardsEnabled && popped) this.cards.show();
+      if (this.cardsEnabled && popped) this.cardsPending = true;
       this.lastCollectedGems = total;
+    }
+    // 攻下的牌先记着，等手里那招放完再弹（见 Battle.sustaining）。这一句在收灵石那个
+    // 分支**外面**：欠着的牌要等的是松手，而松手那一帧未必恰好又收到一颗灵石。
+    if (this.cardsPending && this.cardsEnabled && !battle.sustaining) {
+      this.cardsPending = false;
+      this.cards.show();
     }
   }
 }

@@ -237,9 +237,10 @@
   border: 1px solid #2b3242;
 }
 
+/* 技能图比原来那些 HUD 小图标细（符篓、剑、靴子），12px 下十招糊成一样。 */
 .setup-chip-icon {
-  width: 12px;
-  height: 12px;
+  width: 16px;
+  height: 16px;
   image-rendering: pixelated;
 }
 

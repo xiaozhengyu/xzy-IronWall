@@ -1,6 +1,7 @@
 import './summary.css';
 import { createHudIcon } from './hudIcons';
 import { HudText } from './text/hudText';
+import { createItemStrip, fillItemStrip, type ItemStripEntry } from './itemStrip';
 
 /**
  * 结算画面。一块面板，两种用法：
@@ -42,6 +43,14 @@ export interface SummaryStats {
   level: number;
   /** 这一局升到了几级，0 表示没升。升了就单独写一行 —— 那是玩家最想看到的一条。 */
   levelUp: number;
+  /**
+   * 手上还有哪些药和符，以及各自几个。
+   *
+   * 摆在这里的理由：快捷栏上只有一张图和一个数字，**那两样说不出这东西是干什么的**。玩家
+   * 捡到一张符，图案好看，然后呢？按下去会发生什么，一局打完都不知道。而结算是这一局里唯一
+   * 一个玩家真的会停下来读字的画面。
+   */
+  items: ItemStripEntry[];
 }
 
 export interface SummaryHooks {
@@ -83,6 +92,8 @@ export class SummaryScreen {
   private readonly gems = el('span', 'summary-loot-v', '0');
   private readonly stats: Record<string, HTMLElement> = {};
   private readonly note = el('div', 'summary-note');
+  /** 手上的药和符那一块。图在上、字在下，排法和战场上的快捷栏一致。 */
+  private readonly items = createItemStrip('summary-items item-strip--center');
   private readonly actions = el('div', 'summary-actions');
   private readonly resumeButton = el('button', 'summary-btn main', '继续游戏');
   private readonly endButton = el('button', 'summary-btn', '结束游戏');
@@ -117,6 +128,7 @@ export class SummaryScreen {
     // 一局的"得分"还没有正经公式，所以照实写成它的来源：击杀加收集。摆一个凭空算出来的
     // 分数比不摆更糟 —— 玩家会去猜它怎么来的，而它并不来自任何地方。
     this.stats.loot.textContent = String(stats.coins + stats.gems);
+    fillItemStrip(this.items, stats.items, '药物与符咒');
     this.stats.exp.textContent = `+${stats.exp}`;
     this.stats.level.textContent = stats.levelUp > 0 ? `Lv.${stats.level} ↑` : `Lv.${stats.level}`;
 
@@ -176,6 +188,8 @@ export class SummaryScreen {
     this.stats.exp = this.stat(stats, '经验');
     this.stats.level = this.stat(stats, '等级');
     card.appendChild(stats);
+
+    card.appendChild(this.items);
 
     card.appendChild(this.note);
 

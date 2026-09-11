@@ -2,6 +2,7 @@ import { Container, Graphics, RenderTexture, Sprite, type Renderer } from 'pixi.
 import { RigSpec } from '../characters/rig';
 import { drawAegisDome } from '../effects/aegisDome';
 import { drawDharmaAspect } from '../effects/dharmaAspect';
+import { drawOrbitStars } from '../effects/orbitStars';
 import { SKY_BLADE_LENGTH, drawSkyBlade, heavenSplitBlade, skyArrowBlade } from '../effects/skyBlade';
 import { drawCharacter, drawSkeleton } from '../characters/renderer';
 import type { ImpactEffects } from '../effects/impact';
@@ -357,6 +358,28 @@ export class Scene {
      * 用药那一下**压过**呼吸，而且取的是它自己那条快速衰减的曲线 —— 两者叠加的话，正好赶上
      * 呼吸的低谷时用药就几乎看不出来，而那一下恰恰是最需要被看见的。
      */
+    /*
+     * 磐石那几颗流星画在人**之前**，但深度按它们自己那一行算 —— 于是转到玩家身后时被他挡住，
+     * 转到身前时盖住他的腿。这一条是它和金钟罩、法相最大的不同：那两个是罩在人身上的壳，
+     * 永远在人之后画；流星是绕着他飞的独立物体，它得真的绕到背面去。
+     */
+    if (battle.orbit.count > 0) {
+      drawOrbitStars(
+        shapes,
+        battle.player.x,
+        battle.player.y,
+        battle.orbit.angle,
+        battle.orbit.count,
+        battle.orbit.radius,
+        grain,
+        (x, y, z) => ({
+          x: rootX + (x - camX) * grain,
+          y: rootY + ((y - camY) * Projection.groundSquash - z * Projection.heightSquash) * grain,
+        }),
+        (worldY) => Math.round(cam.worldToScreen(camX, worldY).y) * Projector.DEPTH_PER_ROW,
+      );
+    }
+
     const ironBody = battle.skillLoadout.isEquipped('ironBody');
     const ironBreath = 0.5 + 0.5 * Math.sin((battle.elapsed * Math.PI * 2) / 2.1);
     // 乘到 1 以上：提亮那条公式是 0.1 + v × 0.16，v 顶到 1 只有 0.26，和铁布衫的峰值一样亮 ——
@@ -430,6 +453,8 @@ export class Scene {
     this.primitives = 0;
 
     this.itemLayer.visible = true;
+    // 图鉴是盖满屏的，地上那几件药同样要收（理由见 drawStages）。
+    this.pickupLayer.visible = false;
 
     // 格子边长按颗粒度走，不按屏幕像素 —— 要校对的是出货尺寸下的样子，放大了看反而看不出
     // 该调哪个数。一屏放不下就整体缩小，不做滚动翻页：能一眼扫完全部才是这个界面的理由。
@@ -489,6 +514,9 @@ export class Scene {
   drawStages(field: Field, stages: readonly StageFigure[], map: MapView | null = null): void {
     const t0 = performance.now();
     this.itemLayer.visible = false;
+    // 地上那几件药也收起来。它们是精灵而不是图元，不跟着 prim 清空 —— 上一局最后一帧没捧起来的
+    // 那几件会就这么留在屏幕上，盖到选人界面的台子和地图上。
+    this.pickupLayer.visible = false;
     // 地面精灵只在画地图预览时露出来 —— 台子上那块地是现画的，不用它。
     this.setGroundVisible(field, map !== null);
     if (map) this.drawMapView(field, map);

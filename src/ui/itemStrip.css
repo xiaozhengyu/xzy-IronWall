@@ -1,0 +1,115 @@
+/*
+ * 药和符那一行。结算画面和三选一幕布共用。
+ *
+ * 一条贯穿的规则：**这一行要和战场上的快捷栏读起来是同一排东西**。所以横向、按格位顺序、
+ * 图标在上、方框大小接近。玩家在战场上记住的是"左起第二格是那个蓝色的药"，这里换个方向或者
+ * 换个顺序，他就得重新认一遍。
+ */
+
+/*
+ * 两处的图标要一般大 —— 而它们没长在同一个坐标系里。
+ *
+ * 结算画面挂在 body 上，写 40px 就是屏幕上的 40px；三选一那块幕布在 `.hud` 里，而整个 HUD
+ * 按 `--hud-scale`（= min(宽/1920, 高/1080)）缩过一次 —— 1280 宽的窗口下同样的 40px 只剩 27px。
+ * 同一份 CSS 在两处出来是两个大小，差的就是这一步。
+ *
+ * 所以每个尺寸都乘一个单位，而 HUD 里那份把缩放除回来。乘在宽高上而不是再套一层
+ * `transform: scale()`：变换不改布局盒，那样图标能变大、占位还是小的，一排格子会互相叠上。
+ */
+.item-strip {
+  --item-strip-unit: 1;
+}
+
+.hud .item-strip {
+  --item-strip-unit: calc(1 / var(--hud-scale, 1));
+}
+
+.item-strip[hidden] {
+  display: none !important;
+}
+
+.item-strip-k {
+  margin-bottom: calc(8px * var(--item-strip-unit, 1));
+  font-size: calc(12px * var(--item-strip-unit, 1));
+  letter-spacing: 0.14em;
+  color: #6f7a90;
+}
+
+/*
+ * 允许折行：药符会越加越多，而这一行的宽度是别人（结算卡片、牌面幕布）给的。放不下就换行，
+ * 比横向挤成一条缝好读。
+ */
+.item-strip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(10px * var(--item-strip-unit, 1)) calc(14px * var(--item-strip-unit, 1));
+}
+
+/*
+ * 结算那一块居中。
+ *
+ * 那张卡片是居中的一栏字，左对齐的一行图标挂在下面会读作"没排完"。上面的战况是成对的
+ * 键值、天然铺满整行，而这一行只有两三格 —— 不居中它就吊在左半边。
+ */
+.item-strip--center .item-strip-row,
+.item-strip--center .item-strip-k {
+  justify-content: center;
+  text-align: center;
+}
+
+/*
+ * 一格的宽度**由图标定**（方框 40px），字被压在这个宽度里换行。
+ *
+ * 反过来（宽度由说明定）的话，说明长的那一格会比别的宽一大截，一排图标就不齐了 —— 而那排
+ * 图标对齐正是这一块和快捷栏读成同一排东西的全部原因。
+ */
+.item-strip-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: calc(76px * var(--item-strip-unit, 1));
+  text-align: center;
+}
+
+.item-strip-frame {
+  position: relative;
+  width: calc(40px * var(--item-strip-unit, 1));
+  height: calc(40px * var(--item-strip-unit, 1));
+  display: grid;
+  place-items: center;
+  background: rgba(8, 10, 14, 0.92);
+  border: 1px solid #3a4254;
+}
+
+.item-strip-icon {
+  width: calc(28px * var(--item-strip-unit, 1));
+  height: calc(28px * var(--item-strip-unit, 1));
+  image-rendering: pixelated;
+}
+
+/* 个数压在方框右下角，和快捷栏上那个数字同一个位置。 */
+.item-strip-count {
+  position: absolute;
+  right: calc(-3px * var(--item-strip-unit, 1));
+  bottom: calc(-5px * var(--item-strip-unit, 1));
+  padding: calc(1px * var(--item-strip-unit, 1)) calc(4px * var(--item-strip-unit, 1));
+  background: rgba(0, 0, 0, 0.82);
+  color: #f0e6d2;
+  font-size: calc(10px * var(--item-strip-unit, 1));
+  line-height: 1.2;
+}
+
+.item-strip-n {
+  margin-top: calc(7px * var(--item-strip-unit, 1));
+  color: #e8dcc0;
+  font-size: calc(12px * var(--item-strip-unit, 1));
+  line-height: 1.25;
+}
+
+/* 说明比名字暗一档、小一档：一眼扫过去先读到名字，要细看才落到这一行。 */
+.item-strip-note {
+  margin-top: calc(2px * var(--item-strip-unit, 1));
+  color: #8b94a8;
+  font-size: calc(10px * var(--item-strip-unit, 1));
+  line-height: 1.3;
+}

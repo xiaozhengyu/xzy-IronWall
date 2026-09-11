@@ -179,20 +179,23 @@
   display: grid;
 }
 
+/*
+ * 件数。形状、底色、字色都和结算、三选一那两排对齐（见 itemStrip.css）。
+ *
+ * 原来是一颗白字圆角药丸，那两处是黑底方角。三处说的是同一件事，长成两个样子只会让玩家
+ * 多认一遍。位置仍按百分比压在格子右下角 —— 格子本身是一张有边框的图，像素偏移接不住缩放。
+ */
 .hud-quick-slot-count {
   position: absolute;
   right: 11%;
   bottom: 9%;
   z-index: 5;
-  min-width: 16px;
-  padding: 2px 4px;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.78);
-  color: #fff;
+  padding: calc(1px * var(--hud-font-scale, 1)) calc(4px * var(--hud-font-scale, 1));
+  background: rgba(0, 0, 0, 0.82);
+  color: #f0e6d2;
   font-size: calc(11px * var(--hud-font-scale, 1));
-  line-height: 1;
+  line-height: 1.2;
   text-align: center;
-  text-shadow: 0 1px 1px #000;
 }
 
 .hud-quick-slot--depleted .hud-quick-slot-icon {

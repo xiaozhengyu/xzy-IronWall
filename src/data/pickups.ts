@@ -7,7 +7,8 @@
  *
  * 两类东西回答两个不同的问题：
  *
- *   药   现在就要活下去 —— 立刻回一截血或蓝，没有持续时间。
+ *   药   把血和蓝补回来。分**立刻一口**（restore）和**慢慢回**（regen）两种：前者救命，后者
+ *        总量更大但要几秒才给完，血快空的时候救不了你。
  *   符   接下来这十几秒要打得更凶 —— 一包乘算加成，到点就没。
  *
  * **这个文件不 import 图片。** 图在 src/items/pickupIcons.ts 那边按 id 配 —— 战斗那一侧要读
@@ -24,12 +25,6 @@ export interface PickupDef {
   kind: PickupKind;
   /** 界面上那行小字。 */
   note: string;
-  /**
-   * 占快捷栏第几格，也就是按哪个数字键。0 起步。
-   *
-   * 固定死而不是按拿到的顺序排：手要记住"一号是回血"，那就不能让它今天在一号明天在三号。
-   */
-  slot: number;
   /** 掉落权重，相对值。四种加起来才是 PICKUP_DROP_CHANCE 那一份。 */
   weight: number;
   /**
@@ -39,6 +34,14 @@ export interface PickupDef {
    * 定的药到后期就是一口不痛不痒的水。
    */
   restore?: { hp?: number; mp?: number };
+  /**
+   * 药：**每秒**回多少，同样按上限的比例。配 duration 一起用。
+   *
+   * 和 restore 是两种药，不是一个字段的两种写法：restore 是"现在就要活下去"，一口下去立刻
+   * 回一截；regen 是"接下来这几秒稳住"，总量更大但摊开给。血快空的时候前者救命，后者救不了；
+   * 而在还有余裕时用后者更划算 —— 这个取舍正是两种药并存的理由。
+   */
+  regen?: { hp?: number; mp?: number };
   /** 符：一包乘算加成，和属性卡走同一条路（applyBonuses）。 */
   buff?: StatBonus;
   /** 符生效多久，秒。药是 0。 */
@@ -51,7 +54,6 @@ export const Pickups: readonly PickupDef[] = [
     name: '回血丹',
     note: '立刻回三成生命',
     kind: 'potion',
-    slot: 0,
     // 血比蓝值钱，所以掉得少一点。
     weight: 0.9,
     restore: { hp: 0.3 },
@@ -62,10 +64,34 @@ export const Pickups: readonly PickupDef[] = [
     name: '回蓝丹',
     note: '立刻回四成法力',
     kind: 'potion',
-    slot: 1,
     weight: 1.1,
     restore: { mp: 0.4 },
     duration: 0,
+  },
+  {
+    /*
+     * 续命丹：八秒里每秒回 4.5%，一共三成六。
+     *
+     * 总量比回血丹（立刻三成）多一点，但要八秒才给完 —— 这是它的全部代价。血剩一丝的时候
+     * 它救不了你，而在还撑得住的时候它比回血丹划算。两种药的取舍就在这一条上。
+     */
+    id: 'potion-hp-over-time',
+    name: '续命丹',
+    note: '8 秒内每秒回 4.5% 生命',
+    kind: 'potion',
+    weight: 0.8,
+    regen: { hp: 0.045 },
+    duration: 8,
+  },
+  {
+    // 凝神丹。回蓝的那一支同理，总量比凝神一口（四成）多，但摊在八秒里。
+    id: 'potion-mp-over-time',
+    name: '凝神丹',
+    note: '8 秒内每秒回 6% 法力',
+    kind: 'potion',
+    weight: 0.9,
+    regen: { mp: 0.06 },
+    duration: 8,
   },
   {
     /*
@@ -78,7 +104,6 @@ export const Pickups: readonly PickupDef[] = [
     name: '疾行符',
     note: '12 秒内移动速度 +18%，攻击力 +15%',
     kind: 'charm',
-    slot: 2,
     weight: 1,
     buff: { moveSpeed: 0.18, attack: 0.15 },
     duration: 12,
@@ -94,7 +119,6 @@ export const Pickups: readonly PickupDef[] = [
     name: '坚壁符',
     note: '15 秒内生命与法力上限 +25%，涨出来的当场补满',
     kind: 'charm',
-    slot: 3,
     weight: 1,
     buff: { maxHp: 0.25, maxMp: 0.25 },
     duration: 15,
@@ -118,11 +142,11 @@ export const ITEM_STACK_MAX = 9;
  */
 export const ITEM_SLOT_COUNT = 4;
 
+/** 慢慢回那种药多久跳一次，秒。一秒一跳：跳得太密飘字连成一串，太疏又读不出它还在回。 */
+export const REGEN_TICK = 1;
+
 export const pickupById = (id: string): PickupDef | null =>
   Pickups.find((entry) => entry.id === id) ?? null;
-
-export const pickupAtSlot = (slot: number): PickupDef | null =>
-  Pickups.find((entry) => entry.slot === slot) ?? null;
 
 /** 按权重摇一件。掉落那一侧只问"这次掉什么"，不关心权重怎么排的。 */
 export function rollPickup(random: () => number = Math.random): PickupDef {

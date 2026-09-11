@@ -4,7 +4,8 @@ import type { GameMapDef } from '../data/maps';
 import { SkillCategoryRules, skillById, type SkillCategory, type SkillId } from '../game/skills';
 import { ARCHETYPE_LABEL } from '../data/heroes';
 import type { WeatherKind } from '../world/weather';
-import { createHudIcon, type HudIconName } from './hudIcons';
+import { createHudIcon } from './hudIcons';
+import { createSkillIcon } from './skillIcons';
 import { HudText } from './text/hudText';
 
 /**
@@ -30,19 +31,6 @@ import { HudText } from './text/hudText';
  * 用 DOM 而不是画进画布，理由和暂停面板同一条：这里全是十几号字，而画布上的东西要先被量化
  * 到像素格子里再最近邻放大。画进画布的只有人、地图和敌人 —— 那些本来就该吃像素网格。
  */
-
-/**
- * 每个技能类别配一个已有的 HUD 图标。
- *
- * 技能自己没有图 —— 与其为这一版画九张，不如借 HUD 上那套：玩家在战斗里见过它们，
- * 这里再见到时读的是同一套语汇。等真有技能图标了，换掉这一张表就行。
- */
-const CATEGORY_ICONS: Record<SkillCategory, HudIconName> = {
-  attack: 'swords',
-  projectile: 'bow',
-  guard: 'shield',
-  active: 'fire',
-};
 
 /**
  * 地图上的一个点位。
@@ -149,16 +137,16 @@ function line(parent: HTMLElement, key: string, value: string): void {
  */
 function groupSkills(
   ids: readonly SkillId[],
-): { group: string; icon: HudIconName; skills: { name: string; note: string }[] }[] {
+): { group: string; skills: { id: SkillId; name: string; note: string }[] }[] {
   const order: SkillCategory[] = ['attack', 'active', 'projectile', 'guard'];
   const out = [];
   for (const category of order) {
     const skills = ids
       .map((id) => skillById(id))
       .filter((skill) => skill.category === category)
-      .map((skill) => ({ name: skill.name, note: skill.note }));
+      .map((skill) => ({ id: skill.id, name: skill.name, note: skill.note }));
     if (skills.length === 0) continue;
-    out.push({ group: SkillCategoryRules[category].name, icon: CATEGORY_ICONS[category], skills });
+    out.push({ group: SkillCategoryRules[category].name, skills });
   }
   return out;
 }
@@ -368,7 +356,7 @@ export class SetupScreen {
     for (const group of groupSkills(this.bridge.progress.skills(hero))) {
       for (const skill of group.skills) {
         const chip = el('span', 'setup-chip');
-        chip.appendChild(createHudIcon(group.icon, 'setup-chip-icon'));
+        chip.appendChild(createSkillIcon(skill.id, 'setup-chip-icon'));
         chip.appendChild(el('span', undefined, skill.name));
         chip.title = `${group.group} · ${skill.note}`;
         chips.appendChild(chip);

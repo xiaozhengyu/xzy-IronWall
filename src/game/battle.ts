@@ -11,6 +11,12 @@ import {
   DAMAGE_VARIANCE,
   MIN_DAMAGE,
   MAX_LEVEL,
+  SKILL_MAX_LEVEL,
+  ORB_ORBIT_REACH,
+  ORB_SPIN,
+  ORB_HIT_RADIUS,
+  ORB_HIT_GAP,
+  ORB_POWER,
   expToNextLevel,
   RUN_MULTIPLIER,
   SKILL_DAMAGE_PER_POWER,
@@ -18,7 +24,7 @@ import {
   PICKUP_DROP_CHANCE,
   damageAfterDefense,
 } from '../data/balance';
-import { ITEM_SLOT_COUNT, ITEM_STACK_MAX, pickupById, rollPickup } from '../data/pickups';
+import { ITEM_SLOT_COUNT, ITEM_STACK_MAX, REGEN_TICK, pickupById, rollPickup } from '../data/pickups';
 import { Heroes } from '../data/heroes';
 import { NEUTRAL_MODIFIER, type HeroDef, type MapModifier, type StatBonus, type UnitStats } from '../data/types';
 import type { ResolvedUnitKind } from '../data/types';
@@ -414,6 +420,15 @@ const PACE_TAU = 0.18;
  */
 const ITEM_FLASH_TIME = 0.62;
 
+/**
+ * 按住型的技能要**还剩得住这么多秒**才算开得起，秒。
+ *
+ * 只看"这一帧扣得动吗"是不够的：蓝快空时每帧扣一点、回一点，隔几帧就又攒够一帧的开销，于是
+ * 疾走在走和跑之间抖、法相在开和收之间闪。要求留出四分之一秒的余量，见底那一下就是干净的
+ * 一次停止，而不是一段抽搐。
+ */
+const SUSTAIN_RESERVE = 0.25;
+
 const RESPAWN_DELAY = 1.2;
 
 /**
@@ -761,6 +776,58 @@ export class Battle {
    */
   sprinting = false;
 
+  /**
+   * 这一帧 R 还撑着（键按着、没进冷却、蓝也够）。
+   *
+   * 和 `sprinting` 分开是因为站着不动的时候这两件事不一样：姿态还撑着（松手才算结束），
+   * 但人没在跑 —— 跑步买的是位移，原地按着 R 不该烧蓝，也不该把自动攻击停下来。
+   * 不分开的话还会多一个坑：跑着跑着松一下方向键就读作"技能结束"，当场挂上五秒冷却。
+   */
+  private sprintEngaged = false;
+
+  /**
+   * 这一帧还开着的按住型技能。冷却从它们的**下降沿**起算（见 trackSustain）。
+   */
+  private readonly sustainOpen = new Set<SkillId>();
+
+  /**
+   * 按住型技能的冷却：**从它释放完毕那一帧起算**，和键弹没弹无关。
+   *
+   * 盯的是下降沿而不是某一个具体原因：松手是这招结束了，蓝用完也是这招结束了，死了、
+   * 被突进打断同理。对玩家来说就是一件事 —— "这招收了"，收了就开始数秒。分成几种情况各算
+   * 各的，玩家只会觉得那个数字时有时无。
+   */
+  /**
+   * 这一帧正按着某个持续型技能（法相、疾走）。
+   *
+   * 给 HUD 看：**这期间不弹牌**。三选一一弹就接管键盘、停住战斗，而按住型的招正是靠"手一直按着"
+   * 维持的 —— 弹在脸上就是把他正在放的招提前结束掉。牌记下来等就行了，行情不会因为晚两秒而变；
+   * 撑到一半被提前提断则是玩家真会意识到的一下。
+   *
+   * 不用担心卡死：两招都在持续扣蓝，按不了多久就会自己断。
+   */
+  get sustaining(): boolean {
+    return this.sustainOpen.size > 0;
+  }
+
+  private trackSustain(id: SkillId, open: boolean): void {
+    if (open) {
+      this.sustainOpen.add(id);
+      return;
+    }
+    if (this.sustainOpen.delete(id)) this.skillLoadout.consume(id);
+  }
+
+  /**
+   * 这一招正放着。
+   *
+   * HUD 拿它决定这一格怎么画：**置灰但没有数字可数**。放着的时候数字本来就不存在 ——
+   * 能再撑多久只看蓝条，写一个不动的 5.0 在那儿是假消息。收招之后数字才出现并开始跑。
+   */
+  skillHolding(id: SkillId): boolean {
+    return this.sustainOpen.has(id);
+  }
+
   /** 突进：还剩多久、朝哪个方向冲。null = 没在冲。 */
   private lunge: {
     left: number;
@@ -782,8 +849,37 @@ export class Battle {
    */
   aegis: { left: number; total: number; radius: number; power: number } | null = null;
 
-  /** 天地法相：持续判定跟着玩家走；公开状态只供 Scene 同步上半身外壳。 */
-  dharma: { left: number; total: number; radius: number; power: number } | null = null;
+  /**
+   * 天地法相：持续判定跟着玩家走；公开状态只供 Scene 同步上半身外壳。
+   *
+   * `held` 是这一招和金钟罩的分水岭：按着就一直续命（每帧把 left 顶回满并扣蓝），松手立刻
+   * 转成收势，`left` 自己走完那零点三五秒。Scene 拿 left/total 画收放，所以按住时那个壳
+   * 一直是满的，松手才缩回去。
+   */
+  dharma: {
+    left: number; total: number; radius: number; power: number;
+    held: boolean;
+    /**
+     * 已经在收了，再也续不回来。
+     *
+     * 这一条是为了**让它真的会停**。没有它的时候，蓝见底那一刻会发生一件很蠢的事：扣不动了
+     * 就走收势，可收势那零点三五秒里回蓝仍然在涨，攒够一帧的开销又续回满 —— 于是法相钉在
+     * 一点蓝上，一边闪一边永远不结束。闩上之后，收势一开始就是单程的；想再开就是重新按一次，
+     * 重新付起手价。
+     */
+    fading: boolean;
+  } | null = null;
+
+  /**
+   * 磐石那几颗绕着人转的流星：转到哪个角度了，一共几颗。
+   *
+   * 公开给 Scene 画。只存一个角度而不是每颗一份坐标：它们是**等分**在同一条轨道上的，第 i
+   * 颗的角度就是 angle + i × 2π / count，位置每帧现算。存一份状态就没有"画出来的和打人的
+   * 差半个身位"这种事 —— 两边读的是同一个数。
+   *
+   * count 为 0 表示这一局还没拿到磐石。
+   */
+  readonly orbit = { angle: 0, count: 0, radius: 0 };
 
   /** 开天：柄的位置沿施放时的行走朝向推进；Scene 用同一状态画穿云剑模型。 */
   heavenSplit: {
@@ -863,6 +959,14 @@ export class Battle {
    * 而到期是分开到期的 —— 合并之后就没法把先到期的那一份减回去了。
    */
   private readonly timedBonuses: { bonus: StatBonus; left: number }[] = [];
+
+  /**
+   * 正在慢慢回的那几口药，以及各自还剩几秒、离下一跳还差多久。
+   *
+   * 和 timedBonuses 分开：那一份改的是属性，到期要重算；这一份只是每隔一秒往血蓝里加一笔，
+   * 到期什么也不用收拾。可以同时喝好几口，各回各的 —— 合并成一个速率会让先喝的那口提前结束。
+   */
+  private readonly regens: { hp: number; mp: number; left: number; since: number }[] = [];
 
   /**
    * 快捷栏那几格：每格装的是哪一件、装了几个。**格位按先后顺序占，不是按物品表钉死的。**
@@ -1144,6 +1248,15 @@ export class Battle {
   applyPickup(id: string): boolean {
     const def = pickupById(id);
     if (!def || !this.player.alive) return false;
+    if (def.regen && def.duration > 0) {
+      this.regens.push({
+        hp: def.regen.hp ?? 0,
+        mp: def.regen.mp ?? 0,
+        left: def.duration,
+        // since 给满一跳：喝下去**立刻**回第一口，而不是干等一秒才看到第一个数。
+        since: REGEN_TICK,
+      });
+    }
     if (def.restore) {
       if (def.restore.hp) {
         const before = this.player.hp;
@@ -1203,6 +1316,43 @@ export class Battle {
     // follow：这一下发生在**玩家身上**，不是发生在地上某一点。他一边跑一边回，数字得跟着他
     // 走，否则就是掉在身后的一串数。以后的持续回血、回蓝药更要靠这一条。
     this.damageNumbers.spawn(this.player.x, this.player.y, value, { style, sign, follow: true });
+  }
+
+  /**
+   * 慢慢回那种药：每隔一秒回一口，头顶飘一个数。
+   *
+   * 按**跳**给而不是每帧按 dt 给：每帧回 0.6 点血是看不见的，玩家只会发现血条自己在长，
+   * 而不知道那是刚才那口药。一秒一个数字飘上去，"我还在回血"这件事才是明说的 —— 那几个数
+   * 跟着人走（见 floatGain 的 follow），所以边跑边回也读得出来。
+   */
+  private advanceRegens(dt: number): void {
+    if (this.regens.length === 0) return;
+    for (let i = this.regens.length - 1; i >= 0; i--) {
+      const r = this.regens[i];
+      const step = Math.min(dt, r.left);
+      r.left -= dt;
+      r.since += step;
+      if (r.since >= REGEN_TICK) {
+        r.since -= REGEN_TICK;
+        if (r.hp > 0) {
+          const before = this.player.hp;
+          this.player.hp = Math.min(this.player.maxHp, this.player.hp + this.player.maxHp * r.hp);
+          this.floatGain(this.player.hp - before, 'heal', 'plus');
+        }
+        if (r.mp > 0) {
+          const before = this.currentMp;
+          this.currentMp = Math.min(
+            this.player.stats.maxMp,
+            this.currentMp + this.player.stats.maxMp * r.mp,
+          );
+          this.floatGain(this.currentMp - before, 'mana', 'plus');
+        }
+      }
+      if (r.left <= 0) {
+        this.regens[i] = this.regens[this.regens.length - 1];
+        this.regens.pop();
+      }
+    }
   }
 
   /** 符的倒计时。到期一条就把属性重算一遍。 */
@@ -1504,6 +1654,7 @@ export class Battle {
     this.skillLoadout.startRun(this.hero.attackSkill);
     this.runBonus = {};
     this.timedBonuses.length = 0;
+    this.regens.length = 0;
     this.itemSlots.fill(null);
     this.itemFlash = 0;
     this.applyPlayerStats();
@@ -1530,6 +1681,8 @@ export class Battle {
     this.heavenSplit = null;
     this.skyArrow = null;
     this.pendingAttackSkill = this.skillLoadout.attackSkill;
+    this.sustainOpen.clear();
+    this.sprintEngaged = false;
     this.skillLoadout.resetCooldowns();
   }
 
@@ -1947,7 +2100,16 @@ export class Battle {
     this.clock += dt;
     if (!this.defeated) this.runTime += dt;
 
-    this.advanceSprint(dt, input);
+    // 跑步那一格这一帧按着没有。拿到外面来是因为有三个人要读它：松键收冷却、推进跑步本身、
+    // 以及盯住它的下降沿。
+    const sprintHeld = input.heldSlots?.[SPRINT_SLOT] === true;
+    this.advanceSprint(dt, input, sprintHeld);
+    this.trackSustain(SPRINT_SKILL, this.sprintEngaged);
+    // 法相按着没有。松手那一帧就落进收势，所以它必须在 advanceSkills 之前刷。
+    //
+    // 按键状态每帧都要看，**不能只在法相还开着的时候看**：蓝被榨干之后它已经没了，而欠着的
+    // 那个冷却恰恰要等到那之后的某一帧松手才开始走。
+    if (this.dharma) this.dharma.held = this.heldSkill(input, 'dharma');
     this.movePlayer(dt, input);
     this.advanceEnemyArrows(dt);
     this.syncEnemyVisibility(view);
@@ -1960,6 +2122,8 @@ export class Battle {
     this.advancePlayerAttack(dt, view);
     this.swing();
     this.advanceSkills(dt, view);
+    // 法相的下降沿要在 advanceSkills 之后盯：壳子是在那里面收掉的，而收势那一段仍然算在放。
+    this.trackSustain('dharma', this.dharma !== null);
     // 完整怪物和无骨架数据一起移动，并共享避让与分离。
     this.driveEnemies(dt, view);
     this.separate();
@@ -1980,6 +2144,7 @@ export class Battle {
     this.collectedCoins += this.collectibles.collected.coin;
     for (const id of this.collectibles.collectedPickups) this.takeItem(id);
     this.advanceTimedBonuses(dt);
+    this.advanceRegens(dt);
     if (this.itemFlash > 0) this.itemFlash = Math.max(0, this.itemFlash - dt);
     // 玩家作为地表反馈焦点：雪印、水波和水珠不能被同一帧的大量敌人特效覆盖。
     field.update(dt, this.actors(), player);
@@ -2102,15 +2267,42 @@ export class Battle {
    * 突进期间不跑：那一段的速度由突进自己定死（见 movePlayer），再叠一层跑步只会让那 0.22
    * 秒的距离变成一个说不清的数。
    */
-  private advanceSprint(dt: number, input: BattleInput): void {
-    const held = input.heldSlots?.[SPRINT_SLOT] === true;
+  /**
+   * 这一招所在的键位这一帧按着没有。
+   *
+   * 按技能 id 反查槽位，不记"是从哪个键放出来的"：同一招换个槽之后是另一个键，而玩家按的
+   * 永远是它**现在**在的那个键。
+   */
+  private heldSkill(input: BattleInput, id: SkillId): boolean {
+    const slot = this.skillLoadout.activeSkillSlots.indexOf(id);
+    return slot >= 0 && input.heldSlots?.[slot] === true;
+  }
+
+  private advanceSprint(dt: number, input: BattleInput, held: boolean): void {
     if (!held || !this.player.alive || this.lunge) {
+      this.sprintEngaged = false;
       this.sprinting = false;
       return;
     }
-    this.sprinting = this.spendMp(
-      skillById(SPRINT_SKILL).mpDrain * this.skillLoadout.mpScale(SPRINT_SKILL) * dt,
-    );
+    // 跑空之后要等冷却。冷却本身就是闩：一旦 consume，ready 是假的，这里直接返回，
+    // 所以不会每帧再收一次把那五秒一直顶在满格。
+    if (!this.skillLoadout.ready(SPRINT_SKILL)) {
+      this.sprintEngaged = false;
+      this.sprinting = false;
+      return;
+    }
+    // 同样留一档余量：不留的话蓝见底时人会在走和跑之间每隔几帧跳一次，步态看得出来。
+    const rate = skillById(SPRINT_SKILL).mpDrain * this.skillLoadout.mpScale(SPRINT_SKILL);
+    if (this.currentMp < rate * SUSTAIN_RESERVE) {
+      // 跑到脱力：这一招就算收了，五秒从这一帧起算（见 trackSustain）。
+      this.sprintEngaged = false;
+      this.sprinting = false;
+      return;
+    }
+    this.sprintEngaged = true;
+    // 站着不动就不扣蓝：跑步买的是位移，原地按着 R 烧一管蓝换不来任何东西。姿态仍然撑着
+    // （sprintEngaged），所以不会读作"技能结束"；而 sprinting 是假的，自动攻击照挥。
+    this.sprinting = input.moving && this.spendMp(rate * dt);
   }
 
   /**
@@ -2174,7 +2366,9 @@ export class Battle {
     // 蓝不够按不动。HUD 上那一格这时已经是灰的（canAfford），所以玩家不会觉得是按丢了。
     if (!this.spendMp(skill.mpCost * this.skillLoadout.mpScale(skill.id))) return false;
     this.castSkill(skill, view);
-    this.skillLoadout.consume(id);
+    // 按住型的不在这里收冷却。它们的冷却是**脆弱惩罚**而不是发招间隔 —— 脸撑到蓝空才进冷却，
+    // 自己收手则随时能再开（见 advanceSkills 里的 consume）。在这里收会把“有蓝就能放”变回“五秒一次”。
+    if (skill.kind !== 'dharma') this.skillLoadout.consume(id);
     return true;
   }
 
@@ -2187,6 +2381,8 @@ export class Battle {
     if (skillById(id).category === 'attack') {
       return this.skillLoadout.attackSkill === id ? this.player.attackCooldown : 0;
     }
+    // 正放着（见 skillHolding）：按满格返回，格子因此是全灰的；数字由 HUD 另行按住。
+    if (this.skillHolding(id)) return skillById(id).cooldown;
     return this.skillLoadout.cooldownOf(id);
   }
 
@@ -2234,6 +2430,9 @@ export class Battle {
 
   /** 菜单卸下技能时同步撤掉它尚未结束的实体；已经飞出去的通用冲击波仍自然播完。 */
   private clearSkillEffect(id: SkillId): void {
+    // 卸下一招同时抹掉 sustainOpen：下一帧它当然不开着了，不抹的话那一帧会被读成一次
+    // 正常的收招，白白挂上五秒冷却。
+    this.sustainOpen.delete(id);
     switch (id) {
       case 'aegis':
         this.aegis = null;
@@ -2502,7 +2701,15 @@ export class Battle {
       }
 
       case 'dharma': {
-        this.dharma = { left: skill.duration, total: skill.duration, radius: reach, power: skill.power };
+        this.dharma = {
+          left: skill.duration,
+          total: skill.duration,
+          radius: reach,
+          power: skill.power,
+          // 起手那一帧就当按着：玩家按下去的同一帧就该看到它展开，而输入要到下一帧才报"按住"。
+          held: true,
+          fading: false,
+        };
         this.effects.spawn(player.x, player.y, player.facing, {
           power: 1,
           span: Math.PI * 2,
@@ -2739,14 +2946,38 @@ export class Battle {
       if (this.aegis.left <= 0) this.aegis = null;
     }
 
+    this.advanceOrbit(dt);
+
     if (this.dharma) {
-      this.dharma.left -= dt;
+      /*
+       * 按住就一直开着：每帧把 left 顶回满并扣蓝；松手（或者蓝空了）立刻落进收势那零点三五秒。
+       *
+       * 和突进那个"停表"不是一回事。突进是**一段固定的位移**，按住只是把它摊长；法相是一个
+       * **姿态**，按住期间它一直是完全展开的，所以这里要把 left 顶满而不是冻住 —— 顶满之后
+       * Scene 画出来的壳子才是稳的，冻住会让它停在起手那一帧的收放进度上。
+       */
+      const skill = skillById('dharma');
+      const rate = skill.mpDrain * this.skillLoadout.mpScale('dharma');
+      const wants = !this.dharma.fading && this.dharma.held && this.player.alive;
+      // 留一档余量再扣：光看"这一帧扣得动吗"是不够的，剩一点蓝时回蓝每隔几帧就又够扣一帧，
+      // 招式会在开和收之间抖。要求手上还剩得住四分之一秒，它才算还开得起。
+      const afford = this.currentMp >= rate * SUSTAIN_RESERVE;
+      const sustain = wants && afford && this.spendMp(rate * dt);
+      if (sustain) {
+        this.dharma.left = this.dharma.total;
+      } else {
+        // 蓝扣不动也好、玩家松手也好，到这里都是同一件事：落进收势。冷却不在这儿收 ——
+        // 收势那三百五十毫秒仍然算在放，要等壳子真正消失才算结束（见 trackSustain）。
+        this.dharma.fading = true;
+        this.dharma.left -= dt;
+      }
       for (const e of this.enemies) {
         if (!e.alive) continue;
         if (inSector(player, e, this.dharma.radius, Math.PI * 2)) {
           this.strike(e, player.x, player.y, this.dharma.power);
         }
       }
+      // 没有冷却可收（见技能表）：开得起就开，开到蓝空自己停。
       if (this.dharma.left <= 0) this.dharma = null;
     }
 
@@ -2807,6 +3038,55 @@ export class Battle {
       }
     }
   }
+
+  /**
+   * 磐石的流星：转一格，撞该撞的人。
+   *
+   * 几颗由磐石的**技能等级**定，一级一颗、满级五颗 —— 这一招的升级方向是"更多颗"，不是
+   * "转得更快"或者"撞得更疼"。多一颗在画面上是看得见的，而快一点疼一点只是数字变了。
+   *
+   * 一遍遍历敌人、里面比五颗流星，不是五遍遍历：场上随时几百个人，遍历本身比距离计算贵。
+   */
+  private advanceOrbit(dt: number): void {
+    const { player } = this;
+    const owned = this.skillLoadout.guardSkill === 'bulwark' && player.alive;
+    this.orbit.count = owned ? Math.max(1, this.skillLoadout.level('bulwark')) : 0;
+    if (this.orbit.count === 0) return;
+
+    this.orbit.radius = player.stats.attackRange * ORB_ORBIT_REACH;
+    this.orbit.angle = (this.orbit.angle + ORB_SPIN * dt) % (Math.PI * 2);
+
+    const step = (Math.PI * 2) / this.orbit.count;
+    const radius = this.orbit.radius;
+    const now = this.elapsed;
+    // 五颗的位置这一帧只算一次，下面每个敌人都拿它比。
+    const orbX = this.orbitX;
+    const orbY = this.orbitY;
+    for (let i = 0; i < this.orbit.count; i++) {
+      const a = this.orbit.angle + step * i;
+      orbX[i] = player.x + Math.cos(a) * radius;
+      orbY[i] = player.y + Math.sin(a) * radius;
+    }
+
+    const reach = ORB_HIT_RADIUS;
+    for (const e of this.enemies) {
+      if (!e.alive) continue;
+      if (now - e.orbHitAt < ORB_HIT_GAP) continue;
+      const hit = reach + e.radius;
+      for (let i = 0; i < this.orbit.count; i++) {
+        const dx = e.x - orbX[i];
+        const dy = e.y - orbY[i];
+        if (dx * dx + dy * dy > hit * hit) continue;
+        e.orbHitAt = now;
+        this.strike(e, orbX[i], orbY[i], ORB_POWER);
+        break;
+      }
+    }
+  }
+
+  /** 这一帧五颗流星的位置。复用同一对数组 —— 每帧新建五个坐标对是白扔。 */
+  private readonly orbitX = new Float64Array(SKILL_MAX_LEVEL);
+  private readonly orbitY = new Float64Array(SKILL_MAX_LEVEL);
 
   /**
    * 玩家身上此刻**最外面**那一层罩子有多大，世界单位。

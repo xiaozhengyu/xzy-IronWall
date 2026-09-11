@@ -24,10 +24,17 @@ export const Passives: readonly PassiveDef[] = [
     perLevel: { defense: 0.006, maxHp: 0.004, attack: 0.004 },
   },
   {
-    // 骑士。最能挨的那一个，代价是这条被动一点攻击都不给。
+    /*
+     * 骑士。四个护身技里唯一**有画面、会打人**的那个：它还带着几颗绕身飞的流星
+     * （见 effects/orbitStars.ts），升一级多一颗。
+     *
+     * 属性那一包因此压过一档（防御 0.18 → 0.12，生命 0.12 → 0.08）。别的三个护身技全部的
+     * 价值都在这包数字里，而它另外还有一整套输出；不压的话它就不是"四选一"，是"正确答案
+     * 加三个陪跑"。
+     */
     id: 'bulwark',
-    bonus: { defense: 0.18, maxHp: 0.12, attackRange: 0.02 },
-    perLevel: { defense: 0.009, maxHp: 0.007, attackRange: 0.001 },
+    bonus: { defense: 0.12, maxHp: 0.08, attackRange: 0.02 },
+    perLevel: { defense: 0.006, maxHp: 0.005, attackRange: 0.001 },
   },
   {
     // 披风剑士。范围加得最多 —— 他的破空是按 attackRange 折算射程的，所以这一项在他身上

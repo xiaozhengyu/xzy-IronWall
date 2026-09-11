@@ -18,6 +18,8 @@ import { Field } from './game/field';
 import { ItemCatalog } from './items/catalog';
 import { ItemSheet } from './items/renderer';
 import { loadPickupTextures } from './items/pickupIcons';
+import { ITEM_SLOT_COUNT, pickupById } from './data/pickups';
+import type { ItemStripEntry } from './ui/itemStrip';
 import { clamp, v2 } from './core/math';
 import { Camera } from './render/camera';
 import type { MapView, StageFigure } from './render/scene';
@@ -122,6 +124,7 @@ const menu = new Menu({
     field.weather.kind = kind;
   },
   toggleSkill: (id) => battle.toggleSkill(id),
+  items: () => heldItems(),
   resume: () => controls.resume(),
   read: () => {
     // 人从脚底到头顶大约 18.3 个世界单位，被相机俯角压掉一截才是屏幕上的高度。
@@ -569,7 +572,27 @@ function summaryStats(): SummaryStats {
     exp: Math.floor(battle.earnedExp),
     level: profile.level(battle.heroId),
     levelUp: lastLevelUp,
+    // 手上的药和符。快捷栏上只有图和数字，说不出它们是干什么的，而这是唯一一个玩家会停下来
+    // 读字的画面。
+    items: heldItems(),
   };
+}
+
+/**
+ * 快捷栏那几格现在装着什么，带上图和说明。结算画面、三选一幕布、调试面板共用一份。
+ *
+ * **按格位顺序**，不排序也不过滤：战场上玩家记住的是"左起第二格是那个蓝色的药"，这三处摆出来
+ * 的顺序必须和他手指记住的那个顺序一样。
+ */
+function heldItems(): ItemStripEntry[] {
+  const out: ItemStripEntry[] = [];
+  for (let slot = 0; slot < ITEM_SLOT_COUNT; slot++) {
+    const held = battle.itemAt(slot);
+    const def = held ? pickupById(held.id) : null;
+    if (!held || !def) continue;
+    out.push({ id: def.id, name: def.name, note: def.note, count: held.count });
+  }
+  return out;
 }
 
 /**
@@ -1346,6 +1369,7 @@ hud.cards.connect({
   onStatCard: (bonus) => battle.addRunBonus(bonus),
   onObtainSkill: (skill) => battle.obtainSkill(skill),
   onUpgradeSkill: (skill) => battle.upgradeSkill(skill),
+  heldItems: () => heldItems(),
 });
 
 hud.setVisible(false);

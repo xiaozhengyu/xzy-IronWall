@@ -76,6 +76,13 @@ export interface MenuBridge {
   /** 技能目录。category 决定菜单分组，cooldown 用于直接核对每招自己的周期。 */
   readonly skills: { id: SkillId; name: string; note: string; category: SkillCategory; cooldown: number }[];
   /**
+   * 手上的药和符，以及各自是干什么的。每次打开面板现问一次 —— 它一局里一直在变。
+   *
+   * 和技能摆在同一块：对玩家来说"我身上带着什么"是一个问题，不是两个。快捷栏上那几格只有
+   * 图和数字，说不出按下去会发生什么，而这里是他能读到字的地方。
+   */
+  items(): { name: string; note: string; count: number }[];
+  /**
    * 点菜单里的一项 = 按对应的那个键。
    *
    * 菜单不自己实现任何一个功能，只把点击翻译成键码丢回去走 onKeyPressed。于是键盘和鼠标
@@ -153,6 +160,8 @@ export class Menu {
   private readonly spins: Record<string, HTMLElement> = {};
   /** 技能那一行下面的说明，跟着当前选中的技能变。 */
   private skillNote = el('div');
+  private itemRow: HTMLElement = el('div');
+  private itemNote: HTMLElement = el('div');
   /** 键位表那一条。加载时收起来 —— 那时候一个键都还按不了。 */
   private readonly keysBox = el('div');
 
@@ -276,6 +285,18 @@ export class Menu {
       return `${key} ${skill?.name ?? '空'}`;
     }).join(' · ');
     this.skillNote.textContent = `已装备：${equipped || '无'} ｜ 主动槽：${active}`;
+
+    // 药和符：一格一个小牌子，名字加个数，说明挂在 title 上，下面那行再摊开写一遍。
+    const items = this.bridge.items();
+    this.itemRow.replaceChildren();
+    for (const item of items) {
+      const tag = el('span', 'menu-tag', `${item.name} ×${item.count}`);
+      tag.title = item.note;
+      this.itemRow.appendChild(tag);
+    }
+    this.itemNote.textContent = items.length === 0
+      ? '手上没有药物或符咒。它们由敌人掉落，走过去捡。'
+      : items.map((item) => `${item.name}：${item.note}`).join(' ｜ ');
   }
 
   // ---------------------------------------------------------------- 搭面板
@@ -404,6 +425,13 @@ export class Menu {
     }
     this.skillNote = el('div', 'menu-note');
     parent.appendChild(this.skillNote);
+
+    // ---- 药物与符咒
+    //
+    // 只读，不是按钮：这一块回答的是"我手上这几样是干什么的"，用不用得在战场上按数字键。
+    this.itemRow = row(parent, '药物符咒');
+    this.itemNote = el('div', 'menu-note');
+    parent.appendChild(this.itemNote);
 
     // ---- 天气
 

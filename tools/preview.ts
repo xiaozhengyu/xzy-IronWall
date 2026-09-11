@@ -29,6 +29,7 @@ import { v2 } from '../src/core/math';
 import { Projection } from '../src/render/projection';
 import { Projector } from '../src/render/projector';
 import { drawAegisDome } from '../src/effects/aegisDome';
+import { drawOrbitStars, orbitDepthPerRow } from '../src/effects/orbitStars';
 import { drawSkyBlade, skyArrowBlade } from '../src/effects/skyBlade';
 import { forEachCursorPixel } from '../src/render/pointerShape';
 import { ShapeBatch, type PrimitiveSink } from '../src/render/shapeBatch';
@@ -914,6 +915,71 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
 
   writePng('.preview-skillfx.png', sheet.upscale(2));
   console.log('技能特效：上排新画法（压人群之上/加粗/放慢），下排旧画法（贴地）；列 = 横扫 / 回旋 / 破空');
+
+  // ---------------------------------------------------------------- 磐石的流星
+  //
+  // 四列 = 四个技能等级的流星数量。上排空地，下排铺上和上一张图同一群人。
+  //
+  // 分两排是因为这一张要回答两件不同的事，摆在一起两件都答不清楚：上排看尾巴本身——
+  // 它该贴着轨道弯、该越往回越淡越细，读作一条飞过的痕而不是一根插在人身上的棍子；下排看它在
+  // 一地红甲里还认不认得出来，顺便看遵挡：转到玩家身后那几颗该被人群吃掉。
+  {
+    const COUNTS = [1, 2, 3, 5];
+    const RADIUS = 34 * 0.85; // warlord 的 attackRange × ORB_ORBIT_REACH
+    const orbSheet = new Canvas(W * COUNTS.length, H * 2, [71, 105, 59]);
+
+    const orbPanel = (ox: number, oy: number, count: number, crowd: boolean) => {
+      const shapes = new ShapeBatch();
+      const sink = new ShapeSink();
+      const rootX = ox + W / 2;
+      const rootY = oy + H / 2;
+
+      if (crowd) {
+        for (const c of folks) {
+          const at = v2(rootX + c.x * GRAIN, rootY + c.y * Projection.groundSquash * GRAIN);
+          drawCharacter(shapes, c.pose, new Projector(at, c.facing, Projection.groundSquash, GRAIN), PALETTE_RED, c.def);
+        }
+      }
+
+      const hero = new Character(UnitPresets.warlord(), PALETTE_HERO, 32);
+      hero.facing = Math.PI * 0.4;
+      for (let k = 0; k < Math.round(0.35 / STEP); k++) hero.update(STEP, true);
+      drawCharacter(
+        shapes,
+        hero.pose,
+        new Projector(v2(rootX, rootY), hero.facing, Projection.groundSquash, GRAIN),
+        PALETTE_HERO,
+        hero.def,
+      );
+
+      // 角度选 0.7：第一颗转到人的右前方，尾巴扫过他身前；剩下几颗均分在圈上，总有一颗在背面。
+      drawOrbitStars(
+        shapes,
+        0,
+        0,
+        0.7,
+        count,
+        RADIUS,
+        GRAIN,
+        (x, y, z) => ({
+          x: rootX + x * GRAIN,
+          y: rootY + (y * Projection.groundSquash - z * Projection.heightSquash) * GRAIN,
+        }),
+        (worldY) => Math.round(rootY + worldY * Projection.groundSquash * GRAIN) * orbitDepthPerRow,
+      );
+
+      shapes.flushToMesh(sink);
+      for (const s2 of sink.shapes) orbSheet.fillPolygon(s2);
+    };
+
+    COUNTS.forEach((count, col) => {
+      orbPanel(col * W, 0, count, false);
+      orbPanel(col * W, H, count, true);
+    });
+
+    writePng('.preview-orbit.png', orbSheet.upscale(2));
+    console.log('磐石流星：列 = 一 / 二 / 三 / 五颗（技能 1、2、3、5 级），上排空地看尾巴，下排人堆里看认不认得出');
+  }
 }
 
 // ---------------------------------------------------------------- 准心
