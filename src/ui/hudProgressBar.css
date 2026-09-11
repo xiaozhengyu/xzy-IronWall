@@ -50,16 +50,32 @@
   background: var(--hud-empty-slot, #090c12);
 }
 
+/*
+ * 填充的上下两条边**故意溢出槽外**，这是这一块最要紧的一行。
+ *
+ * 量一下：条子设计高 20px，底部那一列缩 0.77，整个 HUD 再缩 --hud-scale（1280 宽下约 0.67）。
+ * 槽只占条子高的三成六，算下来真正落到屏幕上的填充大约四个像素高。
+ *
+ * 填充原来和槽一般高（inset: 0），于是它的上下边和槽的裁切边**压在同一个亚像素位置**。
+ * 收集灵石时 scaleX 每一帧都在变，浏览器要把这个被 clip-path 遮着的盒子重新光栅化，两条重合的
+ * 亚像素边的覆盖率就一帧一个样 —— 看上去就是上下边在闪。
+ *
+ * 向外溢出一像素之后，会动的那个元素就不再贡献上下边了：上下边完全由槽自己那道静止的
+ * 裁切边决定，而它从头到尾一动不动。同理去掉了两条 inset 的发丝高光 —— 1px 在这个尺寸下
+ * 不到一个设备像素，它们恰好就铺在那两条会闪的边上；高光渐变里本来就有。
+ */
 .hud-progress-fill {
   position: absolute;
-  inset: 0;
+  inset: -1px 0;
   transform: scaleX(0);
   transform-origin: left center;
   transition: transform 140ms ease-out;
+  /* 单独一层，收灵石那一下只重新合成、不重新光栅化。 */
+  will-change: transform;
   /* 取敌人掉落灵石那颗方块的本色：高光 #f1ffff、切面 #8bfaff、主体 #22cdec、暗面 #083652
-     （见 world/collectibles.ts）。亮色占大头，条子细的时候才不会看起来发暗。 */
-  background: linear-gradient(180deg, #f1ffff 0%, #8bfaff 26%, #22cdec 64%, #1aa6c9 100%);
-  box-shadow: inset 0 1px rgba(241, 255, 255, 0.95), inset 0 -1px rgba(8, 54, 82, 0.45);
+     （见 world/collectibles.ts）。亮色占大头，条子细的时候才不会看起来发暗。
+     两头各压一段平的：溢出的那一像素吃掉了渐变的一小截，不压的话看得见的最上沿就不是纯白了。 */
+  background: linear-gradient(180deg, #f1ffff 0 12%, #8bfaff 31%, #22cdec 61%, #1aa6c9 88% 100%);
 }
 
 @media (prefers-reduced-motion: reduce) {
