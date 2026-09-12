@@ -3,7 +3,8 @@ import type { StatBonus } from '../data/types';
 import { HUD_ICON_URLS } from './hudIcons';
 import { SKILL_ICONS } from './skillIcons';
 import { HudFrame } from './hudFrame';
-import { createItemStrip, fillItemStrip, type ItemStripEntry } from './itemStrip';
+import { currentItems } from './currentItems';
+import type { ItemStripEntry } from './itemStrip';
 import './hudCardPicker.css';
 
 /**
@@ -129,7 +130,6 @@ export class HudCardPicker {
   private readonly frame = new HudFrame({ skin: 'frame1', className: 'hud-card-panel' });
   private readonly row = document.createElement('div');
   /** 牌底下那一行"我现在有什么"。 */
-  private readonly items = createItemStrip('hud-card-items item-strip--center');
   private readonly cards: HTMLButtonElement[] = [];
   private offers: HudCardOffer[] = [];
   /** 出场动画跑完才真正藏起来；这期间不再接受选择。 */
@@ -153,7 +153,6 @@ export class HudCardPicker {
     }
 
     this.frame.content.appendChild(this.row);
-    this.frame.content.appendChild(this.items);
     this.root.appendChild(this.frame.root);
   }
 
@@ -167,7 +166,8 @@ export class HudCardPicker {
     this.cancelClose();
     this.offers = this.roll();
     for (let i = 0; i < this.cards.length; i++) this.fill(this.cards[i], this.offers[i]);
-    fillItemStrip(this.items, this.hooks?.heldItems() ?? [], '手上的药与符');
+    // 和结算那块共用同一个节点，所以两处的位置天然重合（见 currentItems.ts）。
+    currentItems.show('cards', this.hooks?.heldItems() ?? []);
     this.root.hidden = false;
     // 先清空再设回 'in'：菜单里直接关掉时不会经过 'out'，值没变的话入场动画不会重播。
     // 中间那下读 offsetWidth 是为了逼浏览器把清空这一步结算掉。
@@ -182,6 +182,7 @@ export class HudCardPicker {
     this.blurCards();
     this.root.hidden = true;
     this.root.dataset.phase = '';
+    currentItems.hide('cards');
   }
 
   /**
@@ -217,6 +218,7 @@ export class HudCardPicker {
       this.blurCards();
       this.root.hidden = true;
       this.root.dataset.phase = '';
+      currentItems.hide('cards');
     }, EXIT_MS) as unknown as number;
     return true;
   }

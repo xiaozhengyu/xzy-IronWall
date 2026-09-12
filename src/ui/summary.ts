@@ -1,7 +1,8 @@
 import './summary.css';
 import { createHudIcon } from './hudIcons';
 import { HudText } from './text/hudText';
-import { createItemStrip, fillItemStrip, type ItemStripEntry } from './itemStrip';
+import { currentItems } from './currentItems';
+import type { ItemStripEntry } from './itemStrip';
 
 /**
  * 结算画面。一块面板，两种用法：
@@ -93,7 +94,6 @@ export class SummaryScreen {
   private readonly stats: Record<string, HTMLElement> = {};
   private readonly note = el('div', 'summary-note');
   /** 手上的药和符那一块。图在上、字在下，排法和战场上的快捷栏一致。 */
-  private readonly items = createItemStrip('summary-items item-strip--center');
   private readonly actions = el('div', 'summary-actions');
   private readonly resumeButton = el('button', 'summary-btn main', '继续游戏');
   private readonly endButton = el('button', 'summary-btn', '结束游戏');
@@ -128,7 +128,8 @@ export class SummaryScreen {
     // 一局的"得分"还没有正经公式，所以照实写成它的来源：击杀加收集。摆一个凭空算出来的
     // 分数比不摆更糟 —— 玩家会去猜它怎么来的，而它并不来自任何地方。
     this.stats.loot.textContent = String(stats.coins + stats.gems);
-    fillItemStrip(this.items, stats.items, '药物与符咒');
+    // 那一排药不在卡片里，它是钉在窗口底边、和三选一共用的同一个节点（见 currentItems.ts）。
+    currentItems.show('summary', stats.items);
     this.stats.exp.textContent = `+${stats.exp}`;
     this.stats.level.textContent = stats.levelUp > 0 ? `Lv.${stats.level} ↑` : `Lv.${stats.level}`;
 
@@ -155,6 +156,7 @@ export class SummaryScreen {
 
   hide(): void {
     this.root.hidden = true;
+    currentItems.hide('summary');
   }
 
   private build(): void {
@@ -188,8 +190,6 @@ export class SummaryScreen {
     this.stats.exp = this.stat(stats, '经验');
     this.stats.level = this.stat(stats, '等级');
     card.appendChild(stats);
-
-    card.appendChild(this.items);
 
     card.appendChild(this.note);
 

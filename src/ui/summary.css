@@ -22,7 +22,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  /* 底下多留一条带子给「当前物品」让位（见 currentItems.css）。手上一件都没有时它是 0。 */
+  padding: 24px 24px calc(24px + var(--current-items-band, 0px));
   background: rgba(8, 10, 14, 0.82);
   font-family: ui-monospace, 'Cascadia Mono', Consolas, 'Microsoft YaHei', monospace;
   font-size: 13px;
@@ -191,8 +192,3 @@
 }
 
 /* 药和符那一行。样式在 itemStrip.css，这里只管它和上面那块战况隔开多远。 */
-.summary-items {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid #232a38;
-}

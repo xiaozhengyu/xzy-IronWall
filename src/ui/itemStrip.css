@@ -58,7 +58,7 @@
 }
 
 /*
- * 一格的宽度**由图标定**（方框 40px），字被压在这个宽度里换行。
+ * 一格的宽度**由图标定**（方框 48px），字被压在这个宽度里换行。
  *
  * 反过来（宽度由说明定）的话，说明长的那一格会比别的宽一大截，一排图标就不齐了 —— 而那排
  * 图标对齐正是这一块和快捷栏读成同一排东西的全部原因。
@@ -73,17 +73,24 @@
 
 .item-strip-frame {
   position: relative;
-  width: calc(40px * var(--item-strip-unit, 1));
-  height: calc(40px * var(--item-strip-unit, 1));
+  width: calc(48px * var(--item-strip-unit, 1));
+  height: calc(48px * var(--item-strip-unit, 1));
   display: grid;
   place-items: center;
   background: rgba(8, 10, 14, 0.92);
   border: 1px solid #3a4254;
 }
 
+/*
+ * 图标尺寸**对齐战场上快捷栏里那一格**。
+ *
+ * 快捷栏的图标框是格子的宽 72%、高 62%，配上 object-fit: contain，一张方图落到屏幕上是
+ * 33.6 到 35.8 像素的正方形（两头那两格比中间两格宽一点）。这一排原来是 28，明显小一圈 ——
+ * 而它存在的全部理由就是"和快捷栏读成同一排东西"，大小对不上就差了一口气。
+ */
 .item-strip-icon {
-  width: calc(28px * var(--item-strip-unit, 1));
-  height: calc(28px * var(--item-strip-unit, 1));
+  width: calc(35px * var(--item-strip-unit, 1));
+  height: calc(35px * var(--item-strip-unit, 1));
   image-rendering: pixelated;
 }
 
