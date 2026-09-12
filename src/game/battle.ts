@@ -16,18 +16,20 @@ import {
   ORB_SPIN,
   ORB_HIT_RADIUS,
   ORB_HIT_GAP,
+  AURA_HIT_GAP,
   ORB_POWER,
   expToNextLevel,
   RUN_MULTIPLIER,
   SKILL_DAMAGE_PER_POWER,
   COIN_DROP_CHANCE,
-  PICKUP_DROP_CHANCE,
+  CAMPFIRE_DROP_SPREAD,
   damageAfterDefense,
 } from '../data/balance';
-import { ITEM_SLOT_COUNT, ITEM_STACK_MAX, REGEN_TICK, pickupById, rollPickup } from '../data/pickups';
+import { ITEM_SLOT_COUNT, ITEM_STACK_MAX, REGEN_TICK, pickupById, rollBossPickup, rollPickup } from '../data/pickups';
 import { Heroes } from '../data/heroes';
 import { NEUTRAL_MODIFIER, type HeroDef, type MapModifier, type StatBonus, type UnitStats } from '../data/types';
 import type { ResolvedUnitKind } from '../data/types';
+import { resolveKind } from '../data/units';
 import { expFromKill, resolveEnemyStats, resolveHeroStats } from './stats';
 import { Debris } from '../effects/debris';
 import { WarpField } from '../effects/warpField';
@@ -377,8 +379,19 @@ const CHASE_FAR = 75;
 const CHASE_BOOST = 1.8;
 
 /** 敌人两次出手之间的间隙，秒。给一段随机量，免得一圈人整齐划一地同时挥。 */
-const ENEMY_SWING_GAP = 1.15;
-const ENEMY_SWING_JITTER = 0.7;
+/**
+ * 每一波到点放的那个首领是谁。
+ *
+ * 先只用精锐统领一种：玩家要能一眼认出"这是首领"，而认出一种比认出两种容易。以后要按波次
+ * 换人的话，这里改成一张按波次查的表就行。
+ */
+const BOSS_KIND = 'elite' as const;
+
+/** 首领挨一下定在原地多久，秒。只停脚不停手（见 Character.stun）。 */
+const BOSS_HIT_STUN = 0.14;
+
+const ENEMY_SWING_GAP = 0.6;
+const ENEMY_SWING_JITTER = 0.35;
 /** 弓手单独放慢到约每 2.8～3.8 秒一箭，避免落地箭很快铺满画面。 */
 const ENEMY_ARCHER_SHOT_GAP = 2.8;
 const ENEMY_ARCHER_SHOT_JITTER = 1;
@@ -486,6 +499,8 @@ interface SkillWave {
   arc: number;
   /** 打中时溅多少碎片，见 SkillDef.power。 */
   power: number;
+  /** 发招那一刻的技能等级倍率（见 SkillLoadout.damageScale）。 */
+  scale: number;
 }
 
 /**
@@ -604,7 +619,7 @@ const smooth = (prev: number, now: number): number => prev * 0.9 + now * 0.1;
  */
 type EnemyMover = Pick<Character,
   'x' | 'y' | 'facing' | 'def' | 'speed' | 'walkSpeed' | 'crowdPace' |
-  'sideBias' | 'radius' | 'spacing' | 'alive' | 'stats' | 'expValue'
+  'sideBias' | 'radius' | 'spacing' | 'alive' | 'stats' | 'expValue' | 'boss' | 'stun'
 >;
 
 /** 只缓存邻居让路决策；朝向、速度、移动和碰撞仍逐帧计算。 */
@@ -834,6 +849,8 @@ export class Battle {
     heading: number;
     speed: number;
     power: number;
+    /** 发招那一刻的技能等级倍率（见 SkillLoadout.damageScale）。 */
+    scale: number;
     /** 收招时补的那一圈的半径，世界单位。0 = 不补。 */
     finishRing: number;
     /** 这一帧移动**之前**在哪儿。判定要按走过的那一整段算，不是按落点。 */
@@ -847,7 +864,7 @@ export class Battle {
    * 公开是给 Scene 画的 —— 它和别的技能不一样，不是一瞬间的事件而是一段**持续的状态**，
    * 特效系统里"放出去就不管了"的冲击弧表达不了它，得每帧跟着人重画。
    */
-  aegis: { left: number; total: number; radius: number; power: number } | null = null;
+  aegis: { left: number; total: number; radius: number; power: number; scale: number } | null = null;
 
   /**
    * 天地法相：持续判定跟着玩家走；公开状态只供 Scene 同步上半身外壳。
@@ -857,7 +874,7 @@ export class Battle {
    * 一直是满的，松手才缩回去。
    */
   dharma: {
-    left: number; total: number; radius: number; power: number;
+    left: number; total: number; radius: number; power: number; scale: number;
     held: boolean;
     /**
      * 已经在收了，再也续不回来。
@@ -891,6 +908,8 @@ export class Battle {
     heading: number;
     speed: number;
     power: number;
+    /** 发招那一刻的技能等级倍率（见 SkillLoadout.damageScale）。 */
+    scale: number;
   } | null = null;
 
   /** 穿云箭：升空后在第 0.8 秒选定当前视口内的落点，再从天而降。Scene 只读这个状态来画箭。 */
@@ -900,7 +919,37 @@ export class Battle {
     targetY: number;
     radius: number;
     power: number;
+    scale: number;
   } | null = null;
+
+  /**
+   * 场上还活着的首领在哪儿。小地图拿它标骷髅头。
+   *
+   * 每帧现筛而不是另外维一份名单：场上最多十几个首领，而维一份名单就要处理死亡、回收、重开三条路。
+   */
+  /**
+   * 这一局的结果。'none' = 还在打。
+   *
+   * 和 `defeated`（人倒了）分开：那一条是玩家死了，这一条是任务成不成。两者都会把一局收掉，
+   * 但结算画面上该写的话不一样。
+   */
+  outcome: 'none' | 'won' | 'lost' = 'none';
+
+  /** 场上这批首领要在这个时刻之前清完。0 = 没有在计时。 */
+  private bossDeadline = 0;
+
+  /** 场上还有活着的首领。 */
+  get bossAlive(): boolean {
+    return this.enemies.some((e) => e.alive && e.boss);
+  }
+
+  get bossPositions(): { x: number; y: number }[] {
+    const out: { x: number; y: number }[] = [];
+    for (const e of this.enemies) {
+      if (e.alive && e.boss) out.push({ x: e.x, y: e.y });
+    }
+    return out;
+  }
 
   /** 生命上限顶到了"无敌"那一档没有。面板要显示成文字，不是一串九。 */
   get invincible(): boolean {
@@ -1644,6 +1693,8 @@ export class Battle {
     this.deaths = 0;
     this.earnedExp = 0;
     this.defeated = false;
+    this.outcome = 'none';
+    this.bossDeadline = 0;
     this.runTime = 0;
     this.recycled = 0;
     this.restored = 0;
@@ -1768,6 +1819,9 @@ export class Battle {
       motion: new DistantMotion(x, y, this.clock, this.farGroup++),
       x, y, def: kind.def, palette: kind.palette, stats,
       expValue: expFromKill(kind, this.waves.waveNumber, this.modifier),
+      boss: kind.boss,
+      // 远处那份数据不会挨打，挺尸永远是 0；字段还是得有，两边共用同一个形状。
+      stun: 0,
       walkSpeed: stats.moveSpeed, speed: 0, crowdPace: 0,
       sideBias: Math.random() < 0.5 ? -1 : 1,
       radius, spacing: RigSpec.torsoHalfWidth * kind.def.bulk, alive: true,
@@ -1848,6 +1902,14 @@ export class Battle {
     const reserved = this.reserved;
     for (let i = enemies.length - 1; i >= 0; i--) {
       const e = enemies[i];
+      /*
+       * 首领不回收。
+       *
+       * 回收是为了人海：几百个跟不上的杂兵抹成无骨架数据，省下的那一大笔开销才是帧率的来源。
+       * 而首领一波就一个，留着不花什么钱 —— 反过来，把他抹成数据之后他就从 `enemies` 里消失了，
+       * 小地图上那个骷髅头也跟着没了。玩家走远一点目标就不见了，这比不标还糟。
+       */
+      if (e.alive && e.boss) continue;
       if (this.inActiveArea(e.x, e.y, view, DESPAWN_MARGIN)) continue;
       if (e.alive) {
         reserved.push({
@@ -1860,6 +1922,8 @@ export class Battle {
           walkSpeed: e.walkSpeed,
           stats: e.stats,
           expValue: e.expValue,
+          boss: e.boss,
+          stun: 0,
           speed: e.speed,
           crowdPace: e.crowdPace,
           sideBias: e.sideBias,
@@ -1899,6 +1963,8 @@ export class Battle {
       const e = new Character(r.def, r.palette, r.walkSpeed, r.sideBias);
       e.stats = r.stats;
       e.expValue = r.expValue;
+      e.boss = r.boss;
+      e.stun = 0;
       e.x = r.x;
       e.y = r.y;
       e.facing = r.facing;
@@ -1993,9 +2059,18 @@ export class Battle {
    * 落点和树重叠就沿着原方向往外挪一点重试；图外没有树，所以那边一次就成。
    */
   private place(x: number, y: number, view: BattleView, kind: ResolvedUnitKind = this.waves.pick()): boolean {
-    if (this.localSpawnRoom() <= 0) return false;
-    // 总量满时只置换远离玩家、也不在实际镜头里的数据。可见怪物和即将进场者不动。
-    if (this.worldEnemyCount >= this.worldBudget && !this.releaseDistantSpawnSlot(view)) return false;
+    /*
+     * 首领不占名额，也不被人数上限拦。
+     *
+     * 这两道闸是给人海的 —— 末波场上常年顶着一千二，而首领恰恰就在那个时候出。排在那条队里的
+     * 后果是他根本生不出来，而“清完首领”又是这一局的胜负条件：一波三个首领变成零个，玩家会在
+     * 空场上等到输。他们一共才十二个，多出这几个人压不垮帧。
+     */
+    if (!kind.boss) {
+      if (this.localSpawnRoom() <= 0) return false;
+      // 总量满时只置换远离玩家、也不在实际镜头里的数据。可见怪物和即将进场者不动。
+      if (this.worldEnemyCount >= this.worldBudget && !this.releaseDistantSpawnSlot(view)) return false;
+    }
     const field = this.field;
     const stats = this.enemyStats(kind);
     const e = new Character(kind.def, kind.palette, stats.moveSpeed);
@@ -2003,6 +2078,7 @@ export class Battle {
     e.maxHp = stats.maxHp;
     e.hp = stats.maxHp;
     e.expValue = expFromKill(kind, this.waves.waveNumber, this.modifier);
+    e.boss = kind.boss;
 
     const px = this.player.x;
     const py = this.player.y;
@@ -2390,7 +2466,7 @@ export class Battle {
   skillCooldownDuration(id: SkillId): number {
     const skill = skillById(id);
     if (skill.category === 'attack') {
-      return playerSwingTime(this.player) + skill.cooldown;
+      return playerSwingTime(this.player) + skill.cooldown * this.skillLoadout.rateScale(id);
     }
     return skill.cooldown;
   }
@@ -2398,7 +2474,10 @@ export class Battle {
   private startPlayerAttack(): boolean {
     const skill = skillById(this.skillLoadout.attackSkill);
     if (!this.skillLoadout.ready(skill.id)) return false;
-    const started = this.player.swing(playerSwingTime(this.player) + skill.cooldown);
+    // 技能等级压的是**冷却**，不是挥击动作本身（见 SKILL_LEVEL_RATE）。
+    const started = this.player.swing(
+      playerSwingTime(this.player) + skill.cooldown * this.skillLoadout.rateScale(skill.id),
+    );
     if (!started) return false;
     this.pendingAttackSkill = skill.id;
     this.skillLoadout.consume(skill.id);
@@ -2510,10 +2589,12 @@ export class Battle {
     fromX: number,
     fromY: number,
     power: number,
+    /** 这一招的技能等级倍率（见 SkillLoadout.damageScale）。1 = 一级。 */
+    scale = 1,
     launch: { force?: number; freeze?: number } = {},
   ): void {
     if (!e.alive) return;
-    const roll = rollDamage(this.player.stats.attack, e.stats.defense, power);
+    const roll = rollDamage(this.player.stats.attack * scale, e.stats.defense, power);
 
     let dx = e.x - fromX;
     let dy = e.y - fromY;
@@ -2531,22 +2612,35 @@ export class Battle {
 
     // 没死就只闪一下白光（takeHit 里做的），不溅碎片也不掉东西。碎片是"这个人碎了"的信号，
     // 挨一下还站着的人溅出甲片会让玩家以为他已经死了。
-    if (!e.takeHit(fromX, fromY, roll.value, launch)) return;
+    if (!e.takeHit(fromX, fromY, roll.value, launch)) {
+      /*
+       * 首领挨一刀就停一下脚。
+       *
+       * 他太硬，打不飞也打不断 —— 没有这一下的话，他只是匀速地贴上来，玩家的输出完全没有回馈。
+       * 停那一下把"我砍中了"和"他还在压过来"同时说出来：一步、一顿、又一步。
+       *
+       * 挺尸未消之前不重复触发，否则满配的输出打下去他会被永久钉在原地 —— 那就不是压迫而是一个桩子了。
+       */
+      if (e.boss && e.stun <= 0) e.stun = BOSS_HIT_STUN;
+      return;
+    }
 
     this.kills++;
     this.gainExp(e.expValue);
+    const isBoss = e.boss;
     /*
-     * 掉什么：绝大多数是灵石，偶尔一枚金币，偶尔一件药或符。
+     * 掉什么：小兵只掉灵石和金币，**药和符一件不掉**；首领保底掉一件。
      *
-     * 一次掷骰分三段而不是各掷各的：分段保证三者互斥，一个人身上不会同时爆出两样。金币和
-     * 药符同一个量级（各 1/50），剩下的全是灵石 —— 灵石是这一局的节奏（攒够就抽牌），另外
-     * 两样是插曲。
+     * 按击杀概率给药是**调不准的**：前期每秒杀三个、后期每秒杀几十个，同一个概率在两头差一个
+     * 数量级 —— 改了三轮（1/50 → 1/300 → 1/3000）都不对。现在补给挂在**个数**上：一波一个首领，
+     * 加上按时刷的篝火（见 Props）。玩家想要药就得到处走，而不是站着砍到它自己掉出来。
+     *
+     * 灵石和金币照旧从小兵身上出：灵石是这一局的节奏（攒够就抽牌），抽牌的门槛又是从出兵预算
+     * 倒推的 —— 把它也挪到首领身上会让整条升级曲线散架。
      */
-    const drop = Math.random();
-    if (drop < COIN_DROP_CHANCE) this.collectibles.dropCoin(e.x, e.y);
-    else if (drop < COIN_DROP_CHANCE + PICKUP_DROP_CHANCE) {
-      this.collectibles.dropPickup(rollPickup().id, e.x, e.y);
-    } else this.collectibles.dropGem(e.x, e.y);
+    if (isBoss) this.collectibles.dropPickup(rollBossPickup().id, e.x, e.y);
+    else if (Math.random() < COIN_DROP_CHANCE) this.collectibles.dropCoin(e.x, e.y);
+    else this.collectibles.dropGem(e.x, e.y);
 
     this.debris.burst(e.x, e.y, dx, dy, power, e.palette);
   }
@@ -2562,8 +2656,15 @@ export class Battle {
   private castSkill(skill: SkillDef, view: BattleView): void {
     const { player } = this;
     const at = weaponImpactPoint(player.pose, player.def, player.x, player.y, player.facing);
-    // 技能等级只动两样：作用距离和法力开销（见 data/balance.ts）。距离是这一行。
+    // 技能等级动四样：作用距离、伤害、冷却、法力开销（见 data/balance.ts）。前两样在这两行。
+    //
+    // 距离这一条顺带把**画面**也拉大了：下面所有冲击弧、环、扭曲的尺寸都是从 reach 算的，
+    // 所以满级的横扫真的扫出一个更大的扇面，不用另外给特效加一个等级分支。
     const reach = player.stats.attackRange * skill.reach * this.skillLoadout.reachScale(skill.id);
+    const scale = this.skillLoadout.damageScale(skill.id);
+    // 放招的时候顺手把身边的篝火砸了。挂在这里而不是每一条结算路径上：所有招式都从这儿发出去，
+    // 而篝火不会跑，"你在它旁边放了一招"就是全部条件。
+    this.breakCampfires(player.x, player.y, reach);
 
     switch (skill.kind) {
       // 这两种在这条路上什么都不做：被动一直生效，按住型的每一帧自己生效（advanceSprint），
@@ -2578,7 +2679,7 @@ export class Battle {
         const full = arc >= Math.PI * 1.99;
         if (full) {
           // 回旋：一圈从脚下推开的环，见 castRing（突进的收招用的是同一份）。
-          this.castRing(reach, skill.power, player.x, player.y, {
+          this.castRing(reach, skill.power, scale, player.x, player.y, {
             velocityX: this.effectDriftX,
             velocityY: this.effectDriftY,
           });
@@ -2640,7 +2741,7 @@ export class Battle {
         );
         for (const e of this.enemies) {
           if (!e.alive) continue;
-          if (inSector(player, e, reach, arc)) this.strike(e, player.x, player.y, skill.power);
+          if (inSector(player, e, reach, arc)) this.strike(e, player.x, player.y, skill.power, scale);
         }
         return;
       }
@@ -2660,6 +2761,8 @@ export class Battle {
           to: cappedReach(at.x, at.y, player.facing, arc, reach, player.stats.attackRange, view.spawn),
           arc,
           power: skill.power,
+          // 倍率在**发招那一刻**定下：波还在飞的时候抽到升级牌，不该回过头来加强它。
+          scale,
         };
         this.skillWaves.push(wave);
         // 特效和判定共用同一条推进曲线和同一组端点，所以画面上波扫到谁，谁就正好死。
@@ -2684,7 +2787,7 @@ export class Battle {
       }
 
       case 'aura': {
-        this.aegis = { left: skill.duration, total: skill.duration, radius: reach, power: skill.power };
+        this.aegis = { left: skill.duration, total: skill.duration, radius: reach, power: skill.power, scale };
         // 撑开那一下：一圈从脚下推开的环，比回旋快、比回旋细 —— 它说的是"罩子立起来了"，
         // 不是"我扫了一圈"。罩子本身由 Scene 每帧跟着人画（见 aegis）。
         this.effects.spawn(player.x, player.y, player.facing, {
@@ -2706,6 +2809,7 @@ export class Battle {
           total: skill.duration,
           radius: reach,
           power: skill.power,
+          scale,
           // 起手那一帧就当按着：玩家按下去的同一帧就该看到它展开，而输入要到下一帧才报"按住"。
           held: true,
           fading: false,
@@ -2747,13 +2851,14 @@ export class Battle {
           heading,
           speed,
           power: skill.power,
+          scale,
         };
         return;
       }
 
       case 'skyArrow': {
         // 落点不是起手时锁死：等待期间镜头跟着玩家移动，0.8 秒一到才在“此刻”的视口里抽取位置。
-        this.skyArrow = { age: 0, targetX: 0, targetY: 0, radius: reach, power: skill.power };
+        this.skyArrow = { age: 0, targetX: 0, targetY: 0, radius: reach, power: skill.power, scale };
         this.effects.spawn(at.x, at.y, player.facing, {
           power: 0.8,
           span: 0.48,
@@ -2787,6 +2892,7 @@ export class Battle {
           heading: player.facing,
           speed: dashSpeed,
           power: skill.power,
+          scale,
           // 收招那一圈是**判定**半径，所以它照旧按 attackRange 折算，和上面那条不是一回事。
           finishRing: player.stats.attackRange * skill.finishRing,
           fromX: player.x,
@@ -2816,9 +2922,26 @@ export class Battle {
    * 真的是同一份代码 —— 两处各写一遍的话，改了一处忘了另一处，玩家就会看到两个长得像但
    * 判定不一样的圈。
    */
+  /**
+   * 砸掉范围里的篝火，每一堆保底掉一件。
+   *
+   * 篝火是玩家**自己能决定什么时候去拿**的那一份补给：首领一波才一个、什么时候来不由他，
+   * 而篝火就在地图上那几个点上、按时刷回来。想要药就得跑一趟 —— 这正是把一张均质的图变成
+   * 有去处的图的那一下。
+   */
+  private breakCampfires(x: number, y: number, reach: number): void {
+    const broken = this.field.props.breakNear(x, y, reach);
+    for (const at of broken) {
+      const a = Math.random() * Math.PI * 2;
+      const r = CAMPFIRE_DROP_SPREAD;
+      this.collectibles.dropPickup(rollPickup().id, at.x + Math.cos(a) * r, at.y + Math.sin(a) * r);
+    }
+  }
+
   private castRing(
     reach: number,
     power: number,
+    scale: number,
     x = this.player.x,
     y = this.player.y,
     options: Pick<ShockwaveOptions, 'style' | 'tint' | 'velocityX' | 'velocityY'> = {},
@@ -2880,7 +3003,7 @@ export class Battle {
     if (caught) this.debris.blast(x, y, power, caught.palette);
 
     for (const e of this.enemies) {
-      if (hit(e)) this.strike(e, x, y, power);
+      if (hit(e)) this.strike(e, x, y, power, scale);
     }
   }
 
@@ -2905,7 +3028,7 @@ export class Battle {
       for (const e of this.enemies) {
         if (!e.alive) continue;
         if (sweptBy(e, w.x, w.y, w.heading, radius, w.arc, WAVE_NEAR_HALF_WIDTH)) {
-          this.strike(e, w.x, w.y, w.power);
+          this.strike(e, w.x, w.y, w.power, w.scale);
         }
       }
       if (w.age >= w.life) {
@@ -2926,7 +3049,7 @@ export class Battle {
       }
       // 0.8 秒呼应用户要求；后续 0.28 秒是可见的俯冲与落地窗口。
       if (arrow.age >= 1.08) {
-        this.castRing(arrow.radius, arrow.power, arrow.targetX, arrow.targetY, {
+        this.castRing(arrow.radius, arrow.power, arrow.scale, arrow.targetX, arrow.targetY, {
           style: 'burst',
           tint: rgb(255, 188, 62),
         });
@@ -2937,10 +3060,13 @@ export class Battle {
     if (this.aegis) {
       this.aegis.left -= dt;
       // 碰到罩子就飞。原点是玩家自己 —— 罩子是以他为心的，人本来就该被朝外推开。
+      // 每个人自带一扇免疫窗口（见 AURA_HIT_GAP）。以前是每帧结算，而每帧结算对一个死不了的人就是秒杀。
+      const now = this.clock;
       for (const e of this.enemies) {
-        if (!e.alive) continue;
+        if (!e.alive || now - e.domeHitAt < AURA_HIT_GAP) continue;
         if (inSector(player, e, this.aegis.radius, Math.PI * 2)) {
-          this.strike(e, player.x, player.y, this.aegis.power);
+          e.domeHitAt = now;
+          this.strike(e, player.x, player.y, this.aegis.power, this.aegis.scale);
         }
       }
       if (this.aegis.left <= 0) this.aegis = null;
@@ -2971,10 +3097,13 @@ export class Battle {
         this.dharma.fading = true;
         this.dharma.left -= dt;
       }
+      // 同上：一扇免疫窗口，但和金钟罩各记各的（两个壳子可以同时开着）。
+      const nowAspect = this.clock;
       for (const e of this.enemies) {
-        if (!e.alive) continue;
+        if (!e.alive || nowAspect - e.aspectHitAt < AURA_HIT_GAP) continue;
         if (inSector(player, e, this.dharma.radius, Math.PI * 2)) {
-          this.strike(e, player.x, player.y, this.dharma.power);
+          e.aspectHitAt = nowAspect;
+          this.strike(e, player.x, player.y, this.dharma.power, this.dharma.scale);
         }
       }
       // 没有冷却可收（见技能表）：开得起就开，开到蓝空自己停。
@@ -3002,6 +3131,7 @@ export class Battle {
         blade.heading,
         SKY_BLADE_WIDTH * 0.5,
         blade.power,
+        blade.scale,
       );
       if (blade.left <= 0) this.heavenSplit = null;
     }
@@ -3024,12 +3154,13 @@ export class Battle {
         this.lunge.heading,
         this.guardReach(player.radius + LUNGE_BODY_MARGIN),
         this.lunge.power,
+        this.lunge.scale,
       );
       if (this.lunge.left <= 0) {
         // 冲到头再炸一圈：把走廊两侧漏掉的人一起带走。冲锋该以"撞进人堆里停下"收尾，
         // 而不是穿过去就没事了。
         if (this.lunge.finishRing > 0) {
-          this.castRing(this.lunge.finishRing, this.lunge.power, player.x, player.y, {
+          this.castRing(this.lunge.finishRing, this.lunge.power, this.lunge.scale, player.x, player.y, {
             style: 'burst',
             tint: rgb(255, 142, 74),
           });
@@ -3054,6 +3185,8 @@ export class Battle {
     if (this.orbit.count === 0) return;
 
     this.orbit.radius = player.stats.attackRange * ORB_ORBIT_REACH;
+    // 流星每帧都在重新算位置，所以倍率也每帧现取 —— 它不是一次放出去的东西，升级当场生效。
+    const orbScale = this.skillLoadout.damageScale('bulwark');
     this.orbit.angle = (this.orbit.angle + ORB_SPIN * dt) % (Math.PI * 2);
 
     const step = (Math.PI * 2) / this.orbit.count;
@@ -3078,7 +3211,7 @@ export class Battle {
         const dy = e.y - orbY[i];
         if (dx * dx + dy * dy > hit * hit) continue;
         e.orbHitAt = now;
-        this.strike(e, orbX[i], orbY[i], ORB_POWER);
+        this.strike(e, orbX[i], orbY[i], ORB_POWER, orbScale);
         break;
       }
     }
@@ -3120,6 +3253,7 @@ export class Battle {
     heading: number,
     hit: number,
     power: number,
+    scale: number,
   ): void {
     const segX = bx - ax;
     const segY = by - ay;
@@ -3142,7 +3276,7 @@ export class Battle {
       const kl = Math.hypot(kx, ky) || 1;
       kx /= kl;
       ky /= kl;
-      this.strike(e, e.x - kx * 10, e.y - ky * 10, power, {
+      this.strike(e, e.x - kx * 10, e.y - ky * 10, power, scale, {
         force: LUNGE_FORCE,
         freeze: LUNGE_FREEZE,
       });
@@ -3272,7 +3406,7 @@ export class Battle {
           e.stats.attackRange * 0.8,
           (player.spacing + e.spacing) * this.crowdSpacing,
         );
-        if (dist > stop) {
+        if (dist > stop && e.stun <= 0) {
           // 落远了就跑起来。
           //
           // 玩家走 32、冲刺 60，敌人只有 20~33 —— 不提速的话，光是按住左键前进就能把整队甩在
@@ -3347,12 +3481,20 @@ export class Battle {
           e.speed = 0;
           const decision = this.crowdDecisions.get(e);
           if (decision) decision.stale = true; // 重新起步时不能沿用站定前的邻居。
-          if (i < activeCount) {
-            // 基准间隔除以这个兵的攻击频率（波次越往后越快），再加一点随机抖动 —— 少了抖动，
-            // 同一批到位的人会整齐划一地同时挥。
-            const jitter = e.def.weapon === 'bow' ? ENEMY_ARCHER_SHOT_JITTER : ENEMY_SWING_JITTER;
-            this.enemies[i].swing(this.enemySwingGap(e.def, e.stats) + Math.random() * jitter);
-          }
+        }
+
+        /*
+         * 够得着就挥，**不管他走到没走到自己的槽位**。
+         *
+         * 以前这一句在"到位了"那个分支里。人堆里绝大多数人永远到不了位 —— 前面堵着一堆人，
+         * 他们一直在蹭着挪，于是贴在玩家脸上也不出手。玩家的读法是"围了一圈人却没人打我"。
+         * 现在只看一件事：你够不够得着。swing 自己带门（正在挥或者还在冷却就不受理），所以每帧调也无妨。
+         *
+         * 间隔里那点随机抖动是必须的：少了它，同一批贴上来的人会整齐划一地同时挥。
+         */
+        if (i < activeCount && dist <= e.stats.attackRange) {
+          const jitter = e.def.weapon === 'bow' ? ENEMY_ARCHER_SHOT_JITTER : ENEMY_SWING_JITTER;
+          this.enemies[i].swing(this.enemySwingGap(e.def, e.stats) + Math.random() * jitter);
         }
       }
 
@@ -3573,7 +3715,44 @@ export class Battle {
   private spawnWave(dt: number, view: BattleView): void {
     // 旋钮是模板速度的倍率，顶满就是原速。见 MAX_SPAWN_BATCH。
     this.waves.update(dt, this.spawnBatch / MAX_SPAWN_BATCH);
-    if (this.waves.takeWaveStart()) this.surgeCeiling = this.enemies.length + this.waves.wave.surge;
+    if (this.waves.takeWaveStart()) {
+      this.surgeCeiling = this.enemies.length + this.waves.wave.surge;
+      // 篝火一波只点一次。按秒数刷的话玩家在四处营地之间转一圈就能一直拿，那就不是补给而是水龙头了。
+      this.field.props.relight();
+    }
+    /*
+     * 一波到点就放一个首领。
+     *
+     * 不走普通出兵那条队：那一条要看场上还容不容得下，而末波场上常年顶着人数上限 —— 首领
+     * 排在那条队里的话这一波就白打了。他只有一个，多出来这一个人不会把帧压垮。
+     */
+    /*
+     * 先结上一批的账，再放下一批。**顺序不能反**。
+     *
+     * 截止线恰好落在下一波到点那一帧，而那一帧也正是新一批首领出场的时刻。先放人再判的话，
+     * 新那条截止线当场把旧的覆盖掉，于是永远判不出输 —— 漏掉的那几个一直滞留到打完全场。
+     */
+    if (this.outcome === 'none' && this.bossDeadline > 0
+      && this.runTime >= this.bossDeadline && this.bossAlive) {
+      this.outcome = 'lost';
+    }
+    const due = this.waves.takeBossDue();
+    if (due > 0) {
+      for (let i = 0; i < due; i++) this.spawn(view, resolveKind(BOSS_KIND));
+      /*
+       * 摆上首领的同时给一条截止线。
+       *
+       * 首领是这一局的**目标**，不是人海里的一个硬点。没有截止线的话，玩家完全可以绕开他们
+       * 跑完全场 —— 那么“把首领打完”就不是一件得做的事。给的时间是当前这一波的时长：
+       * 你有一整波去处理刚出来的这几个。
+       */
+      this.bossDeadline = this.runTime + this.waves.wave.duration;
+    }
+    if (this.outcome === 'none' && !this.bossAlive) {
+      this.bossDeadline = 0;
+      // 最后一波的那几个也清了，这一局就赢了。
+      if (this.waves.lastWaveOver) this.outcome = 'won';
+    }
     this.spawnTimer += dt;
     while (this.spawnTimer >= SPAWN_INTERVAL) {
       this.spawnTimer -= SPAWN_INTERVAL;

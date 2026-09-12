@@ -6,7 +6,7 @@ import {
   type SkillDef,
   type SkillId,
 } from './skills';
-import { SKILL_MAX_LEVEL, skillMpScale, skillReachScale } from '../data/balance';
+import { SKILL_MAX_LEVEL, skillDamageScale, skillMpScale, skillRateScale, skillReachScale } from '../data/balance';
 
 /** 主动槽与键位一一对应；UI、输入和战斗逻辑都从这里读，避免各写一份顺序。 */
 export const ACTIVE_SKILL_KEYS = ['Q', 'W', 'E', 'R'] as const;
@@ -125,6 +125,16 @@ export class SkillLoadout {
   }
 
   /** 这一招练到现在，法力开销是表里那个数的几倍。 */
+  /** 这一招现在打多疼，倍率。一级是 1。 */
+  damageScale(id: SkillId): number {
+    return skillDamageScale(this.levels[id]);
+  }
+
+  /** 这一招的冷却乘多少。升级就是出手更密。 */
+  rateScale(id: SkillId): number {
+    return skillRateScale(this.levels[id]);
+  }
+
   mpScale(id: SkillId): number {
     return skillMpScale(this.levels[id]);
   }
@@ -249,7 +259,9 @@ export class SkillLoadout {
   }
 
   consume(id: SkillId): void {
-    this.cooldowns[id] = skillById(id).cooldown;
+    // 升级压冷却（见 SKILL_LEVEL_RATE）。自动攻击那一条另外走：它的间隔还包含挥击动作本身，
+    // 而动作长度是角色属性，不该跟着技能等级缩（见 battle.ts 的 startPlayerAttack）。
+    this.cooldowns[id] = skillById(id).cooldown * this.rateScale(id);
   }
 
   cooldownOf(id: SkillId): number {

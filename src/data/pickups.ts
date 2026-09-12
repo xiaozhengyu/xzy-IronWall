@@ -149,6 +149,32 @@ export const pickupById = (id: string): PickupDef | null =>
   Pickups.find((entry) => entry.id === id) ?? null;
 
 /** 按权重摇一件。掉落那一侧只问"这次掉什么"，不关心权重怎么排的。 */
+/**
+ * 首领掉的那一件从这几样里摧。
+ *
+ * 一波才一个首领，而他要砍十来刀 —— 掉出一颗回血丹和砸一个篝火没区别的话，那十刀就白砍了。
+ * 这四样都是"持续一段时间"的：两种慢回的丹、两种符。一口闷的那两种留给篝火。
+ */
+const BOSS_PICKUP_IDS: readonly string[] = [
+  'potion-hp-over-time',
+  'potion-mp-over-time',
+  'charm-swift',
+  'charm-ward',
+];
+
+/** 首领掉的那一件。保底掉，所以这里不掷"掉不掉"，只掷"掉哪一件"。 */
+export function rollBossPickup(random: () => number = Math.random): PickupDef {
+  const pool = Pickups.filter((entry) => BOSS_PICKUP_IDS.includes(entry.id));
+  let total = 0;
+  for (const entry of pool) total += entry.weight;
+  let at = random() * total;
+  for (const entry of pool) {
+    at -= entry.weight;
+    if (at <= 0) return entry;
+  }
+  return pool[pool.length - 1];
+}
+
 export function rollPickup(random: () => number = Math.random): PickupDef {
   let total = 0;
   for (const entry of Pickups) total += entry.weight;

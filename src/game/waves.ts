@@ -43,6 +43,10 @@ export class WaveDirector {
   private surgeLeft = 0;
   /** 刚进新的一波。battle 读一次就清，用来记爆兵的天花板。 */
   private started = false;
+  /** 欠着几个首领。见 takeBossDue。 */
+  private bossDue = 0;
+  /** 最后一波已经到点了。到点之后还会按末波继续出兵（after: 'hold'），但该放的首领已经放完了。 */
+  private lastWaveDone = false;
   /** 兵种比例的前缀和，换波时算一次。 */
   private roll: { kind: ResolvedUnitKind; upTo: number }[] = [];
   private rollTotal = 0;
@@ -159,6 +163,23 @@ export class WaveDirector {
     else this.pendingDensity += count;
   }
 
+  /**
+   * 欠着几个首领没放。读一次就清。
+   *
+   * 和普通出兵分开记账：那一路要看场上还容不容得下（take 传 room），而首领不排队 ——
+   * 一波就一个，被人海的人数上限挡掉的话这一波就白打了。
+   */
+  /** 整张模板都走完了。剩下的事情只有把场上那几个首领清掉。 */
+  get lastWaveOver(): boolean {
+    return this.lastWaveDone;
+  }
+
+  takeBossDue(): number {
+    const due = this.bossDue;
+    this.bossDue = 0;
+    return due;
+  }
+
   /** 整张模板一共有几个首领。面板上那排节点按它排。 */
   get bossTotal(): number {
     let total = 0;
@@ -173,6 +194,8 @@ export class WaveDirector {
    * 一并清掉 —— 那是上一波欠的人，跳过去之后再补出来只会让两波的配比混在一起。
    */
   jumpTo(waveNumber: number): void {
+    this.lastWaveDone = false;
+    this.bossDue = 0;
     const at = Math.max(0, Math.min(this.waveCount - 1, Math.floor(waveNumber) - 1));
     this.waveAt = at;
     this.cleared = at;
@@ -189,6 +212,10 @@ export class WaveDirector {
   }
 
   private advance(): void {
+    // 这一波到点了，欠下它该出的首领。记在这儿而不是在 enterWave 里，因为最后一波打完之后
+    // 还会继续 hold，那时候 enterWave 不再走，而首领该照出。
+    this.bossDue += this.wave.bosses;
+    if (this.waveAt + 1 >= this.waveCount) this.lastWaveDone = true;
     this.cleared++;
     if (this.waveAt + 1 >= this.waveCount) {
       // 打完最后一波。'hold' 就留在原地继续按它出，'restart' 回到第一波。

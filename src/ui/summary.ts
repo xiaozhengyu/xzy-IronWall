@@ -38,6 +38,8 @@ export interface SummaryStats {
   cleared: number;
   /** 结束的原因是玩家被打倒，而不是自己按的"结束游戏"。 */
   defeated: boolean;
+  /** 首领全清了。赢了和“打完了”不是同一件事。 */
+  won: boolean;
   /** 这一局挣到的经验。 */
   exp: number;
   /** 结算之后这个角色是几级。 */
@@ -115,7 +117,10 @@ export class SummaryScreen {
     this.root.hidden = false;
 
     const final = mode === 'result';
-    this.mode.textContent = final ? (stats.defeated ? '你被击倒了' : '本局结束') : '游戏暂停';
+    // 三种收场写三句话：清完首领是赢，人倒了或者首领没清完是输，其余只是“打完了”。
+    this.mode.textContent = final
+      ? (stats.won ? '全数斩首' : stats.defeated ? '首领未除' : '本局结束')
+      : '游戏暂停';
     this.lead.textContent = `${stats.hero} · ${stats.map}`;
 
     this.coins.textContent = String(stats.coins);

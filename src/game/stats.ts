@@ -22,6 +22,7 @@ import {
   WAVE_ATTACK_SPEED_PER_WAVE,
   WAVE_DEFENSE_PER_WAVE,
   WAVE_EXP_PER_WAVE,
+  BOSS_HP_PER_WAVE,
   WAVE_HP_PER_WAVE,
   WAVE_SPEED_PER_WAVE,
   applyBonuses,
@@ -87,7 +88,7 @@ export function resolveEnemyStats(
 ): UnitStats {
   const steps = Math.max(0, wave - 1);
   const base = kind.stats;
-  const waveHp = kind.boss ? 1 : 1 + WAVE_HP_PER_WAVE * steps;
+  const waveHp = kind.boss ? 1 + BOSS_HP_PER_WAVE * steps : 1 + WAVE_HP_PER_WAVE * steps;
   const waveAttack = kind.boss ? 1 : 1 + WAVE_ATTACK_PER_WAVE * steps;
   const waveDefense = kind.boss ? 1 : 1 + WAVE_DEFENSE_PER_WAVE * steps;
   const waveSpeed = kind.boss ? 1 : 1 + WAVE_SPEED_PER_WAVE * steps;

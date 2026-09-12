@@ -466,7 +466,8 @@ app.ticker.add((ticker) => {
   draw();
   // 倒地动画放完那一帧才判负（见 Battle 里 RESPAWN_DELAY 那一段），所以这里已经画过了 ——
   // 玩家看得见自己是怎么倒下的，然后结算才盖上来。
-  if (battle.defeated) endRun();
+  // 两条收局的路：人倒了，或者首领那一份任务分出了胜负（见 Battle.outcome）。
+  if (battle.defeated || battle.outcome !== 'none') endRun();
 });
 
 // 开始画面和暂停时没有帧在跑，窗口尺寸变了得自己补一帧，否则画面会一直停在旧尺寸那张图上。
@@ -568,7 +569,8 @@ function summaryStats(): SummaryStats {
     wave: wave.wave,
     waves: wave.waves,
     cleared: wave.cleared,
-    defeated: battle.defeated,
+    defeated: battle.defeated || battle.outcome === 'lost',
+    won: battle.outcome === 'won',
     exp: Math.floor(battle.earnedExp),
     level: profile.level(battle.heroId),
     levelUp: lastLevelUp,

@@ -1,6 +1,8 @@
 import type { Battle } from '../game/battle';
 import type { Field } from '../game/field';
 import type { Camera } from '../render/camera';
+import fireIconUrl from '../../assets/hud/icon/fire.png';
+import skullIconUrl from '../../assets/hud/icon/skull.png';
 import { pickupImage } from '../items/pickupIcons';
 
 const CANVAS_SIZE = 256;
@@ -32,6 +34,21 @@ const ENEMY_LAYER_INTERVAL = 1000 / 12;
 const PICKUP_MARKER = 14;
 /** 贴边那一圈往里收多少，免得图标被外面那道金框切掉半个。 */
 const PICKUP_EDGE_INSET = 3;
+/** 篝火和首领那两个标记有多大。比药的图标大一圈：药是已经掉在地上的一件东西，而这两样是“你该往哪儿走”，它得先被看到。 */
+const LANDMARK_SIZE = 9;
+
+/**
+ * 篝火和骷髅头那两张图。模块加载时建一次，不到位就这一帧不画。
+ *
+ * 和药符图标同一个取向（见 items/pickupIcons.ts）：图没好不该让小地图报错，也不该拿一个占位方块顶着。
+ */
+const loadIcon = (url: string): HTMLImageElement => {
+  const image = new Image();
+  image.src = url;
+  return image;
+};
+const fireIcon = loadIcon(fireIconUrl);
+const skullIcon = loadIcon(skullIconUrl);
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -173,6 +190,7 @@ export class Minimap {
     }
 
     this.drawPickups(battle, mapX, mapY, radius);
+    this.drawLandmarks(field, battle, mapX, mapY, radius);
     this.drawPlayer(mapX(battle.player.x), mapY(battle.player.y), battle.player.facing);
 
     // 内圈暗角既压住圆形裁剪边缘，也让贴边标记不和金框抢层次。
@@ -271,6 +289,61 @@ export class Minimap {
         ctx.fill();
       }
       ctx.drawImage(image, Math.round(x - half), Math.round(y - half), size, size);
+    }
+
+    ctx.imageSmoothingEnabled = smoothing;
+  }
+
+  /**
+   * 篝火和首领。两样东西现在是药的全部来源（见 battle.ts 的掉落），而“要去哪儿”是个真问题 ——
+   * 不标在图上的话，玩家只能漫无目的地走，那就不是路线而是碰运气了。
+   *
+   * 两者都贴边，和地上那些药一个画法：超出小地图的就按方向压到圆周上，照着跑就能碰到。
+   */
+  private drawLandmarks(
+    field: Field,
+    battle: Battle,
+    mapX: (worldX: number) => number,
+    mapY: (worldY: number) => number,
+    radius: number,
+  ): void {
+    const ctx = this.context;
+    const edge = radius - LANDMARK_SIZE - PICKUP_EDGE_INSET;
+    const put = (wx: number, wy: number, draw: (x: number, y: number) => void): void => {
+      let x = mapX(wx);
+      let y = mapY(wy);
+      const dx = x - radius;
+      const dy = y - radius;
+      const dist = Math.hypot(dx, dy);
+      if (dist > edge) {
+        const k = edge / (dist || 1);
+        x = radius + dx * k;
+        y = radius + dy * k;
+      }
+      ctx.fillStyle = 'rgba(8, 12, 10, 0.62)';
+      ctx.beginPath();
+      ctx.arc(x, y, LANDMARK_SIZE + 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      draw(x, y);
+    };
+
+    // 两个标记都用现成的 icon（fire.png / skull.png）缩到小地图尺寸。用图而不是画：玩家在别处
+    // 已经见过这两张图，同一张图在小地图上再出现一次，不需要再认一遍。
+    const smoothing = ctx.imageSmoothingEnabled;
+    ctx.imageSmoothingEnabled = false;
+    const size = LANDMARK_SIZE * 2;
+    const half = size * 0.5;
+
+    // 砸掉的篝火不标 —— 图上还标着一个已经没了的点，比不标还糟。
+    if (fireIcon) {
+      for (const fire of field.props.burning) {
+        put(fire.x, fire.y, (x, y) => ctx.drawImage(fireIcon, Math.round(x - half), Math.round(y - half), size, size));
+      }
+    }
+    if (skullIcon) {
+      for (const boss of battle.bossPositions) {
+        put(boss.x, boss.y, (x, y) => ctx.drawImage(skullIcon, Math.round(x - half), Math.round(y - half), size, size));
+      }
     }
 
     ctx.imageSmoothingEnabled = smoothing;

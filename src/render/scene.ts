@@ -128,6 +128,11 @@ const IRON_BODY_GLOW = rgb(255, 242, 190);
  */
 const DEPTH_AEGIS = 16;
 
+/** 脚下那圈光比他的身体大多少，世界单位。 */
+const BOSS_RING_MARGIN = 5;
+/** 圈压在他自己那一行之下一点，否则会盖在他脚上。 */
+const BOSS_RING_LIFT = 0.2;
+
 /**
  * 穿云箭那把剑的色调：暖金偏白。
  *
@@ -341,7 +346,19 @@ export class Scene {
     for (const e of battle.enemies) {
       const oy = e.y - camY;
       if (Math.abs(e.x - camX) > cullX || oy < -cullUp || oy > cullDown) continue;
-      this.drawCharacterAt(e);
+      /*
+       * 首领先在脚下铺一圈光，再把人画在上面。
+       *
+       * 他比旁边的人高出一头、宽出一圈，可在一千个红甲里那点差别读不出来 —— 人堆里眼睛先看到的是
+       * 密度不是个头。脚下一圈亮地是场上唯一一个不被人遮住的位置（它在所有人脚底下），所以
+       * 它才是那个读得出来的标记。再加一层轮廓光，连他本人也比旁边亮一档。
+       */
+      if (e.alive && e.boss) {
+        this.drawBossRing(e);
+        this.drawCharacterAt(e, true);
+      } else {
+        this.drawCharacterAt(e);
+      }
       this.drawn++;
     }
     const playerAt = cam.worldToScreen(battle.player.x, battle.player.y);
@@ -1003,6 +1020,21 @@ export class Scene {
   }
 
   /** 把一个单位画到它在缓冲里该在的位置上。 */
+  /** 首领脚下那圈光。一圈淡填充加一圈亮环，和金钟罩地上那一圈同一种语法。 */
+  private drawBossRing(c: Character): void {
+    const at = this.camera.worldToScreen(c.x, c.y);
+    const grain = this.camera.grain;
+    const r = (c.radius + BOSS_RING_MARGIN) * grain;
+    const depth = Math.round(at.y) * Projector.DEPTH_PER_ROW - BOSS_RING_LIFT;
+    this.shapes.ellipse(
+      v2(at.x, at.y), r, r * Projection.groundSquash, 0, rgba(255, 96, 72, 46), depth,
+    );
+    this.shapes.ellipseRing(
+      v2(at.x, at.y), r, r * Projection.groundSquash, 0,
+      Math.max(1, grain * 0.55), rgba(255, 132, 96, 214), depth + 0.01, 26,
+    );
+  }
+
   private drawCharacterAt(c: Character, rim = false, hot = false, ironBreath: number | null = null): void {
     const at = this.camera.worldToScreen(c.x, c.y);
     const grain = this.camera.grain;

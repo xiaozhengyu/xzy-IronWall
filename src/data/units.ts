@@ -41,14 +41,14 @@ export type UnitKindId = EnemyKindId | BossKindId;
  * 的，而不是要拿两行数去对。
  */
 const grunt = (overrides: Partial<UnitStats>): UnitStats => ({
-  maxHp: 40,
+  maxHp: 400,
   // 敌人不耗蓝：他们身上只有基础攻击，没有主动技。字段还是得有 —— 玩家和敌人共用同一份
   // 属性形状，让敌人少一个字段就得给每个读它的地方加一个分支。
   maxMp: 0,
   mpRegen: 0,
-  attack: 12,
+  attack: 10,
   defense: 4,
-  moveSpeed: 26,
+  moveSpeed: 12,
   attackRange: 11,
   attackArc: 1.6,
   attackSpeed: 1,
@@ -85,7 +85,7 @@ export const UnitKinds: readonly UnitKindDef[] = [
     appearance: 'thug',
     palette: PALETTE_PEASANT,
     // 比杂兵更脆更快：他是来填人数的，不是来打人的。
-    stats: grunt({ maxHp: 32, attack: 9, defense: 2, moveSpeed: 30 }),
+    stats: grunt({ maxHp: 320, attack: 8, defense: 2, moveSpeed: 14 }),
     exp: 1,
   },
   {
@@ -94,7 +94,7 @@ export const UnitKinds: readonly UnitKindDef[] = [
     note: '够得比杂兵远一点',
     appearance: 'spearman',
     palette: PALETTE_RED,
-    stats: grunt({ maxHp: 55, attack: 16, defense: 7, moveSpeed: 23, attackRange: 20, attackArc: 0.9 }),
+    stats: grunt({ maxHp: 550, attack: 12, defense: 7, moveSpeed: 11, attackRange: 20, attackArc: 0.9 }),
     exp: 2,
   },
   {
@@ -104,7 +104,7 @@ export const UnitKinds: readonly UnitKindDef[] = [
     appearance: 'shieldman',
     palette: PALETTE_RED,
     // 防御是杂兵的四倍 —— "正面推不动"这件事以前只写在说明里，现在是个真的数。
-    stats: grunt({ maxHp: 85, attack: 13, defense: 16, moveSpeed: 20, attackArc: 1.5, attackSpeed: 0.85 }),
+    stats: grunt({ maxHp: 850, attack: 10, defense: 16, moveSpeed: 9, attackArc: 1.5, attackSpeed: 0.85 }),
     exp: 3,
   },
   {
@@ -113,7 +113,7 @@ export const UnitKinds: readonly UnitKindDef[] = [
     note: '站远处放箭',
     appearance: 'archer',
     palette: PALETTE_PEASANT,
-    stats: grunt({ maxHp: 34, attack: 14, defense: 3, moveSpeed: 33, attackRange: 96, attackArc: 1.4, attackSpeed: 0.9 }),
+    stats: grunt({ maxHp: 340, attack: 12, defense: 3, moveSpeed: 15, attackRange: 96, attackArc: 1.4, attackSpeed: 0.9 }),
     exp: 2,
   },
   {
@@ -123,7 +123,7 @@ export const UnitKinds: readonly UnitKindDef[] = [
     appearance: 'halberdier',
     palette: PALETTE_RED,
     // 全场伤害最高的步兵，代价是抡起来慢（attackSpeed 0.8）。
-    stats: grunt({ maxHp: 70, attack: 20, defense: 9, moveSpeed: 22, attackRange: 16, attackArc: 1.25, attackSpeed: 0.8 }),
+    stats: grunt({ maxHp: 700, attack: 16, defense: 9, moveSpeed: 10, attackRange: 16, attackArc: 1.25, attackSpeed: 0.8 }),
     exp: 3,
   },
   {
@@ -132,7 +132,7 @@ export const UnitKinds: readonly UnitKindDef[] = [
     note: '后段才来，比谁都高、比谁都快',
     appearance: 'cavalry',
     palette: PALETTE_RED,
-    stats: grunt({ maxHp: 95, attack: 18, defense: 10, moveSpeed: 34, attackRange: 20, attackArc: 1.6 }),
+    stats: grunt({ maxHp: 950, attack: 14, defense: 10, moveSpeed: 16, attackRange: 20, attackArc: 1.6 }),
     exp: 5,
   },
   {
@@ -142,7 +142,7 @@ export const UnitKinds: readonly UnitKindDef[] = [
     appearance: 'lancer',
     palette: PALETTE_RED,
     // 最硬的杂兵。马衣在画面上是"贵"，在这张表里就是血和防御。
-    stats: grunt({ maxHp: 130, attack: 24, defense: 18, moveSpeed: 30, attackRange: 30, attackArc: 0.95, attackSpeed: 0.85 }),
+    stats: grunt({ maxHp: 1300, attack: 20, defense: 18, moveSpeed: 14, attackRange: 30, attackArc: 0.95, attackSpeed: 0.85 }),
     exp: 7,
   },
   {
@@ -151,7 +151,7 @@ export const UnitKinds: readonly UnitKindDef[] = [
     note: '边跑边放箭，追不上',
     appearance: 'horseArcher',
     palette: PALETTE_PEASANT,
-    stats: grunt({ maxHp: 60, attack: 15, defense: 6, moveSpeed: 35, attackRange: 84, attackArc: 1.4, attackSpeed: 0.95 }),
+    stats: grunt({ maxHp: 600, attack: 12, defense: 6, moveSpeed: 16, attackRange: 84, attackArc: 1.4, attackSpeed: 0.95 }),
     exp: 5,
   },
 
@@ -169,7 +169,7 @@ export const UnitKinds: readonly UnitKindDef[] = [
     note: '塔盾与重甲，硬得像一堵墙',
     appearance: 'elite',
     palette: PALETTE_RED,
-    stats: grunt({ maxHp: 2400, attack: 55, defense: 40, moveSpeed: 22, attackRange: 19, attackArc: 1.5, attackSpeed: 0.8 }),
+    stats: grunt({ maxHp: 6000, attack: 44, defense: 40, moveSpeed: 22, attackRange: 19, attackArc: 1.5, attackSpeed: 0.8 }),
     boss: true,
     exp: 500,
   },
@@ -179,7 +179,7 @@ export const UnitKinds: readonly UnitKindDef[] = [
     note: '面甲与圆盾，比精锐快，也比精锐软',
     appearance: 'knight',
     palette: PALETTE_RED,
-    stats: grunt({ maxHp: 1600, attack: 45, defense: 32, moveSpeed: 26, attackRange: 16, attackArc: 1.7, attackSpeed: 1 }),
+    stats: grunt({ maxHp: 4200, attack: 36, defense: 32, moveSpeed: 26, attackRange: 16, attackArc: 1.7, attackSpeed: 1 }),
     boss: true,
     exp: 380,
   },

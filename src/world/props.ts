@@ -26,6 +26,13 @@ export interface Prop {
   flip: boolean;
   /** 绕不进去的半径，世界单位。 */
   radius: number;
+  /**
+   * 被砸掉了没有。一波只点一次，翻页时统一点回来（见 relight）。
+   *
+   * 篝火是玩家**能自己决定什么时候去拿**的那一份补给（首领是波次给的，他插不上手）。
+   * 所以它不是砸掉就没了，而是一波点一次 —— 地图上那几个点于是成了一条可以跑的线路。
+   */
+  down: boolean;
 }
 
 // ---------------------------------------------------------------- 尺度与调色
@@ -82,16 +89,46 @@ export class Props {
       if (m.water > 0.15 || m.forest > 0.35 || m.dirt > 0.4) continue;
       // 彼此隔开。挤在一起的几堆火是一个营地，散开的才是"沿途歇脚的地方"。
       if (this.list.some((p) => Math.hypot(p.x - x, p.y - y) < 280)) continue;
-      this.list.push({ kind: 'campfire', x, y, flip: rand() < 0.5, radius: FIRE_RADIUS });
+      this.list.push({ kind: 'campfire', x, y, flip: rand() < 0.5, radius: FIRE_RADIUS, down: false });
     }
   }
 
   /** 遍历一个圆附近的道具。碰撞用。 */
   forEachNear(x: number, y: number, reach: number, cb: (p: Prop) => void): void {
     for (const p of this.list) {
+      // 砸掉的那几堆不拦人。
+      if (p.down) continue;
       if (Math.abs(p.x - x) > reach + p.radius || Math.abs(p.y - y) > reach + p.radius) continue;
       cb(p);
     }
+  }
+
+  /** 把砸掉的那几堆全点回来。每翻一波叫一次。 */
+  relight(): void {
+    for (const p of this.list) p.down = false;
+  }
+
+  /**
+   * 把一个圆里还烧着的篝火全砸掉，返回它们的位置。
+   *
+   * 返回位置而不是在这里掉东西：Props 是世界里的布景，它不该知道掉落表长什么样。
+   */
+  breakNear(x: number, y: number, reach: number): { x: number; y: number }[] {
+    const broken: { x: number; y: number }[] = [];
+    for (const p of this.list) {
+      if (p.down) continue;
+      const dx = p.x - x;
+      const dy = p.y - y;
+      if (dx * dx + dy * dy > (reach + p.radius) * (reach + p.radius)) continue;
+      p.down = true;
+      broken.push({ x: p.x, y: p.y });
+    }
+    return broken;
+  }
+
+  /** 还烧着的那几堆。小地图要标出来。 */
+  get burning(): readonly Prop[] {
+    return this.list.filter((p) => !p.down);
   }
 
   draw(
@@ -106,6 +143,8 @@ export class Props {
     halfH: number,
   ): void {
     for (const p of this.list) {
+      // 砸掉了就不画。不留一堆灰：要说的是"这儿现在没东西了"，而远处一堆灰和一堆火太像。
+      if (p.down) continue;
       if (Math.abs(p.x - camX) > halfW + 60 || Math.abs(p.y - camY) > halfH + 60) continue;
       const s = v2(rootX + (p.x - camX) * scale, rootY + (p.y - camY) * Projection.groundSquash * scale);
       // 和人物、树共用一套行深度，所以人能走到火堆后面去。

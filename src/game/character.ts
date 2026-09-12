@@ -157,6 +157,14 @@ export class Character {
    */
   orbHitAt = -Infinity;
 
+  /**
+   * 金钟罩和天地法相上一次打到他是什么时候。和 orbHitAt 同一个道理，只是各记各的。
+   *
+   * 两个壳子可以同时开着，共用一个钟的话叠在一起的伤害会凭空少一半 —— 那不是平衡，是算错。
+   */
+  domeHitAt = -Infinity;
+  aspectHitAt = -Infinity;
+
   /** 击飞的速度，世界单位/秒。落地清零。 */
   private velX = 0;
   private velY = 0;
@@ -207,6 +215,22 @@ export class Character {
    * 第一波那个杂兵 —— 他只是走出过画面，不是重生。同理见 Reservation 上那段。
    */
   expValue = 0;
+
+  /**
+   * 他是不是首领。
+   *
+   * 存一个标志而不是拿血量去猜：末波的枪骑兵血过两千，和首领的起步值重叠 —— 按血量分的话，
+   * 一整队枪骑兵会难不回收、脚下全是光圈、小地图上铺满骷髅头，连输赢都跟着算错。
+   */
+  boss = false;
+
+  /**
+   * 挺尸还剩多久，秒。只有首领用得上（见 battle.ts 的 BOSS_HIT_STUN）。
+   *
+   * 挺尸期间**只停脚，不停手**：他站在那儿挨刀但该挥还是挥。连手也停了的话，玩家贴上去一顿砍
+   * 就把他锁死了，一个打不还手的首领没有任何压迫感可言。
+   */
+  stun = 0;
 
   maxHp = 1;
   hp = 1;
@@ -480,6 +504,7 @@ export class Character {
    * @returns 这一帧是否跨过了攻击的落点（也就是"这一下打出去了"）。
    */
   update(dt: number, animate = true): boolean {
+    if (this.stun > 0) this.stun = Math.max(0, this.stun - dt);
     if (this.death >= 0) {
       // 受击定格：姿势、弹道、倒地计时一概不动，只有白光在褪。
       if (this.hitFreeze > 0) {

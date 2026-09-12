@@ -31,13 +31,17 @@ const baseline: UnitStats = {
   /*
    * 法力。这是这一版新加的一条闸。
    *
-   * 100 上限配每秒 9 点回复，等于**十一秒回满**。按这个基准，三个主动技（突进 12、金钟罩
-   * 26、天地法相 32）连着放一轮是 70 点，回满那一轮要等八秒 —— 比任何单个技能的冷却都长。
-   * 于是"下一招什么时候能放"有了两条独立的闸：冷却管单个技能的间隔，蓝管几个技能加起来的
-   * 总量。只有冷却的话，玩家最优解永远是"三个键轮着按"，蓝就是用来否掉那个解的。
+   * 100 上限配每秒 3.4 点回复，等于**三十秒回满**。按这个基准，三个主动技连着放一轮要等二十多秒 ——
+   * 比任何单个技能的冷却都长得多。于是"下一招什么时候能放"有两条独立的闸：冷却管单个技能的
+   * 间隔，蓝管几个技能加起来的总量。只有冷却的话，玩家最优解永远是"三个键轮着按"。
+   *
+   * **为什么从每秒 9 压到 3.4：为了让蓝药有分量。** 一颗回蓝丹给四成上限，而回复每秒 9 的时候
+   * 那相当于**站着不动五秒** —— 一件要占快捷栏一格、要跑去砸篝火才能拿到的东西，不能只值五秒。
+   * 蓝的水位不是靠加耗蓝的地方压住的，是靠这一个数 —— 回得快的话，加多少开销都只是把均值压低
+   * 一截，那颗丹仍然只值五秒。
    */
   maxMp: 100,
-  mpRegen: 9,
+  mpRegen: 3.4,
   attack: 120,
   defense: 40,
   moveSpeed: 32,
@@ -63,7 +67,7 @@ export const Heroes: readonly HeroDef[] = [
     growth: {
       maxHp: 26,
       maxMp: 2.4,
-      mpRegen: 0.1,
+      mpRegen: 0.04,
       attack: 9,
       defense: 1.2,
       moveSpeed: 0.15,
@@ -82,11 +86,11 @@ export const Heroes: readonly HeroDef[] = [
     archetype: 'defense',
     appearance: 'knight',
     // 防御型：血最厚、防御最高，代价是够不远（16 是原来挂在 knight 预设上的那个数）也打不快。
-    base: stats({ maxHp: 1600, attack: 95, defense: 60, moveSpeed: 30, attackRange: 16, attackArc: 1.7, attackSpeed: 0.92, maxMp: 120, mpRegen: 8 }),
+    base: stats({ maxHp: 1600, attack: 95, defense: 60, moveSpeed: 30, attackRange: 16, attackArc: 1.7, attackSpeed: 0.92, maxMp: 120, mpRegen: 3 }),
     growth: {
       maxHp: 42,
       maxMp: 3,
-      mpRegen: 0.09,
+      mpRegen: 0.034,
       attack: 6,
       defense: 2.4,
       moveSpeed: 0.1,
@@ -105,11 +109,11 @@ export const Heroes: readonly HeroDef[] = [
     archetype: 'offense',
     appearance: 'hero',
     // 进攻型：攻击力涨得最快，血和防御最薄。他本来也不该挤进人堆。
-    base: stats({ maxHp: 900, attack: 105, defense: 30, moveSpeed: 33, attackRange: 16, attackArc: 1.7, pickupRange: 76, maxMp: 110, mpRegen: 11 }),
+    base: stats({ maxHp: 900, attack: 105, defense: 30, moveSpeed: 33, attackRange: 16, attackArc: 1.7, pickupRange: 76, maxMp: 110, mpRegen: 4.2 }),
     growth: {
       maxHp: 20,
       maxMp: 2.8,
-      mpRegen: 0.13,
+      mpRegen: 0.049,
       attack: 12,
       defense: 0.9,
       moveSpeed: 0.18,
@@ -131,11 +135,11 @@ export const Heroes: readonly HeroDef[] = [
     // 手离地面本来就远）。
     // 蓝池最小、回得最快：他的打法是冲进去扎一下再冲出来，一局里按突进的次数比谁都多，
     // 吃的是**回复速度**而不是池子大小 —— 池子再大也只是多冲一次，回得快才跟得上这个节奏。
-    base: stats({ maxHp: 1000, attack: 110, defense: 35, moveSpeed: 38, attackRange: 30, attackArc: 0.95, attackSpeed: 1.05, pickupRange: 72, maxMp: 90, mpRegen: 15 }),
+    base: stats({ maxHp: 1000, attack: 110, defense: 35, moveSpeed: 38, attackRange: 30, attackArc: 0.95, attackSpeed: 1.05, pickupRange: 72, maxMp: 90, mpRegen: 5.7 }),
     growth: {
       maxHp: 22,
       maxMp: 2,
-      mpRegen: 0.1,
+      mpRegen: 0.038,
       attack: 8,
       defense: 1,
       // 三十级是 38 + 0.42 × 29 = 50.2，仍然低于他自己的冲刺（× 1.875 = 71）。速度型是

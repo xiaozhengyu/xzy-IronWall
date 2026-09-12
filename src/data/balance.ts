@@ -77,16 +77,30 @@ export const MIN_DAMAGE = 1;
  *
  * 全是"每多一波再加这么多"的线性增量，乘在兵种的基础属性上。
  *
- * **速度那一条压得特别低，而且另有一条硬上限。** 敌人的追击速度是这个工程里唯一一个不能
- * 随便涨的数：driveEnemies 在远距离还会乘 1.8 的追击倍率，而整套走位设计建立在"走路甩不掉、
- * 冲刺能甩掉"上（见 battle.ts 的 CHASE_BOOST）。波次再把速度乘上去，末波的骑兵会追过玩家
- * 的冲刺，冲刺这张脱身牌就废了。所以速度每波只涨 1.5%，还要被 MAX_ENEMY_SPEED 夹住。
+ * **速度那一条是一条斜坡，不是一个常数。** 它每波涨 16.7%，比血和攻击的斜率都大 —— 因为它
+ * 要从"追不上"一直走到"甩不掉"。兵种表里的速度是**第一波的**速度，乘完七步正好回到以前
+ * 那一档（杂兵 12 → 26、骑兵 16 → 35）。以前整局都是末波那个速度，第一波就追得上散步的玩家，
+ * 一开局就被围 —— 而前几波本来该是用来攒等级和攒技能的。
+ *
+ * 另有一条硬上限夹着。敌人的追击速度是这个工程里唯一一个不能随便涨的数：driveEnemies 在远
+ * 距离还会乘 1.8 的追击倍率，而整套走位设计建立在"走路甩不掉、冲刺能甩掉"上（见 battle.ts
+ * 的 CHASE_BOOST）。波次再把速度乘上去，末波的骑兵会追过玩家的冲刺，冲刺这张脱身牌就废了 ——
+ * 所以斜坡的终点仍然被 MAX_ENEMY_SPEED 夹住。
  */
-export const WAVE_HP_PER_WAVE = 0.34;
-export const WAVE_ATTACK_PER_WAVE = 0.18;
+export const WAVE_HP_PER_WAVE = 0.09;
+export const WAVE_ATTACK_PER_WAVE = 0.26;
 export const WAVE_DEFENSE_PER_WAVE = 0.22;
-export const WAVE_SPEED_PER_WAVE = 0.015;
+export const WAVE_SPEED_PER_WAVE = 0.167;
 export const WAVE_ATTACK_SPEED_PER_WAVE = 0.03;
+
+/**
+ * 首领的血每波涨多少。
+ *
+ * 首领**不吃普通那条波次曲线**（见 resolveEnemyStats），但也不能整局一个数：现在每一波到点都
+ * 出一个，而玩家的伤害一局涨六倍。写死的话，第一个首领要砍四十多刀（打不动），最后一个两三刀
+ * （不配叫首领）。自己那条斜坡比普通兵降得快得多，正好把他一直钉在"要认真砍十来刀"那一档。
+ */
+export const BOSS_HP_PER_WAVE = 0.5;
 
 /**
  * 敌人移动速度的硬上限，世界单位每秒。
@@ -195,8 +209,31 @@ export const cardCostTotalUnits = (picks: number): number =>
 export const cardCost = (base: number, index: number): number =>
   base * (1 + CARD_COST_GROWTH * Math.max(0, index));
 
-export const SKILL_LEVEL_REACH = 0.1;
+/**
+ * 技能每升一级，作用距离多多少。
+ *
+ * 给过 0.1，满级就是 1.4 倍 —— 再叠上等级成长和范围牌，末波的横扫大到半个屏幕，人还没走到
+ * 脸前就没了，位置感整个垮掉。压到 0.04（满级 1.16 倍）：升级仍然看得出扫得更开，但不再把
+ * "要贴到多近才砍得到"这件事抹平。
+ */
+export const SKILL_LEVEL_REACH = 0.04;
 export const SKILL_LEVEL_MP_DISCOUNT = 0.08;
+
+/**
+ * 技能每升一级，这一招的伤害和出手频率各变多少。
+ *
+ * 以前升级只动作用距离和法力开销 —— 一个满级横扫和一级横扫砍在人身上是一样疼的，于是升级
+ * 只能靠"扫得更远"来体现，而那在人堆里几乎看不出来。
+ *
+ * 伤害那一条是**这一局能不能走到后期秒怪的主力**：角色等级从 1 级到 25 级才涨 2.5 倍，而敌人血
+ * 一局就涨一截。没有技能等级这一条，"前期多砍几下、后期一刀一个"那条交叉曲线根本交不上。
+ * 0.35 × 4 = 满级两倍多，配上属性牌和等级正好把末波的杂兵压进一刀。
+ *
+ * 频率那一条乘在**冷却**上，不是乘在攻击速度上：挥击动作本身的长度是角色属性，把它也压短
+ * 的话，满级的人会挥出一串看不清的残影。冷却只是"下一招要等多久"，压它是安全的。
+ */
+export const SKILL_LEVEL_DAMAGE = 0.35;
+export const SKILL_LEVEL_RATE = 0.09;
 
 /**
  * 被动技能每升一级，那一包加成放大多少。满级（5 级）就是两倍。
@@ -214,6 +251,13 @@ export const skillReachScale = (level: number): number =>
 
 export const skillMpScale = (level: number): number =>
   1 - SKILL_LEVEL_MP_DISCOUNT * (Math.max(1, Math.min(level, SKILL_MAX_LEVEL)) - 1);
+
+export const skillDamageScale = (level: number): number =>
+  1 + SKILL_LEVEL_DAMAGE * (Math.max(1, Math.min(level, SKILL_MAX_LEVEL)) - 1);
+
+/** 乘在冷却上，所以是个小于 1 的数。满级大约是原来的三分之二。 */
+export const skillRateScale = (level: number): number =>
+  1 - SKILL_LEVEL_RATE * (Math.max(1, Math.min(level, SKILL_MAX_LEVEL)) - 1);
 
 // ---------------------------------------------------------------- 环绕流星（磐石）
 
@@ -239,6 +283,19 @@ export const ORB_HIT_RADIUS = 9;
  * 一个贴身秒杀。0.55 秒配 2.5 弧度每秒，等于一个人站着不动最多被同一颗流星连撞两次。
  */
 export const ORB_HIT_GAP = 0.55;
+
+/**
+ * 罩在身上的那两个壳子（金钟罩、天地法相）多久结算一次，秒。
+ *
+ * 以前它们是**每帧**结算的。场上每一个人都一碰就死，所以这件事一直没暴露 —— 直到首领出现：
+ * 他不会一下就死，于是站在罩里每秒挨六十下，一眼就没了。
+ *
+ * 更糟的是它还**跟帧率走**：144 赫兹的机器上这两招比 60 赫兹疼一倍多。给了间隔之后，伤害速率
+ * 变成一个写出来的数，而不是"这台机器一秒跑多少帧"。
+ *
+ * 比磐石的 0.55 快一截：流星是扫过去的，而这两个是"你站在我的壳子里"。
+ */
+export const AURA_HIT_GAP = 0.35;
 /** 撞一下算几档伤害。2 = 和技能同档（见 SKILL_DAMAGE_PER_POWER）。 */
 export const ORB_POWER = 2;
 
@@ -260,7 +317,8 @@ export const COIN_DROP_CHANCE = 1 / 50;
  *
  * 现在的量级是二十来秒一件。一局下来一百多件，够用、又不至于溢出，每一件掉下来都还算个事。
  */
-export const PICKUP_DROP_CHANCE = 1 / 300;
+/** 篝火砸开的那一件掉在哪里的散开半径，世界单位。 */
+export const CAMPFIRE_DROP_SPREAD = 14;
 
 // ---------------------------------------------------------------- 玩家
 

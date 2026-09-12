@@ -35,6 +35,8 @@ interface StatCard {
   key: keyof StatBonus;
   icon: string;
   name: string;
+  /** 这一项的幅度要不要打折。不写就是 1。 */
+  scale?: number;
   /** 拿到本次抽中的幅度，拼成说明文案。 */
   detail: (step: number) => string;
 }
@@ -46,7 +48,9 @@ interface StatCard {
 const STAT_CARDS: StatCard[] = [
   { key: 'attack', icon: HUD_ICON_URLS.swords, name: '攻击力', detail: (s) => `所有伤害 +${s}%` },
   { key: 'attackSpeed', icon: HUD_ICON_URLS.fire, name: '攻击频率', detail: (s) => `所有出手频率 +${s}%` },
-  { key: 'attackRange', icon: HUD_ICON_URLS.bow, name: '攻击范围', detail: (s) => `所有判定范围 +${s}%` },
+  // 范围牌的幅度只给一半：它和等级成长、技能等级三者相乘，满层叠下来末波的横扫会大到半个屏幕，
+  // 人还没走到脸前就没了。别的属性多一点只是数字大一点，范围多一点是把走位这件事跑掉。
+  { key: 'attackRange', icon: HUD_ICON_URLS.bow, name: '攻击范围', detail: (s) => `所有判定范围 +${Math.round(s / 2)}%`, scale: 0.5 },
   { key: 'pickupRange', icon: HUD_ICON_URLS.gem, name: '拾取范围', detail: (s) => `灵石与金币吸附范围 +${s}%` },
   { key: 'defense', icon: HUD_ICON_URLS.shield, name: '防御', detail: (s) => `受到的伤害减少（防御 +${s}%）` },
   { key: 'moveSpeed', icon: HUD_ICON_URLS.boots, name: '移动速度', detail: (s) => `走和跑都 +${s}%` },
@@ -243,7 +247,7 @@ export class HudCardPicker {
         icon: c.icon,
         name: c.name,
         detail: c.detail(step),
-        bonus: { [c.key]: step / 100 } as StatBonus,
+        bonus: { [c.key]: (step * (c.scale ?? 1)) / 100 } as StatBonus,
       };
     });
     // 获取：这一局还没拿到的招。牌面上写清它是哪一类，那决定它会占哪一格。

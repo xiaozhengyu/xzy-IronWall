@@ -300,8 +300,10 @@ export const UnitPresets = {
       armor: 'plate',
       pauldrons: true,
       skirt: true,
-      bulk: 1.12,
-      stature: 1.06,
+      // 首领只有这一个外观，而他要在一千个红甲里被一眼认出来。属性上的"硬"是打起来才知道的，
+      // 看一眼就知道的只有个头 —— 所以他比旁边的人高出一头、宽出一圈。
+      bulk: 1.5,
+      stature: 1.34,
       helmetTone: 0.9,
     }),
 
