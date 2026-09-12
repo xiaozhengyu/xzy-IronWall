@@ -14,6 +14,7 @@ export function inAttackArc(attacker: Character, target: Character): boolean {
   return inSector(attacker, target, attacker.stats.attackRange, attacker.stats.attackArc);
 }
 
+
 /**
  * 同一个扇形判定，但范围和张角由外面给 —— 技能用这条路（见 game/skills.ts）。
  *

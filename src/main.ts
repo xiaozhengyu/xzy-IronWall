@@ -566,6 +566,7 @@ function summaryStats(): SummaryStats {
     gems: battle.collectedGems,
     kills: battle.kills,
     deaths: battle.deaths,
+    damageTaken: Math.round(battle.damageTaken),
     wave: wave.wave,
     waves: wave.waves,
     cleared: wave.cleared,
@@ -1181,6 +1182,16 @@ function enterMap(hero: HeroDef, map: GameMapDef, weather: WeatherKind): void {
       // 就是稳定之后的样子（见 onWeatherChange），进去再从零慢慢积一遍是两张不同的图。
       field.weather.settle(weather);
       field.ground.bakeWeatherNow();
+      /*
+       * 从选人界面开新的一局，把调试钉住的波次松掉。
+       *
+       * 钉住本身是对的（压测必然要死很多次，每次重按末波压测就测不成了），但它不该活到下一局 ——
+       * 一旦按过末波压测，之后每一局都从最后一波开始，而那一波的首领一死就当场判赢。
+       * 玩家看到的是"打完第一个首领就直接结算"。
+       *
+       * 清在这儿而不是 Battle.reset 里：清场重来（X 键）仍然该留在那一波。
+       */
+      battle.pinnedWave = 0;
       battle.reset(viewOf());
       layout();
       // 零步长跑一次，让每个人先把姿势搭出来 —— 和开场那一次是同一个道理。
@@ -1204,7 +1215,19 @@ function enterMap(hero: HeroDef, map: GameMapDef, weather: WeatherKind): void {
  */
 const summary = new SummaryScreen({
   onResume: () => controls.resume(),
-  onEnd: () => endRun(),
+  /*
+   * 临时结算里按的“确认结束”：直接回选人界面，**不再弹一次最终结算**。
+   *
+   * 最终结算那一屏和他刚才看的那一屏写的是同一份数 —— 金币、灵石、击杀、经验、等级都在上面。
+   * 再弹一次只是叫他把同一屏读第二遍，然后再按一个确认。主动退出已经在按钮上确认过一次了。
+   *
+   * 但帐还是要结（settleRun）：金币和经验跟不跟着走，和弹不弹那一屏没关系。
+   * 被打倒和清完首领那两条路仍然走 endRun，那两屏是要给玩家看结果的。
+   */
+  onEnd: () => {
+    settleRun();
+    returnToSetup();
+  },
   onConfirm: () => returnToSetup(),
 });
 

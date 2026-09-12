@@ -181,6 +181,21 @@
   border-color: #4d5a76;
 }
 
+/*
+ * 拿掉焦点环。
+ *
+ * 这一屏是按 ESC 弹出来的，弹出时代码把焦点放在“继续游戏”上。前一下是键盘，于是浏览器
+ * 判定这是键盘焦点、给它画了一圈环；接着鼠标去按“结束游戏”，焦点走了，那圈环也没了 ——
+ * 看上去就是“我没碰它，它自己变了一下”。
+ *
+ * 而这一屏的两个按钮本来就是一米一暗、读得出哪个是主的，不靠那圈环说事。去掉之后，
+ * 按钮长什么样只和鼠标在不在它上面有关。
+ */
+.summary-btn:focus,
+.summary-btn:focus-visible {
+  outline: none;
+}
+
 .summary-btn.main {
   color: #0f1218;
   background: #d8c9a4;
@@ -189,6 +204,25 @@
 
 .summary-btn.main:hover {
   background: #eadcb8;
+}
+
+/*
+ * “结束游戏”按下第一下之后的样子。
+ *
+ * 只换颜色，**一个尺寸都不能动**：这一下旁边就站着“继续游戏”，它得待在原地、原大小。
+ * 字也刚好四个换四个，连行宽都不会抽一下。
+ *
+ * 用赤而不用主按钮那个米色：米色在这一屏是“推荐你按这个”，而这一下恰恰相反。
+ */
+.summary-btn.armed {
+  color: #ffe4d8;
+  background: #7a2a24;
+  border-color: #c0483a;
+}
+
+.summary-btn.armed:hover {
+  background: #8f322a;
+  border-color: #d8584a;
 }
 
 /* 药和符那一行。样式在 itemStrip.css，这里只管它和上面那块战况隔开多远。 */

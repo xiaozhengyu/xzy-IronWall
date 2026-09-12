@@ -1502,19 +1502,33 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   // --- 上排：字模表 -------------------------------------------------------
   //
   // z 传 0，于是数字的底边正好落在 rootY 上 —— 摆字模表要的是精确落位，不是头顶那个偏移。
-  const ATLAS_W = 760;
-  const ATLAS_H = 30;
+  const ATLAS_W = 1010;
+  const ATLAS_H = 97;
   const atlas = new Canvas(ATLAS_W, ATLAS_H, [71, 105, 59]);
   {
     const shapes = new ShapeBatch();
     // 右半边铺一块亮甲色：亮字压在亮底上是描边唯一真正要扛的场面。
     shapes.rect(v2(ATLAS_W * 0.75, ATLAS_H / 2), ATLAS_W * 0.5, ATLAS_H, 0, rgb(198, 204, 206), 0);
-    const baseline = 21;
+    const baseline = 79;
     numbers.clear();
     numbers.spawn(22, 0, 12345, { z: 0 });
     numbers.spawn(72, 0, 67890, { z: 0 });
     numbers.spawn(155, 0, 1234, { z: 0 });
     numbers.spawn(215, 0, 8888, { crit: true, z: 0 }); // 重击：字模像素放大一倍
+    // 首领那一档（金色、1.8 倍），以及用药用符那四个牌子。后者是这张图真正要校的：
+    // 字母是新烘的 5×7 字模，得确认它们在这个尺寸下还认得出来。
+    numbers.spawn(262, 0, 1204, { style: 'boss', z: 0 });     // 首领：金色、1.8 倍
+    numbers.spawn(305, 0, 3016, { style: 'boss', crit: true, z: 0 });
+    // 第二行：用药用符那四个牌子。这才是这张图真正要校的 —— 字母是新烘的 5×7 字模，
+    // 得确认它们在这个尺寸下还认得出来。
+    numbers.spawn(20, -11, 432, { style: 'heal', sign: 'plus', label: 'HP', z: 0 });
+    numbers.spawn(85, -11, 58, { style: 'mana', sign: 'plus', label: 'MP', z: 0 });
+    numbers.spawn(150, -11, 18, { style: 'buff', sign: 'times', label: 'SPD', z: 0 });
+    numbers.spawn(220, -11, 15, { style: 'buff', sign: 'times', label: 'ATK', z: 0 });
+    // 玩家掉血扣蓝：和上面回血回蓝那两串**同一档颜色**，只是符号相反。
+    // 这两串摆在前两串旁边就是为了看清“只差一个符号”这件事在这个尺寸下读不读得出来。
+    numbers.spawn(20, -22, 432, { style: 'heal', sign: 'minus', label: 'HP', z: 0 });
+    numbers.spawn(85, -22, 58, { style: 'mana', sign: 'minus', label: 'MP', z: 0 });
     // 推到淡入刚结束：字模表要的是完全亮起来、还没开始上飘的那一帧。
     for (let k = 0; k < Math.round(0.13 / STEP); k++) numbers.update(STEP);
     numbers.draw(shapes, 0, 0, 0, baseline, GRAIN);

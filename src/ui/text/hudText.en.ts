@@ -11,6 +11,7 @@ export const HUD_TEXT_EN: HudMessages = {
   experienceValue: 'XP {value} / {maximum}',
   wavePanel: 'MONSTER WAVE',
   waveTitle: 'WAVE {wave}',
+  finalStandTitle: 'COUNTDOWN',
   nextWaveCountdown: 'NEXT WAVE IN {time}',
   waveProgress: '{completed} / {total} WAVES CLEARED',
   pause: 'PAUSE',

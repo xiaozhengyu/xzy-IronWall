@@ -34,6 +34,7 @@ export class HudWavePanel {
   private readonly text: HudText;
   private wave = 1;
   private countdown = 0;
+  private urgent = false;
   private clearedWaves = 0;
   private totalWaves = 0;
 
@@ -68,6 +69,23 @@ export class HudWavePanel {
     const next = Math.max(1, Math.floor(Number.isFinite(wave) ? wave : 1));
     if (next === this.wave) return;
     this.wave = next;
+    this.refreshText();
+  }
+
+  /**
+   * 改成"清完首领还剩多久"那一档：字变红，**上面那行也不再写波号**。
+   *
+   * 同一个位置换一个颜色，而不是另开一行：这两个倒数不会同时存在（最后一波之后就没有"下一波"
+   * 了），而玩家看时间的眼神已经习惯了往那儿扔。
+   *
+   * 波号也跟着换掉：走到这一步，"第几波"已经不是一个还在动的数了 —— 它永远是最后那一波。
+   * 把那一行腾出来写"倒计时"，整个面板就只说一件事：还剩多久。
+   */
+  setUrgent(on: boolean): void {
+    this.timer.classList.toggle('hud-wave-timer--urgent', on);
+    if (on === this.urgent) return;
+    this.urgent = on;
+    this.title.classList.toggle('hud-wave-title--urgent', on);
     this.refreshText();
   }
 
@@ -124,7 +142,9 @@ export class HudWavePanel {
   private refreshText(): void {
     const time = `${Math.floor(this.countdown / 60).toString().padStart(2, '0')}:${(this.countdown % 60)
       .toString().padStart(2, '0')}`;
-    this.title.textContent = this.text.value('waveTitle', { wave: this.wave.toString().padStart(2, '0') });
+    this.title.textContent = this.urgent
+      ? this.text.value('finalStandTitle')
+      : this.text.value('waveTitle', { wave: this.wave.toString().padStart(2, '0') });
     this.timer.textContent = time;
     this.timer.setAttribute('aria-label', this.text.value('nextWaveCountdown', { time }));
     this.waveTrack.setAttribute('aria-label', this.text.value('waveProgress', {

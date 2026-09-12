@@ -9,6 +9,7 @@ export interface HudMessages {
   experienceValue: string;
   wavePanel: string;
   waveTitle: string;
+  finalStandTitle: string;
   nextWaveCountdown: string;
   waveProgress: string;
   pause: string;

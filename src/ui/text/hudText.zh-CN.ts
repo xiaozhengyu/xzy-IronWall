@@ -11,6 +11,7 @@ export const HUD_TEXT_ZH_CN: HudMessages = {
   experienceValue: '经验 {value} / {maximum}',
   wavePanel: '怪物波次',
   waveTitle: '第 {wave} 波',
+  finalStandTitle: '倒 计 时',
   nextWaveCountdown: '下一波倒计时 {time}',
   waveProgress: '已打完 {completed} / {total} 波',
   pause: '暂停',

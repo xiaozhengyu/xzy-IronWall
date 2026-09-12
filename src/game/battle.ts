@@ -3,7 +3,7 @@ import { RigSpec } from '../characters/rig';
 import { PALETTE_HERO, type CharacterPalette } from '../characters/palette';
 import { type UnitDef, type UnitPresetId, UnitPresets, unitAppearance } from '../characters/unitDef';
 import { clamp } from '../core/math';
-import { DamageNumbers } from '../effects/damageNumbers';
+import { DamageNumbers, type DamageNumberLabel } from '../effects/damageNumbers';
 import {
   CRIT_CHANCE_BASIC,
   CRIT_CHANCE_SKILL,
@@ -17,6 +17,7 @@ import {
   ORB_HIT_RADIUS,
   ORB_HIT_GAP,
   AURA_HIT_GAP,
+  FINAL_BOSS_LIMIT,
   ORB_POWER,
   expToNextLevel,
   RUN_MULTIPLIER,
@@ -37,7 +38,7 @@ import { ImpactEffects, frontRadius, weaponImpactPoint, type ShockwaveOptions } 
 import { SKY_BLADE_LENGTH, SKY_BLADE_WIDTH } from '../effects/skyBlade';
 import { Character } from './character';
 import { isFreeSpot, moveWithCollision } from './collision';
-import { inAttackArc, inSector, sweptBy } from './combat';
+import { inSector, sweptBy } from './combat';
 import type { Field } from './field';
 import { rgb } from '../render/color';
 import { SpatialGrid } from './grid';
@@ -390,6 +391,35 @@ const BOSS_KIND = 'elite' as const;
 /** 首领挨一下定在原地多久，秒。只停脚不停手（见 Character.stun）。 */
 const BOSS_HIT_STUN = 0.14;
 
+/** 玩家头顶那几串字从多高冒出来。比头再高一截，别和身边满地的伤害数字混在一起。 */
+const PLAYER_FLOAT_Z = 34;
+
+/**
+ * 他够不够得着对方。**只看距离，不看角度，也不看碰撞。**
+ *
+ * 两个人的身体半径都算进去：攻击距离说的是"武器从我身上伸出去多远"，而两个人是脸对脸站着的。
+ * 不加这两副身体的后果是：人堆把杂兵顶在 12 个单位外（见 crowdSpacing），而杂兵的射程只有 11 ——
+ * 于是围了一圈人却没一个动手，只有长枪兵（射程 20）在戳。
+ *
+ * 不判角度也是故意的：敌人每一帧都面向玩家，角度判定只会在挥到一半玩家绕到侧边时偷掉一下，
+ * 而那一下在画面上看不出来 —— 玩家只会觉得"它明明砍到我了"。
+ */
+function reachable(
+  attacker: { x: number; y: number; radius: number; stats: UnitStats },
+  target: { x: number; y: number; radius: number },
+): boolean {
+  const dx = target.x - attacker.x;
+  const dy = target.y - attacker.y;
+  const reach = attacker.stats.attackRange + attacker.radius + target.radius;
+  return dx * dx + dy * dy <= reach * reach;
+}
+
+/** 属性加成在头顶飘字里挂哪个牌子。 */
+const BONUS_LABEL: Partial<Record<keyof StatBonus, DamageNumberLabel>> = {
+  maxHp: 'HP', maxMp: 'MP', mpRegen: 'MP', attack: 'ATK', defense: 'ATK',
+  moveSpeed: 'SPD', attackRange: 'ATK', attackSpeed: 'ATK', pickupRange: 'SPD',
+};
+
 const ENEMY_SWING_GAP = 0.6;
 const ENEMY_SWING_JITTER = 0.35;
 /** 弓手单独放慢到约每 2.8～3.8 秒一箭，避免落地箭很快铺满画面。 */
@@ -711,6 +741,14 @@ export class Battle {
 
   kills = 0;
   deaths = 0;
+  /**
+   * 这一局一共挺了多少伤害。结算画面上写一行。
+   *
+   * 和阵亡数是两回事：阵亡只能说"有没有撑住"，而这个数能说"差多少没撑住"。
+   * 同样是无伤通关，挺了两万和挺了两千是两种打法。记的是**减免之后真正掉的血**，
+   * 不是敌人的攻击力总和 —— 防御提上去了这一行就该降，否则它度量不了任何东西。
+   */
+  damageTaken = 0;
   presetIndex = 0;
 
   /**
@@ -937,6 +975,27 @@ export class Battle {
 
   /** 场上这批首领要在这个时刻之前清完。0 = 没有在计时。 */
   private bossDeadline = 0;
+  /** 这一秒里共扣了多少蓝，攒满一秒飘一个数（见 advanceMpFloat）。 */
+  private spentMp = 0;
+  /** 同理，这一秒里挨了多少伤害。 */
+  private tookHp = 0;
+  private floatSince = 0;
+
+  /**
+   * 清完场上这批首领还剩多少秒。0 = 没在倒数。
+   *
+   * HUD 拿它画那一行红字。只在真的有首领站在场上时才给数 —— 一个倒数着却不知道在催什么的
+   * 钟比没有铟更糟。
+   */
+  get bossCountdown(): number {
+    if (this.outcome !== 'none' || this.bossDeadline <= 0 || !this.bossAlive) return 0;
+    return Math.max(0, this.bossDeadline - this.runTime);
+  }
+
+  /** 倒数的是最后一批吗。最后那一批才值得把字排大、变红。 */
+  get finalStand(): boolean {
+    return this.waves.lastWaveOver;
+  }
 
   /** 场上还有活着的首领。 */
   get bossAlive(): boolean {
@@ -1114,7 +1173,38 @@ export class Battle {
     if (amount <= 0) return true;
     if (this.currentMp < amount) return false;
     this.currentMp -= amount;
+    this.spentMp += amount;
     return true;
+  }
+
+  /**
+   * 玩家这一秒里掉了多少血、扣了多少蓝，各飘一个数。
+   *
+   * **不能一下一个。** 疾走和法相是按帧扣的，末波挨打也是每秒十几下 —— 那不是反馈是噪声，
+   * 而且会把全局九十六个的数字池吃光；
+   * 而一秒一个恰好和慢回的丹那边是同一个节奏（见 REGEN_TICK），两边读起来是一件事。
+   */
+  private advancePlayerFloats(dt: number): void {
+    this.floatSince += dt;
+    if (this.floatSince < REGEN_TICK) return;
+    this.floatSince = 0;
+    const hp = Math.round(this.tookHp);
+    const mp = Math.round(this.spentMp);
+    this.tookHp = 0;
+    this.spentMp = 0;
+    /*
+     * 和吃药那两串用**同一档颜色**，只是符号相反：回血是血+120，掉血就是血-120。
+     *
+     * 先把掉血接到了 damage 那一档的白转橙，换掉了：白转橙是**满地都是的那种数字**，
+     * 让玩家得先分辨“这一个是从我头上冒的”再读它。而血量只有一个颜色的话，颜色直接就是
+     * “这说的是我的血”，剩下只要看一眼符号就知道是加是减。蓝同理。
+     */
+    if (hp >= 1) {
+      this.floatGain(hp, 'heal', 'minus', 'HP');
+    }
+    if (mp >= 1) {
+      this.floatGain(mp, 'mana', 'minus', 'MP');
+    }
   }
 
   /**
@@ -1310,12 +1400,12 @@ export class Battle {
       if (def.restore.hp) {
         const before = this.player.hp;
         this.player.hp = Math.min(this.player.maxHp, this.player.hp + this.player.maxHp * def.restore.hp);
-        this.floatGain(this.player.hp - before, 'heal', 'plus');
+        this.floatGain(this.player.hp - before, 'heal', 'plus', 'HP');
       }
       if (def.restore.mp) {
         const before = this.currentMp;
         this.currentMp = Math.min(this.player.stats.maxMp, this.currentMp + this.player.stats.maxMp * def.restore.mp);
-        this.floatGain(this.currentMp - before, 'mana', 'plus');
+        this.floatGain(this.currentMp - before, 'mana', 'plus', 'MP');
       }
     }
     if (def.buff && def.duration > 0) {
@@ -1338,8 +1428,14 @@ export class Battle {
        * "这一下有多狠"，那就是最大的那一项。具体哪几项在牌面和物品说明上写着。
        */
       let best = 0;
-      for (const value of Object.values(def.buff)) best = Math.max(best, value ?? 0);
-      this.floatGain(Math.round(best * 100), 'buff', 'times');
+      let bestKey: keyof StatBonus | null = null;
+      for (const [key, value] of Object.entries(def.buff) as [keyof StatBonus, number | undefined][]) {
+        if ((value ?? 0) > best) {
+          best = value ?? 0;
+          bestKey = key;
+        }
+      }
+      this.floatGain(Math.round(best * 100), 'buff', 'times', BONUS_LABEL[bestKey ?? 'attack'] ?? 'ATK');
     }
     this.itemFlash = ITEM_FLASH_TIME;
     // 不放光环。
@@ -1356,15 +1452,26 @@ export class Battle {
    * 走的是打人那套飘字（DamageNumbers），只是换了颜色 —— 同一个地方冒出来的数字用同一套画法，
    * 玩家不用学第二种读法。颜色是唯一的区别，而那正好就是"这是好事还是坏事"。
    */
+  /**
+   * 一项属性在头顶飘字里叫什么。
+   *
+   * 一张符带好几项加成时取最大的那一项来标 —— 飘一串数字没人读得完，而玩家真正要知道的是
+   * "这一下最狠的是哪一项"。具体哪几项在牌面和物品说明上写着。
+   */
   private floatGain(
     value: number,
     style: 'heal' | 'mana' | 'buff',
-    sign: 'plus' | 'times',
+    sign: 'plus' | 'times' | 'minus',
+    label: DamageNumberLabel,
   ): void {
     if (value < 1) return;
     // follow：这一下发生在**玩家身上**，不是发生在地上某一点。他一边跑一边回，数字得跟着他
     // 走，否则就是掉在身后的一串数。以后的持续回血、回蓝药更要靠这一条。
-    this.damageNumbers.spawn(this.player.x, this.player.y, value, { style, sign, follow: true });
+    //
+    // z 比头顶再高一截：这一串说的是玩家自己，要从满地的伤害数字里抬出来。
+    this.damageNumbers.spawn(this.player.x, this.player.y, value, {
+      style, sign, label, follow: true, z: PLAYER_FLOAT_Z,
+    });
   }
 
   /**
@@ -1386,7 +1493,7 @@ export class Battle {
         if (r.hp > 0) {
           const before = this.player.hp;
           this.player.hp = Math.min(this.player.maxHp, this.player.hp + this.player.maxHp * r.hp);
-          this.floatGain(this.player.hp - before, 'heal', 'plus');
+          this.floatGain(this.player.hp - before, 'heal', 'plus', 'HP');
         }
         if (r.mp > 0) {
           const before = this.currentMp;
@@ -1394,7 +1501,7 @@ export class Battle {
             this.player.stats.maxMp,
             this.currentMp + this.player.stats.maxMp * r.mp,
           );
-          this.floatGain(this.currentMp - before, 'mana', 'plus');
+          this.floatGain(this.currentMp - before, 'mana', 'plus', 'MP');
         }
       }
       if (r.left <= 0) {
@@ -1691,6 +1798,7 @@ export class Battle {
     this.reserved.length = 0;
     this.kills = 0;
     this.deaths = 0;
+    this.damageTaken = 0;
     this.earnedExp = 0;
     this.defeated = false;
     this.outcome = 'none';
@@ -2221,6 +2329,7 @@ export class Battle {
     for (const id of this.collectibles.collectedPickups) this.takeItem(id);
     this.advanceTimedBonuses(dt);
     this.advanceRegens(dt);
+    this.advancePlayerFloats(dt);
     if (this.itemFlash > 0) this.itemFlash = Math.max(0, this.itemFlash - dt);
     // 玩家作为地表反馈焦点：雪印、水波和水珠不能被同一帧的大量敌人特效覆盖。
     field.update(dt, this.actors(), player);
@@ -2568,6 +2677,18 @@ export class Battle {
 
   private damagePlayer(attack: number, fromX: number, fromY: number): boolean {
     const roll = rollDamage(attack, this.player.stats.defense, 1);
+    /*
+     * 挨打也飘字，但是**攒满一秒飘一个**。
+     *
+     * 以前只有左上角那条血槽在掉，而战斗里玩家的眼睛一直在屏幕中间 —— 他知道自己在掉血，
+     * 不知道掉得有多快。
+     *
+     * 不一下一个：末波人堆里每秒有十几下落在身上，一下一个就是一秒十几个数字叠在头顶 ——
+     * 读不出来，而且把全局九十六个的数字池吃光，连地上的伤害数字一起消失。一秒一个总数才是
+     * 玩家真正要知道的：他正以多快的速度在掉血。和扣蓝、慢回的丹是同一个节奏（REGEN_TICK）。
+     */
+    this.tookHp += roll.value;
+    this.damageTaken += roll.value;
     return this.player.takeHit(fromX, fromY, roll.value);
   }
 
@@ -2608,7 +2729,13 @@ export class Battle {
     }
 
     // dx/dy 就是这个人被掀飞的去向 —— 数字拿它往反方向让开，把飞行轨迹留给画面。
-    this.damageNumbers.spawn(e.x, e.y, roll.value, { crit: roll.crit, dirX: dx, dirY: dy });
+    // 首领那一串单独一档（金色、字大一截）。末波一刀下去几十个数字同时飘，长得一样就淡掉了。
+    this.damageNumbers.spawn(e.x, e.y, roll.value, {
+      crit: roll.crit,
+      style: e.boss ? 'boss' : undefined,
+      dirX: dx,
+      dirY: dy,
+    });
 
     // 没死就只闪一下白光（takeHit 里做的），不溅碎片也不掉东西。碎片是"这个人碎了"的信号，
     // 挨一下还站着的人溅出甲片会让玩家以为他已经死了。
@@ -3492,7 +3619,7 @@ export class Battle {
          *
          * 间隔里那点随机抖动是必须的：少了它，同一批贴上来的人会整齐划一地同时挥。
          */
-        if (i < activeCount && dist <= e.stats.attackRange) {
+        if (i < activeCount && reachable(e, player)) {
           const jitter = e.def.weapon === 'bow' ? ENEMY_ARCHER_SHOT_JITTER : ENEMY_SWING_JITTER;
           this.enemies[i].swing(this.enemySwingGap(e.def, e.stats) + Math.random() * jitter);
         }
@@ -3502,7 +3629,8 @@ export class Battle {
         const actor = this.enemies[i];
         if (actor.update(dt, onScreen) && player.alive) {
           if (actor.def.weapon === 'bow') this.fireEnemyArrow(actor);
-          else if (inAttackArc(actor, player) && this.hitPlayer(actor)) this.deaths++;
+          // 够得着就算打中：不判角度、不判碰撞（见 reachable）。
+          else if (reachable(actor, player) && this.hitPlayer(actor)) this.deaths++;
         }
       }
     }
@@ -3746,7 +3874,9 @@ export class Battle {
        * 跑完全场 —— 那么“把首领打完”就不是一件得做的事。给的时间是当前这一波的时长：
        * 你有一整波去处理刚出来的这几个。
        */
-      this.bossDeadline = this.runTime + this.waves.wave.duration;
+      // 最后一批单给一个数：它后面没有"下一波到点"了（见 FINAL_BOSS_LIMIT）。
+      this.bossDeadline = this.runTime
+        + (this.waves.lastWaveOver ? FINAL_BOSS_LIMIT : this.waves.wave.duration);
     }
     if (this.outcome === 'none' && !this.bossAlive) {
       this.bossDeadline = 0;

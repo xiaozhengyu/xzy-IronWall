@@ -32,6 +32,8 @@ export interface SummaryStats {
   gems: number;
   kills: number;
   deaths: number;
+  /** 这一局一共挺了多少伤害（减免之后真正掉的血）。 */
+  damageTaken: number;
   wave: number;
   waves: number;
   /** 已经打完的波数。 */
@@ -59,7 +61,7 @@ export interface SummaryStats {
 export interface SummaryHooks {
   /** 继续游戏（只有临时结算有）。 */
   onResume(): void;
-  /** 结束这一局，转到最终结算（只有临时结算有）。 */
+  /** 结束这一局，直接回选人界面（只有临时结算有）。按钮上已经确认过一次了。 */
   onEnd(): void;
   /** 确认，回到选人画面（只有最终结算有）。 */
   onConfirm(): void;
@@ -100,6 +102,8 @@ export class SummaryScreen {
   private readonly resumeButton = el('button', 'summary-btn main', '继续游戏');
   private readonly endButton = el('button', 'summary-btn', '结束游戏');
   private readonly confirmButton = el('button', 'summary-btn main', '确认');
+  /** “结束游戏”按过一下了、正等第二下。见 armEnd()。 */
+  private endArmed = false;
 
   constructor(hooks: SummaryHooks, text: HudText = new HudText()) {
     this.hooks = hooks;
@@ -127,6 +131,7 @@ export class SummaryScreen {
     this.gems.textContent = String(stats.gems);
     this.stats.kills.textContent = String(stats.kills);
     this.stats.deaths.textContent = String(stats.deaths);
+    this.stats.damageTaken.textContent = String(stats.damageTaken);
     this.stats.time.textContent = clock(stats.time);
     this.stats.wave.textContent = `${stats.wave} / ${stats.waves}`;
     this.stats.cleared.textContent = `${stats.cleared} 波`;
@@ -153,6 +158,8 @@ export class SummaryScreen {
       this.actions.appendChild(this.confirmButton);
       this.confirmButton.focus();
     } else {
+      // 每次重新弹出都从未持状态开始：上一次按到一半改了主意，不该留到下一次。
+      this.disarmEnd();
       this.actions.appendChild(this.resumeButton);
       this.actions.appendChild(this.endButton);
       this.resumeButton.focus();
@@ -188,6 +195,7 @@ export class SummaryScreen {
     const stats = el('div', 'summary-stats');
     this.stats.kills = this.stat(stats, '击杀');
     this.stats.deaths = this.stat(stats, '阵亡');
+    this.stats.damageTaken = this.stat(stats, '承受伤害');
     this.stats.time = this.stat(stats, '用时');
     this.stats.wave = this.stat(stats, '波次');
     this.stats.cleared = this.stat(stats, '已清');
@@ -199,9 +207,43 @@ export class SummaryScreen {
     card.appendChild(this.note);
 
     this.resumeButton.addEventListener('click', () => this.hooks.onResume());
-    this.endButton.addEventListener('click', () => this.hooks.onEnd());
+    /*
+     * “结束游戏”是两下，而两下都落在**同一个按钮**上。
+     *
+     * 原来是一下就直接跳到最终结算，而那一屏只剩一个“确认”—— 按错了就回不去了，
+     * 一局打到一半就没了。现在第一下只把这个按钮本身换成“确认结束”，**旁边的“继续游戏”
+     * 一动不动** —— 退路始终摆在原处、原尺寸、原位置，按错了不用找。两个按钮一直是两个，
+     * 布局不跳，也就不会把鼠标底下的东西换成别的。
+     *
+     * 离焦就松掉：除了按“继续游戏”，随便点一下别处也能取消。持着的状态必须有一条
+     * 不需要玩家先读懂它的退路。
+     */
+    this.endButton.addEventListener('click', () => {
+      if (this.endArmed) {
+        this.disarmEnd();
+        this.hooks.onEnd();
+        return;
+      }
+      this.armEnd();
+    });
+    this.endButton.addEventListener('blur', () => this.disarmEnd());
     this.confirmButton.addEventListener('click', () => this.hooks.onConfirm());
     card.appendChild(this.actions);
+  }
+
+  /** 拿焦点、换字、换成主色。宽高和位置不动（见 summary.css 里的 .armed）。 */
+  private armEnd(): void {
+    this.endArmed = true;
+    this.endButton.textContent = '确认结束';
+    this.endButton.classList.add('armed');
+    this.endButton.focus();
+  }
+
+  private disarmEnd(): void {
+    if (!this.endArmed) return;
+    this.endArmed = false;
+    this.endButton.textContent = '结束游戏';
+    this.endButton.classList.remove('armed');
   }
 
   private lootItem(icon: 'coin' | 'gem', label: string, value: HTMLElement): HTMLElement {

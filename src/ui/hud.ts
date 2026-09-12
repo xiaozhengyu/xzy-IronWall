@@ -345,7 +345,10 @@ export class Hud {
     // 波次面板：三个数都自己判重，值没变时一个 DOM 节点也不会碰。
     const wave = battle.waveStatus;
     this.waveInfo.setWave(wave.wave);
-    this.waveInfo.setCountdown(wave.countdown);
+    // 最后一批首领出来之后，这一行改成"清完他们还剩多久"，字变红。两个倒数不会同时存在。
+    const stand = battle.finalStand ? battle.bossCountdown : 0;
+    this.waveInfo.setCountdown(stand > 0 ? stand : wave.countdown);
+    this.waveInfo.setUrgent(stand > 0);
     this.waveInfo.setWaveProgress(wave.cleared, wave.waves);
     for (let index = 0; index < battle.skillLoadout.activeSkillSlots.length; index++) {
       const skillId = battle.skillLoadout.activeSkillSlots[index];

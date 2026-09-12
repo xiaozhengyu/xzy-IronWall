@@ -220,10 +220,13 @@ export class WaveDirector {
   }
 
   private advance(): void {
-    // 这一波到点了，欠下它该出的首领。记在这儿而不是在 enterWave 里，因为最后一波打完之后
-    // 还会继续 hold，那时候 enterWave 不再走，而首领该照出。
-    this.bossDue += this.wave.bosses;
-    if (this.waveAt + 1 >= this.waveCount) this.lastWaveDone = true;
+    /*
+     * 这一波到点了，欠下它该出的首领 —— 也就是下一波开场时出。
+     *
+     * 末波是例外：它的首领已经在 enterWave 里欠过了，这里再欠一遍就是双倍。
+     * lastWaveDone 在踏进末波时就立了，正好当这一发的报账标记。
+     */
+    if (!this.lastWaveDone) this.bossDue += this.wave.bosses;
     this.cleared++;
     if (this.waveAt + 1 >= this.waveCount) {
       // 打完最后一波。'hold' 就留在原地继续按它出，'restart' 回到第一波。
@@ -242,6 +245,19 @@ export class WaveDirector {
 
   private enterWave(): void {
     const wave = this.wave;
+    /*
+     * 最后一波的首领**进波就出**，不等这一波的时长走完。
+     *
+     * 别的波都是“到点才出”（见 advance），末波不行：它后面没有下一波了，按老规矩就得先把
+     * 末波整个时长（演武荒原是 215 秒）敲完才看得到最后那几个首领 —— 中间那一大段只有杂兵，
+     * 没有目标也没有终点。波号跳到末波的那一刻就是决战开始的那一刻。
+     *
+     * lastWaveDone 一同在这儿立起来：它是“倒计时开始”和“清完就算赢”那两件事的闸（见 battle.ts）。
+     * 写成赋值而不是只置 true：after: 'restart' 的模板转回第一波时它该跟着落回去。
+     */
+    const last = this.waveAt + 1 >= this.waveCount;
+    if (last && !this.lastWaveDone) this.bossDue += wave.bosses;
+    this.lastWaveDone = last;
     this.elapsed = 0;
     this.surgeLeft = wave.surge;
     this.started = true;
