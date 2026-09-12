@@ -74,6 +74,14 @@ export class WaveDirector {
     this.cleared = 0;
     this.pendingSurge = 0;
     this.pendingDensity = 0;
+    /*
+     * 首领那两笔账也得清。
+     *
+     * 漏了这两行的后果是：上一局打完之后 `lastWaveDone` 留着 true，新一局的第一帧看到“最后一波已经
+     * 过了、而且场上一个首领都没有”，当场判你赢了 —— 一进图直接弹结算。
+     */
+    this.bossDue = 0;
+    this.lastWaveDone = false;
     this.enterWave();
   }
 
