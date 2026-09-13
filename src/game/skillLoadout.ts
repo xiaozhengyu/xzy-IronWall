@@ -107,6 +107,16 @@ export class SkillLoadout {
     return this.levels[id] >= SKILL_MAX_LEVEL;
   }
 
+  /**
+   * 直接把一招设到某一级。**调试用**，正常局里的升级只走 raiseLevel（三选一）。
+   *
+   * 夹在 1 到 SKILL_MAX_LEVEL 之间；越界的值会让所有倍率（伤害、距离、出手频率、
+   * 碎片量、掀飞距离）一起跑到表外，那测的就不是游戏里真实存在的东西了。
+   */
+  setLevel(id: SkillId, level: number): void {
+    this.levels[id] = Math.max(1, Math.min(SKILL_MAX_LEVEL, Math.floor(level)));
+  }
+
   /** 升一级。已经满级返回 false。 */
   raiseLevel(id: SkillId): boolean {
     if (this.maxed(id)) return false;

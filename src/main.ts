@@ -648,6 +648,8 @@ function endRun(): void {
   settleRun();
   controls.pause();
   menu.hide();
+  // 三选一幕布也得收。一局完了就是完了，摆在那儿的牌已经没有东西可升了。
+  hud.cards.hide();
   showItems = false;
   summary.show('result', summaryStats());
   // 世界停在玩家倒下的那一帧，画面留着当结算的背景 —— 比盖一块纯色更能说明刚才发生了什么。
@@ -665,6 +667,13 @@ function returnToSetup(): void {
   lastLevelUp = 0;
   summary.hide();
   menu.hide();
+  /*
+   * 三选一幕布。
+   *
+   * 漏了这一行的后果是：牌开着的时候按 ESC 退出这一局，幕布会一直挂在那儿 —— 它不在
+   * summary 也不在 menu 里，两个 hide 都碰不到它。玩家回选人界面再开一局，看到的是上一局的三张牌。
+   */
+  hud.cards.hide();
   hud.setVisible(false);
   showItems = false;
   state = 'setup';

@@ -285,7 +285,9 @@ export class Menu {
       const skill = id ? this.bridge.skills.find((entry) => entry.id === id) : null;
       return `${key} ${skill?.name ?? '空'}`;
     }).join(' · ');
-    this.skillNote.textContent = `已装备：${equipped || '无'} ｜ 主动槽：${active}`;
+    // 满级那句写在这儿而不是每个按钮的 title 上：它是这排按钮的规则，不是某一招的属性。
+    this.skillNote.textContent =
+      `已装备：${equipped || '无'} ｜ 主动槽：${active} ｜ 点上直接给满级`;
 
     // 药和符：一格一个小牌子，名字加个数，说明挂在 title 上，下面那行再摊开写一遍。
     const items = this.bridge.items();

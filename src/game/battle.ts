@@ -398,6 +398,26 @@ const BOSS_HIT_STUN = 0.14;
 const PLAYER_FLOAT_Z = 34;
 
 /**
+ * 横扫的三层扇面。side 是占张角的几成（±0.5 就是扇区的两条边）。
+ *
+ * 最外那两片停在 ±0.46 而不是 ±0.5：刀光本身有宽度，贴着边画会有半片在判定外，
+ * 玩家会反复遇到"扫到了却没死"。
+ */
+const SWEEP_LAYERS = [
+  { bit: 1, sides: [-0.46, 0, 0.46], distance: 1, weight: 2.35 },
+  { bit: 2, sides: [-0.24, 0.24], distance: 0.82, weight: 2.1 },
+  { bit: 4, sides: [0], distance: 0.62, weight: 1.85 },
+] as const;
+
+/**
+ * 哪一级点亮哪几层（位与 SWEEP_LAYERS.bit 对应：1 = 外三，2 = 中二，4 = 内一）。
+ *
+ * 片数 1/2/3/5/6 —— **满级是三层都在，六片**。每一级都是几整层的组合，所以任何一级都
+ * 左右对称 —— 敲出一个偏向一边的扇面读起来像没画完。下标 0 空着，让等级直接当下标用。
+ */
+const SWEEP_FAN_BY_LEVEL = [0, 4, 2, 1, 1 | 2, 1 | 2 | 4] as const;
+
+/**
  * 他够不够得着对方。**只看距离，不看角度，也不看碰撞。**
  *
  * 两个人的身体半径都算进去：攻击距离说的是"武器从我身上伸出去多远"，而两个人是脸对脸站着的。
@@ -2569,9 +2589,22 @@ export class Battle {
     return true;
   }
 
+  /**
+   * 调试菜单里点一招：装上或卸下。**装上的同时直接给满级。**
+   *
+   * 这条路只有调试菜单走（main.ts 的 toggleSkill 钩子），正常局里装招走的是三选一。
+   * 菜单存在的理由就是"我想看看这一招长什么样"，而一级的招式和满级现在已经是两个东西 ——
+   * 伤害、作用距离、出手频率、中心那一蓬碎片、把人掀多远，五样都跟着等级走。
+   * 点上去只给一级的话，看到的是这一招最小的那个样子，而那恰恰不是来看的那一个。
+   *
+   * 卸下不调级：反正再点上去又是满级，而新开一局会把所有等级清回一级（startRun）。
+   */
   toggleSkill(id: SkillId): boolean {
     const skill = skillById(id);
-    return this.setSkillEnabled(id, skill.category === 'attack' || !this.skillLoadout.isEquipped(id));
+    const want = skill.category === 'attack' || !this.skillLoadout.isEquipped(id);
+    if (!this.setSkillEnabled(id, want)) return false;
+    if (want) this.skillLoadout.setLevel(id, SKILL_MAX_LEVEL);
+    return true;
   }
 
   /** J 只在三个自动攻击之间循环，不再把护身、发射或主动技能塞进武器挥击。 */
@@ -2869,18 +2902,38 @@ export class Battle {
           return;
         }
         {
-          // 横扫是外三、内二的两层扇面。五片各自够宽、够粗，但不附带通用余波，避免自动挥击
-          // 每隔零点几秒就在画面里叠出十几道弧。外层画到判定边缘，画面与实际杀伤保持一致。
+          /*
+           * 横扫的刀光片数**就是这一招的等级**，而它们摆成三层：外三、中二、内一。
+           *
+           *   Lv.1  里面一道              1 片
+           *   Lv.2  中间两道              2 片
+           *   Lv.3  外面三道              3 片
+           *   Lv.4  外三 + 中二            5 片
+           *   Lv.5  外三 + 中二 + 里一     6 片
+           *
+           * 满级是**三层都在**，也就是六片 —— 先弄成五片（外三中二），里面那一道永远出不来。
+           *
+           * 每一级都是几整层的组合，所以任何一级都是左右对称的 —— 敲出一个偏向一边的扇面读起来
+           * 像没画完。级数越高层数越靠外，于是"练得越狠扫得越开"这件事不用看面板也读得出来。
+           *
+           * 固定分层试过（无论几级都是同一张脸），均匀撒开也试过（数得清片数，但扇面是平的）。
+           * 分层加上片数跟等级，两件事同时成立。
+           */
           const fanOrigin = player.stats.attackRange * 0.12;
-          const fan: { side: number; distance: number; weight: number; tint: ReturnType<typeof rgb> }[] = [
-            // 外层三片：完整横扫距离，负责把整个攻击扇区撑开。
-            { side: -0.36, distance: 1, weight: 2.05, tint: rgb(255, 178, 58) },
-            { side: 0, distance: 1, weight: 2.35, tint: rgb(255, 226, 142) },
-            { side: 0.36, distance: 1, weight: 2.05, tint: rgb(255, 178, 58) },
-            // 内层两片：停在七成距离，和外层错开，形成清楚的第二排扇面。
-            { side: -0.17, distance: 0.68, weight: 1.8, tint: rgb(255, 210, 104) },
-            { side: 0.17, distance: 0.68, weight: 1.8, tint: rgb(255, 210, 104) },
-          ];
+          const fan: { side: number; distance: number; weight: number; tint: ReturnType<typeof rgb> }[] = [];
+          for (const layer of SWEEP_LAYERS) {
+            if ((SWEEP_FAN_BY_LEVEL[this.skillLoadout.level(skill.id)] & layer.bit) === 0) continue;
+            for (const side of layer.sides) {
+              // 中间最亮最粗、往两边掉：一道挥击本来就是中间吃力。
+              const edge = Math.min(1, Math.abs(side) / 0.46);
+              fan.push({
+                side,
+                distance: layer.distance,
+                weight: layer.weight - 0.3 * edge,
+                tint: rgb(255, Math.round(226 - 48 * edge), Math.round(142 - 84 * edge)),
+              });
+            }
+          }
           for (const blade of fan) {
             const heading = player.facing + blade.side * arc;
             const originX = player.x + Math.cos(heading) * fanOrigin;
