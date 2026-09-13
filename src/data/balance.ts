@@ -230,18 +230,19 @@ export const cardCost = (base: number, index: number): number =>
 export const SKILL_LEVEL_REACH = 0.04;
 
 /*
- * 整圈那一招（回旋、突进收招、穿云箭落地）从圆心甩出来那一蓬碎片的量。
+ * 碎片的两条规矩，所有招式一视同仁：
  *
- * 原来是一个定数：只要圈里有一个人，就照满量炸一蓬。一级回旋的圈只有二十个单位、冷却 0.25 秒，
- * 于是开局站在两三个人旁边每秒就甩出四百多片东西 —— 疼得跟一个人碎了差不多，而他们没碎。
+ *   **多少片看打中了多少人。** 破空一直是这么干的 —— 它没有中心那一蓬，碎片全从真正死掉
+ *   的人身上出，所以砍空了就安安静静，砍进人堆就炸一片。别的招式不是：回旋只要圈里有人就炸
+ *   一大蓬，一级那个二十单位的小圈里碰到两三个人也照炸；横扫反过来，满级一刀砍倒一大片人
+ *   却没有任何中心的爆炸。现在两边都按人数给。
  *
- * 这一蓬说的是"刚才那一下炸得有多大"，那它就得跟着两件事走：**圈里到底包了多少人**，
- * 以及**这一招练到了几级**。两样都高才是那一蓬。
+ *   **甲片甩多远看练到几级。** 和掀飞距离同一条规则（见 LAUNCH_LEVEL_FLOOR）：一级掉在脚边，
+ *   满级撕得满地都是。数量不跟等级走 —— 数量说的是"死了几个人"，那是一件客观的事。
  */
-/** 圈里包到这么多人，中心那一蓬就给满。 */
-export const BLAST_FULL_CROWD = 10;
-/** 一级时最多只给到满量的这一份；满级是 1。 */
-export const BLAST_LEVEL_FLOOR = 0.35;
+
+/** 中心那一蓬：每多一个死者给到满量的几成。封顶 1，也就是十六个人给满。 */
+export const BLAST_PER_ENEMY = 0.06;
 
 /**
  * 打死的人被掀飞多远，倍数。一级是下面这个数，满级是 1。
@@ -265,9 +266,25 @@ export const LAUNCH_LEVEL_FLOOR = 0.55;
  * @param scale 这一招的伤害倍率（skillDamageScale 的返回值）。1 = 一级。
  */
 export function launchForce(scale: number): number {
+  return LAUNCH_LEVEL_FLOOR + (1 - LAUNCH_LEVEL_FLOOR) * skillTier(scale);
+}
+
+/** 一级时碎片甩出多远，倍数。满级是 1。见上面那段。 */
+export const DEBRIS_LEVEL_FLOOR = 0.55;
+
+/** 碎片甩多远。@param scale 这一招的伤害倍率。1 = 一级。 */
+export function debrisReach(scale: number): number {
+  return DEBRIS_LEVEL_FLOOR + (1 - DEBRIS_LEVEL_FLOOR) * skillTier(scale);
+}
+
+/**
+ * 把伤害倍率折回成"这一招练到了几成"。0 = 一级，1 = 满级。
+ *
+ * 不另接一个等级参数：每一条结算路径都已经在传这个倍率了，而它本来就只由等级决定。
+ */
+function skillTier(scale: number): number {
   const span = SKILL_LEVEL_DAMAGE * (SKILL_MAX_LEVEL - 1);
-  const tier = span > 1e-6 ? Math.min(1, Math.max(0, (scale - 1) / span)) : 1;
-  return LAUNCH_LEVEL_FLOOR + (1 - LAUNCH_LEVEL_FLOOR) * tier;
+  return span > 1e-6 ? Math.min(1, Math.max(0, (scale - 1) / span)) : 1;
 }
 export const SKILL_LEVEL_MP_DISCOUNT = 0.08;
 

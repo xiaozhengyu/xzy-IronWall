@@ -101,7 +101,16 @@ export class Debris {
    *                  完全沿一个方向喷读作喷泉，完全均匀又读作烟花，两者都不像被打碎。
    * @param power     1 = 平砍，2 = 技能。只影响数量和初速，不影响样子。
    */
-  burst(x: number, y: number, dirX: number, dirY: number, power: number, palette: CharacterPalette): void {
+  burst(
+    x: number,
+    y: number,
+    dirX: number,
+    dirY: number,
+    power: number,
+    palette: CharacterPalette,
+    /** 甩多远的倍数。1 = 满。由调用方按技能等级给（见 DEBRIS_LEVEL_FLOOR）。 */
+    reach = 1,
+  ): void {
     // 数量翻了一倍多。原来一次技能命中是 14 血 + 6 片，在满屏都是人的画面里几乎看不出
     // "炸开了" —— 十几个小方块散在一个人身上，读作被打了一下，不是被打碎了。
     const room = 1 - this.count / CAPACITY;
@@ -114,14 +123,17 @@ export class Debris {
     const shards = Math.max(power >= 2 ? 1 : 0, Math.round(full * share));
 
     const heading = Math.atan2(dirY, dirX);
-    const boost = 0.7 + 0.5 * power;
+    // 抛高只吃一半的缩放（开方）：水平速度直接决定飞多远，而抛高跟着同比缩的话，
+    // 低级的碎片会贴地滑出去，读作"滑倒了"而不是"碎了一点点"。
+    const lift = Math.sqrt(reach);
+    const boost = (0.7 + 0.5 * power) * reach;
     for (let i = 0; i < blood; i++) {
       // 方向：以打击方向为中心撒开一个很宽的扇面，再各自掷一个速度。
       this.emit(
         x, y,
         heading + (Math.random() - 0.5) * 3.0,
         (26 + Math.random() * 46) * boost,
-        34 + Math.random() * 52,
+        (34 + Math.random() * 52) * lift,
         BIG_SHARD_CHANCE,
         KIND_BLOOD,
         palette,
@@ -132,7 +144,7 @@ export class Debris {
         x, y,
         heading + (Math.random() - 0.5) * 2.2,
         (18 + Math.random() * 30) * boost,
-        34 + Math.random() * 52,
+        (34 + Math.random() * 52) * lift,
         BIG_SHARD_CHANCE,
         KIND_SHARD,
         palette,
@@ -152,12 +164,21 @@ export class Debris {
    * 爆炸物要看得清是"一块东西"，一堆小点只会读成灰。
    */
   /**
-   * @param volume 这一蓬给到满量的几成。1 = 满。由调用方按"包了多少人、练到几级"算（见
-   *               BLAST_FULL_CROWD）—— 而不是抖 power，那个字段说的是招式的档位，不是这一发的大小。
+   * @param volume 这一蓬给到满量的几成。1 = 满。按**打中了多少人**算（见 BLAST_PER_ENEMY）——
+   *               而不是抖 power，那个字段说的是招式的档位，不是这一发的大小。
+   * @param reach  甩多远的倍数。按**练到几级**给（见 DEBRIS_LEVEL_FLOOR）。
    */
-  blast(x: number, y: number, power: number, palette: CharacterPalette, volume = 1): void {
+  blast(
+    x: number,
+    y: number,
+    power: number,
+    palette: CharacterPalette,
+    volume = 1,
+    reach = 1,
+  ): void {
     const room = 1 - this.count / CAPACITY;
     const share = room >= SHARE_FROM ? 1 : Math.max(SHARE_FLOOR, room / SHARE_FROM);
+    const lift = Math.sqrt(reach);
     const give = share * Math.max(0, Math.min(1, volume));
     // 甲片给得比血多一倍：爆炸物要能认出是"一块东西"，血只是一片红雾。
     const blood = Math.round(34 * power * 0.5 * give);
@@ -167,8 +188,8 @@ export class Debris {
       this.emit(
         x, y,
         Math.random() * Math.PI * 2,
-        70 + Math.random() * 90,
-        60 + Math.random() * 70,
+        (70 + Math.random() * 90) * reach,
+        (60 + Math.random() * 70) * lift,
         BLAST_BIG_CHANCE,
         KIND_BLOOD,
         palette,
@@ -178,8 +199,8 @@ export class Debris {
       this.emit(
         x, y,
         Math.random() * Math.PI * 2,
-        90 + Math.random() * 110,
-        70 + Math.random() * 80,
+        (90 + Math.random() * 110) * reach,
+        (70 + Math.random() * 80) * lift,
         BLAST_BIG_CHANCE,
         KIND_SHARD,
         palette,

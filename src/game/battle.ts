@@ -11,9 +11,9 @@ import {
   DAMAGE_VARIANCE,
   MIN_DAMAGE,
   MAX_LEVEL,
-  BLAST_FULL_CROWD,
-  BLAST_LEVEL_FLOOR,
+  BLAST_PER_ENEMY,
   SKILL_MAX_LEVEL,
+  debrisReach,
   launchForce,
   ORB_ORBIT_REACH,
   ORB_SPIN,
@@ -922,8 +922,6 @@ export class Battle {
     power: number;
     /** 发招那一刻的技能等级倍率（见 SkillLoadout.damageScale）。 */
     scale: number;
-    /** 发招那一刻的技能等级。只用来算收招那一圈甩出多少碎片。 */
-    level: number;
     /** 收招时补的那一圈的半径，世界单位。0 = 不补。 */
     finishRing: number;
     /** 这一帧移动**之前**在哪儿。判定要按走过的那一整段算，不是按落点。 */
@@ -993,8 +991,6 @@ export class Battle {
     radius: number;
     power: number;
     scale: number;
-    /** 发招那一刻的技能等级。只用来算落地那一圈甩出多少碎片。 */
-    level: number;
   } | null = null;
 
   /**
@@ -2858,7 +2854,8 @@ export class Battle {
     else if (Math.random() < COIN_DROP_CHANCE) this.collectibles.dropCoin(e.x, e.y);
     else this.collectibles.dropGem(e.x, e.y);
 
-    this.debris.burst(e.x, e.y, dx, dy, power, e.palette);
+    // 甩多远跟着等级走，和人被掀飞多远同一条规则。
+    this.debris.burst(e.x, e.y, dx, dy, power, e.palette, debrisReach(scale));
   }
 
   /**
@@ -2895,7 +2892,7 @@ export class Battle {
         const full = arc >= Math.PI * 1.99;
         if (full) {
           // 回旋：一圈从脚下推开的环，见 castRing（突进的收招用的是同一份）。
-          this.castRing(reach, skill.power, scale, this.skillLoadout.level(skill.id), player.x, player.y, {
+          this.castRing(reach, skill.power, scale, player.x, player.y, {
             velocityX: this.effectDriftX,
             velocityY: this.effectDriftY,
           });
@@ -2984,10 +2981,22 @@ export class Battle {
           reach * 0.5,
           { life: 0.34, depth: 0.17, swirl: -0.95, dark: 0.4, rim: 0.4, open: 0.62 },
         );
+        /*
+         * 横扫以前没有中心那一蓬，于是满级一刀砍倒一大片人却只有每个人身上那几片 ——
+         * 摄在一个十几像素高的人身上，合起来只是"一排人身上各掉了点东西"。现在和回旋走同一条规矩。
+         *
+         * 圆心在身前半个距离，不在脚下：横扫的力气是甩出去的，和那个扭曲镜头同一个道理。
+         */
+        const caught: Character[] = [];
         for (const e of this.enemies) {
-          if (!e.alive) continue;
-          if (inSector(player, e, reach, arc)) this.strike(e, player.x, player.y, skill.power, scale);
+          if (e.alive && inSector(player, e, reach, arc)) caught.push(e);
         }
+        this.blastOver(
+          player.x + Math.cos(player.facing) * reach * 0.5,
+          player.y + Math.sin(player.facing) * reach * 0.5,
+          caught, skill.power, scale,
+        );
+        for (const e of caught) this.strike(e, player.x, player.y, skill.power, scale);
         return;
       }
 
@@ -3106,7 +3115,6 @@ export class Battle {
         // 落点不是起手时锁死：等待期间镜头跟着玩家移动，0.8 秒一到才在“此刻”的视口里抽取位置。
         this.skyArrow = {
           age: 0, targetX: 0, targetY: 0, radius: reach, power: skill.power, scale,
-          level: this.skillLoadout.level(skill.id),
         };
         this.effects.spawn(at.x, at.y, player.facing, {
           power: 0.8,
@@ -3142,7 +3150,6 @@ export class Battle {
           speed: dashSpeed,
           power: skill.power,
           scale,
-          level: this.skillLoadout.level(skill.id),
           // 收招那一圈是**判定**半径，所以它照旧按 attackRange 折算，和上面那条不是一回事。
           finishRing: player.stats.attackRange * skill.finishRing,
           fromX: player.x,
@@ -3192,8 +3199,6 @@ export class Battle {
     reach: number,
     power: number,
     scale: number,
-    /** 发招那一刻这一招练到几级。只用来算中心那一蓬碎片有多大。 */
-    level: number,
     x = this.player.x,
     y = this.player.y,
     options: Pick<ShockwaveOptions, 'style' | 'tint' | 'velocityX' | 'velocityY'> = {},
@@ -3257,15 +3262,26 @@ export class Battle {
     // 四百多片 —— 疼得跟一个人碎了差不多，而他们没碎。
     const caught: Character[] = [];
     for (const e of this.enemies) if (hit(e)) caught.push(e);
-    if (caught.length > 0) {
-      const crowd = Math.min(1, caught.length / BLAST_FULL_CROWD);
-      const tier = (Math.max(1, level) - 1) / Math.max(1, SKILL_MAX_LEVEL - 1);
-      const volume = crowd * (BLAST_LEVEL_FLOOR + (1 - BLAST_LEVEL_FLOOR) * tier);
-      // 材质取圈里的一个人，不取玩家（见上）。
-      this.debris.blast(x, y, power, caught[0].palette, volume);
-    }
-
+    this.blastOver(x, y, caught, power, scale);
     for (const e of caught) this.strike(e, x, y, power, scale);
+  }
+
+  /**
+   * 从一点炸出一蓬碎片。**有多大只看打中了多少人，甩多远只看练到几级。**
+   *
+   * 两条分开是故意的：数量说的是"死了几个人"，那是一件客观的事，和你练得多好无关；
+   * 而甩多远是"这一下有多重"，那才是等级该看得见的地方（和掀飞距离同一条规则）。
+   *
+   * 要**赶在结算之前**炸。碎片池快满时会按比例缩水（Debris 里的 share），排在几十个人
+   * 身上那些小蓬后面去分剩下的话，最该被看见的这一蓬反而是被削得最狠的那个。
+   *
+   * 材质取被打中的一个人，不取玩家：飞出来的是被炸碎的**他们**，用玩家的甲色会让一蓬金片
+   * 从他脚下喷出来，读作他自己碎了。一个人都没打中就不炸 —— 空地上炸出一蓬血是假的。
+   */
+  private blastOver(x: number, y: number, caught: Character[], power: number, scale: number): void {
+    if (caught.length === 0) return;
+    const volume = Math.min(1, caught.length * BLAST_PER_ENEMY);
+    this.debris.blast(x, y, power, caught[0].palette, volume, debrisReach(scale));
   }
 
   /**
@@ -3312,7 +3328,7 @@ export class Battle {
       }
       // 0.8 秒呼应用户要求；后续 0.28 秒是可见的俯冲与落地窗口。
       if (arrow.age >= 1.08) {
-        this.castRing(arrow.radius, arrow.power, arrow.scale, arrow.level, arrow.targetX, arrow.targetY, {
+        this.castRing(arrow.radius, arrow.power, arrow.scale, arrow.targetX, arrow.targetY, {
           style: 'burst',
           tint: rgb(255, 188, 62),
         });
@@ -3423,7 +3439,7 @@ export class Battle {
         // 冲到头再炸一圈：把走廊两侧漏掉的人一起带走。冲锋该以"撞进人堆里停下"收尾，
         // 而不是穿过去就没事了。
         if (this.lunge.finishRing > 0) {
-          this.castRing(this.lunge.finishRing, this.lunge.power, this.lunge.scale, this.lunge.level, player.x, player.y, {
+          this.castRing(this.lunge.finishRing, this.lunge.power, this.lunge.scale, player.x, player.y, {
             style: 'burst',
             tint: rgb(255, 142, 74),
           });
