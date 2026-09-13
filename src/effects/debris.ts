@@ -151,12 +151,17 @@ export class Debris {
    * 所以它的速度和抛高都比 burst 高一大截（飞出去约两倍于判定半径），大块的比例也调高 ——
    * 爆炸物要看得清是"一块东西"，一堆小点只会读成灰。
    */
-  blast(x: number, y: number, power: number, palette: CharacterPalette): void {
+  /**
+   * @param volume 这一蓬给到满量的几成。1 = 满。由调用方按"包了多少人、练到几级"算（见
+   *               BLAST_FULL_CROWD）—— 而不是抖 power，那个字段说的是招式的档位，不是这一发的大小。
+   */
+  blast(x: number, y: number, power: number, palette: CharacterPalette, volume = 1): void {
     const room = 1 - this.count / CAPACITY;
     const share = room >= SHARE_FROM ? 1 : Math.max(SHARE_FLOOR, room / SHARE_FROM);
+    const give = share * Math.max(0, Math.min(1, volume));
     // 甲片给得比血多一倍：爆炸物要能认出是"一块东西"，血只是一片红雾。
-    const blood = Math.round(34 * power * 0.5 * share);
-    const shards = Math.round(70 * power * 0.5 * share);
+    const blood = Math.round(34 * power * 0.5 * give);
+    const shards = Math.round(70 * power * 0.5 * give);
 
     for (let i = 0; i < blood; i++) {
       this.emit(

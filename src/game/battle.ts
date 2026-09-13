@@ -11,7 +11,10 @@ import {
   DAMAGE_VARIANCE,
   MIN_DAMAGE,
   MAX_LEVEL,
+  BLAST_FULL_CROWD,
+  BLAST_LEVEL_FLOOR,
   SKILL_MAX_LEVEL,
+  launchForce,
   ORB_ORBIT_REACH,
   ORB_SPIN,
   ORB_HIT_RADIUS,
@@ -899,6 +902,8 @@ export class Battle {
     power: number;
     /** 发招那一刻的技能等级倍率（见 SkillLoadout.damageScale）。 */
     scale: number;
+    /** 发招那一刻的技能等级。只用来算收招那一圈甩出多少碎片。 */
+    level: number;
     /** 收招时补的那一圈的半径，世界单位。0 = 不补。 */
     finishRing: number;
     /** 这一帧移动**之前**在哪儿。判定要按走过的那一整段算，不是按落点。 */
@@ -968,6 +973,8 @@ export class Battle {
     radius: number;
     power: number;
     scale: number;
+    /** 发招那一刻的技能等级。只用来算落地那一圈甩出多少碎片。 */
+    level: number;
   } | null = null;
 
   /**
@@ -2755,6 +2762,16 @@ export class Battle {
   ): void {
     if (!e.alive) return;
     const roll = rollDamage(this.player.stats.attack * scale, e.stats.defense, power);
+    /*
+     * 掀得多远跟着这一招练到几级走。
+     *
+     * 以前一级和满级掀得一样远。而击飞是这个尺寸下最读得出来的反馈（人只有二十来个
+     * 像素高，人堆里眼睛能捕捉到的只有位移），那它就是升级最该被看见的地方之一。
+     *
+     * 乘而不是覆盖：突进和开天自己带的那个 force（它们掀得比别的招狠）该保留，
+     * 只是同样跟着等级缩。
+     */
+    const force = (launch.force ?? 1) * launchForce(scale);
 
     let dx = e.x - fromX;
     let dy = e.y - fromY;
@@ -2778,7 +2795,7 @@ export class Battle {
 
     // 没死就只闪一下白光（takeHit 里做的），不溅碎片也不掉东西。碎片是"这个人碎了"的信号，
     // 挨一下还站着的人溅出甲片会让玩家以为他已经死了。
-    if (!e.takeHit(fromX, fromY, roll.value, launch)) {
+    if (!e.takeHit(fromX, fromY, roll.value, { ...launch, force })) {
       /*
        * 首领挨一刀就停一下脚。
        *
@@ -2845,7 +2862,7 @@ export class Battle {
         const full = arc >= Math.PI * 1.99;
         if (full) {
           // 回旋：一圈从脚下推开的环，见 castRing（突进的收招用的是同一份）。
-          this.castRing(reach, skill.power, scale, player.x, player.y, {
+          this.castRing(reach, skill.power, scale, this.skillLoadout.level(skill.id), player.x, player.y, {
             velocityX: this.effectDriftX,
             velocityY: this.effectDriftY,
           });
@@ -3034,7 +3051,10 @@ export class Battle {
 
       case 'skyArrow': {
         // 落点不是起手时锁死：等待期间镜头跟着玩家移动，0.8 秒一到才在“此刻”的视口里抽取位置。
-        this.skyArrow = { age: 0, targetX: 0, targetY: 0, radius: reach, power: skill.power, scale };
+        this.skyArrow = {
+          age: 0, targetX: 0, targetY: 0, radius: reach, power: skill.power, scale,
+          level: this.skillLoadout.level(skill.id),
+        };
         this.effects.spawn(at.x, at.y, player.facing, {
           power: 0.8,
           span: 0.48,
@@ -3069,6 +3089,7 @@ export class Battle {
           speed: dashSpeed,
           power: skill.power,
           scale,
+          level: this.skillLoadout.level(skill.id),
           // 收招那一圈是**判定**半径，所以它照旧按 attackRange 折算，和上面那条不是一回事。
           finishRing: player.stats.attackRange * skill.finishRing,
           fromX: player.x,
@@ -3118,6 +3139,8 @@ export class Battle {
     reach: number,
     power: number,
     scale: number,
+    /** 发招那一刻这一招练到几级。只用来算中心那一蓬碎片有多大。 */
+    level: number,
     x = this.player.x,
     y = this.player.y,
     options: Pick<ShockwaveOptions, 'style' | 'tint' | 'velocityX' | 'velocityY'> = {},
@@ -3175,12 +3198,21 @@ export class Battle {
     //
     // 而且要**赶在结算之前**炸。碎片池快满时会按比例缩水（Debris 里的 share），排在五十个
     // 人身上那些小蓬后面去分剩下的话，最该被看见的这一蓬反而是被削得最狠的那个。
-    const caught = this.enemies.find(hit);
-    if (caught) this.debris.blast(x, y, power, caught.palette);
-
-    for (const e of this.enemies) {
-      if (hit(e)) this.strike(e, x, y, power, scale);
+    //
+    // 所以先把圈里的人数点出来：那一蓬有多大得跟着**包了多少人**和**练到几级**走。
+    // 一级回旋的圈只有二十个单位、冷却 0.25 秒，照满量给的话站在两三个人旁边每秒就甩出
+    // 四百多片 —— 疼得跟一个人碎了差不多，而他们没碎。
+    const caught: Character[] = [];
+    for (const e of this.enemies) if (hit(e)) caught.push(e);
+    if (caught.length > 0) {
+      const crowd = Math.min(1, caught.length / BLAST_FULL_CROWD);
+      const tier = (Math.max(1, level) - 1) / Math.max(1, SKILL_MAX_LEVEL - 1);
+      const volume = crowd * (BLAST_LEVEL_FLOOR + (1 - BLAST_LEVEL_FLOOR) * tier);
+      // 材质取圈里的一个人，不取玩家（见上）。
+      this.debris.blast(x, y, power, caught[0].palette, volume);
     }
+
+    for (const e of caught) this.strike(e, x, y, power, scale);
   }
 
   /**
@@ -3227,7 +3259,7 @@ export class Battle {
       }
       // 0.8 秒呼应用户要求；后续 0.28 秒是可见的俯冲与落地窗口。
       if (arrow.age >= 1.08) {
-        this.castRing(arrow.radius, arrow.power, arrow.scale, arrow.targetX, arrow.targetY, {
+        this.castRing(arrow.radius, arrow.power, arrow.scale, arrow.level, arrow.targetX, arrow.targetY, {
           style: 'burst',
           tint: rgb(255, 188, 62),
         });
@@ -3338,7 +3370,7 @@ export class Battle {
         // 冲到头再炸一圈：把走廊两侧漏掉的人一起带走。冲锋该以"撞进人堆里停下"收尾，
         // 而不是穿过去就没事了。
         if (this.lunge.finishRing > 0) {
-          this.castRing(this.lunge.finishRing, this.lunge.power, this.lunge.scale, player.x, player.y, {
+          this.castRing(this.lunge.finishRing, this.lunge.power, this.lunge.scale, this.lunge.level, player.x, player.y, {
             style: 'burst',
             tint: rgb(255, 142, 74),
           });
@@ -3919,15 +3951,20 @@ export class Battle {
     if (due > 0) {
       for (let i = 0; i < due; i++) this.spawn(view, resolveKind(BOSS_KIND));
       /*
-       * 摆上首领的同时给一条截止线。
+       * 截止线**只给最后那一批**。
        *
-       * 首领是这一局的**目标**，不是人海里的一个硬点。没有截止线的话，玩家完全可以绕开他们
-       * 跑完全场 —— 那么“把首领打完”就不是一件得做的事。给的时间是当前这一波的时长：
-       * 你有一整波去处理刚出来的这几个。
+       * 之前每一波的首领都挂一条（时长是下一波的时长），没按时打完就当场判负。两个毛病：
+       *
+       *   那条线**是看不见的** —— 波次面板上的红字倒计时只在最后一波亮。玩家血还剩着、
+       *   什么提示都没有，突然就进结算了，从他的角度这和一个 bug 没区别。
+       *
+       *   一局里有八次"不打完就死"的压力，而这一局真正的目标只有一个。
+       *
+       * 现在前面几波的首领杀不杀得掉都不影响胜负，只是少拿一份掉落；他不会被回收，小地图上那个
+       * 髅髅一直亮着，玩家随时可以回头找他。没找的话他就会站到决战那一刻，跟最后那一批
+       * 一起算进“全都清掉才算赢”里 —— 欠的帐最后一起还。
        */
-      // 最后一批单给一个数：它后面没有"下一波到点"了（见 FINAL_BOSS_LIMIT）。
-      this.bossDeadline = this.runTime
-        + (this.waves.lastWaveOver ? FINAL_BOSS_LIMIT : this.waves.wave.duration);
+      this.bossDeadline = this.waves.lastWaveOver ? this.runTime + FINAL_BOSS_LIMIT : 0;
     }
     if (this.outcome === 'none' && !this.bossAlive) {
       this.bossDeadline = 0;

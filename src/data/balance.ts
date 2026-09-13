@@ -228,6 +228,47 @@ export const cardCost = (base: number, index: number): number =>
  * "要贴到多近才砍得到"这件事抹平。
  */
 export const SKILL_LEVEL_REACH = 0.04;
+
+/*
+ * 整圈那一招（回旋、突进收招、穿云箭落地）从圆心甩出来那一蓬碎片的量。
+ *
+ * 原来是一个定数：只要圈里有一个人，就照满量炸一蓬。一级回旋的圈只有二十个单位、冷却 0.25 秒，
+ * 于是开局站在两三个人旁边每秒就甩出四百多片东西 —— 疼得跟一个人碎了差不多，而他们没碎。
+ *
+ * 这一蓬说的是"刚才那一下炸得有多大"，那它就得跟着两件事走：**圈里到底包了多少人**，
+ * 以及**这一招练到了几级**。两样都高才是那一蓬。
+ */
+/** 圈里包到这么多人，中心那一蓬就给满。 */
+export const BLAST_FULL_CROWD = 10;
+/** 一级时最多只给到满量的这一份；满级是 1。 */
+export const BLAST_LEVEL_FLOOR = 0.35;
+
+/**
+ * 打死的人被掀飞多远，倍数。一级是下面这个数，满级是 1。
+ *
+ * 以前无论几级都是 1 —— 也就是说一级的招式掀得和满级一样远。而击飞是这个尺寸下
+ * 最读得出来的反馈（见 character.ts 顶上那段：一个人只有二十来个像素高，人堆里眼睛能
+ * 捕捉到的只有**位移**），那它就是升级最该被看见的地方之一。
+ *
+ * **跟着伤害倍率走，而不是另接一个等级参数。** “打得越疼掀得越远”本身就是一条玩家
+ * 不用学就能读懂的规则，而伤害倍率本来就只由等级决定（见 skillDamageScale）。
+ *
+ * 飞多远是 `水平速度 × 滞空时间`，而滞空时间跟着起跳速度走、起跳速度又吃 force^0.35，
+ * 所以距离实际按 force^1.35 走：0.55 下来是满级的四成五。高度只降到八成 ——
+ * 一级的招式仍然把人掀翻了，只是掀不到那么远。
+ */
+export const LAUNCH_LEVEL_FLOOR = 0.55;
+
+/**
+ * 把伤害倍率折回成击飞倍数。见 LAUNCH_LEVEL_FLOOR。
+ *
+ * @param scale 这一招的伤害倍率（skillDamageScale 的返回值）。1 = 一级。
+ */
+export function launchForce(scale: number): number {
+  const span = SKILL_LEVEL_DAMAGE * (SKILL_MAX_LEVEL - 1);
+  const tier = span > 1e-6 ? Math.min(1, Math.max(0, (scale - 1) / span)) : 1;
+  return LAUNCH_LEVEL_FLOOR + (1 - LAUNCH_LEVEL_FLOOR) * tier;
+}
 export const SKILL_LEVEL_MP_DISCOUNT = 0.08;
 
 /**
