@@ -1,0 +1,28 @@
+/*
+ * 换屏黑幕。见 curtain.ts。
+ *
+ * z-index 比任何一屏都高（结算 12、当前物品 14、三选一 20）：它盖的就是"这些屏正在互相
+ * 替换"的那一瞬间，谁都不能露出来。
+ *
+ * 全程不吃点击。盖着的那零点几秒里玩家按下去的那一下，该落到底下正在准备的那一屏上 ——
+ * 拦下来只会让人觉得点丢了。
+ */
+.curtain {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: #05070b;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 420ms ease;
+}
+
+.curtain[hidden] {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .curtain {
+    transition-duration: 1ms !important;
+  }
+}

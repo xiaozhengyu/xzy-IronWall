@@ -32,6 +32,7 @@ import { Controls } from './ui/controls';
 import { Hud } from './ui/hud';
 import { Menu } from './ui/menu';
 import { SetupScreen, type MapPin } from './ui/setup';
+import { curtain } from './ui/curtain';
 import { SummaryScreen, type SummaryStats } from './ui/summary';
 import './style.css';
 
@@ -621,6 +622,9 @@ function settleRun(): void {
 /** 这一局升到了几级。结算画面上要写一句，没升级就是 0。 */
 let lastLevelUp = 0;
 
+/** 结算那一屏退出去要多久。和 summary.ts 里那条对齐。 */
+const SUMMARY_EXIT_MS = 200;
+
 /** ESC 或者 HUD 上的暂停按钮：把世界停住，弹临时结算。 */
 function openInterlude(): void {
   if (state !== 'playing') return;
@@ -665,6 +669,8 @@ function endRun(): void {
 function returnToSetup(): void {
   settled = false;
   lastLevelUp = 0;
+  // 同上：先全黑，换完再亮。结算那一屏的退场动画已经在黑幕后面跑完了（见下面的 quitToSetup）。
+  curtain.drop();
   summary.hide();
   menu.hide();
   /*
@@ -678,6 +684,18 @@ function returnToSetup(): void {
   showItems = false;
   state = 'setup';
   setup.show();
+  curtain.lift();
+}
+
+/**
+ * 从结算回选人：先让结算那一屏自己退出去，再换屏。
+ *
+ * 直接调 returnToSetup 的话，结算的退场动画会被黑幕当场盖掉 —— 写了等于没写。
+ * 多等的这二百毫秒里那一屏已经不吃点击了（见 summary.css），所以不会拦住任何人。
+ */
+function quitToSetup(): void {
+  summary.hide();
+  setTimeout(returnToSetup, SUMMARY_EXIT_MS);
 }
 
 // ---------------------------------------------------------------- 备战
@@ -1207,11 +1225,23 @@ function enterMap(hero: HeroDef, map: GameMapDef, weather: WeatherKind): void {
       battle.update(0, readInput(), viewOf());
       state = 'playing';
       pauseTarget = 'interlude';
+      /*
+       * 黑幕接住换屏那一帧。
+       *
+       * 两屏是在**同一帧**里交接的：选人界面 hidden 立起来、战场 hidden 落下去。
+       * 各自的入场动画解决不了这一下 —— 那一帧里一屏还在、另一屏已经来了，中间没有任何
+       * 过渡可言。先 drop（当场全黑）再换，换完 lift（从黑里亮起来）。
+       *
+       * drop 得在 setup.hide() 之前：选人界面自己那块"正在进入…"的幕布就在它里面，
+       * 先藏后黑的话，中间那一帧会闪一下空战场。
+       */
+      curtain.drop();
       setup.hide();
       summary.hide();
       hud.setVisible(true);
       draw();
       controls.resume();
+      curtain.lift();
     }, 0),
   );
 }
@@ -1235,9 +1265,9 @@ const summary = new SummaryScreen({
    */
   onEnd: () => {
     settleRun();
-    returnToSetup();
+    quitToSetup();
   },
-  onConfirm: () => returnToSetup(),
+  onConfirm: () => quitToSetup(),
 });
 
 const setup = new SetupScreen(

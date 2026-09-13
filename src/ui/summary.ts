@@ -2,6 +2,7 @@ import './summary.css';
 import { createHudIcon } from './hudIcons';
 import { HudText } from './text/hudText';
 import { currentItems } from './currentItems';
+import { Confetti } from './confetti';
 import type { ItemStripEntry } from './itemStrip';
 
 /**
@@ -21,6 +22,9 @@ import type { ItemStripEntry } from './itemStrip';
  */
 
 export type SummaryMode = 'interlude' | 'result';
+
+/** 退场动画多长。和 summary.css 里那条对齐。 */
+const SUMMARY_EXIT_MS = 200;
 
 /** 这一局到目前为止的战果。全部由 main 从 Battle 上读一份交过来。 */
 export interface SummaryStats {
@@ -92,6 +96,13 @@ export class SummaryScreen {
 
   private readonly hooks: SummaryHooks;
   private readonly mode = el('span', 'summary-mode');
+  /**
+   * 胜负那一行大字。只在最终结算上出现。
+   *
+   * 右上角那行小字（summary-mode）一直在写同一件事，但它太小了 —— 玩家打完一局抬头，
+   * 第一眼该落在"赢了还是输了"上，而不是去右上角找一行灰字。
+   */
+  private readonly verdict = el('div', 'summary-verdict');
   private readonly lead = el('div', 'summary-lead');
   private readonly coins = el('span', 'summary-loot-v', '0');
   private readonly gems = el('span', 'summary-loot-v', '0');
@@ -104,6 +115,10 @@ export class SummaryScreen {
   private readonly confirmButton = el('button', 'summary-btn main', '确认');
   /** “结束游戏”按过一下了、正等第二下。见 armEnd()。 */
   private endArmed = false;
+  /** 赢了那一屏的礼花。输了不放 —— 见 confetti.ts。 */
+  private readonly confetti = new Confetti();
+  /** 正在跑退场动画的定时器。0 = 没在跑。 */
+  private closing = 0;
 
   constructor(hooks: SummaryHooks, text: HudText = new HudText()) {
     this.hooks = hooks;
@@ -118,6 +133,7 @@ export class SummaryScreen {
   }
 
   show(mode: SummaryMode, stats: SummaryStats): void {
+    this.cancelClose();
     this.root.hidden = false;
 
     const final = mode === 'result';
@@ -125,6 +141,17 @@ export class SummaryScreen {
     this.mode.textContent = final
       ? (stats.won ? '全数斩首' : stats.defeated ? '首领未除' : '本局结束')
       : '游戏暂停';
+    /*
+     * 胜负那一行大字。
+     *
+     * 临时结算不写：那一屏还没分出胜负，摆一行大字会让玩家以为这一局已经完了。
+     * 主动退出（既没赢也没输）也不写 —— 那不是一个结果，是一个决定。
+     */
+    const verdict = final ? (stats.won ? '通 关' : stats.defeated ? '战 败' : '') : '';
+    this.verdict.textContent = verdict;
+    this.verdict.hidden = verdict === '';
+    this.verdict.classList.toggle('summary-verdict--won', verdict !== '' && stats.won);
+    this.verdict.classList.toggle('summary-verdict--lost', verdict !== '' && !stats.won);
     this.lead.textContent = `${stats.hero} · ${stats.map}`;
 
     this.coins.textContent = String(stats.coins);
@@ -164,14 +191,48 @@ export class SummaryScreen {
       this.actions.appendChild(this.endButton);
       this.resumeButton.focus();
     }
+
+    /*
+     * 入场动画。先清空再设回 'in'：值没变的话动画不会重播，而这一屏会反复弹
+     * （按 ESC 看一眼、回去、再看一眼）。中间读一下 offsetWidth 是为了逼浏览器把清空这一步结算掉。
+     */
+    this.root.dataset.phase = '';
+    void this.root.offsetWidth;
+    this.root.dataset.phase = 'in';
+
+    // 只有真赢了才撒纸屑。临时结算（ESC）不算 —— 那一屏说的是"打到哪了"，不是"结束了"。
+    if (final && stats.won) this.confetti.burst();
+    else this.confetti.stop();
   }
 
+  /**
+   * 收起来。**走退场动画**，跑完再真的藏。
+   *
+   * 调用方不用等：这一屏一旦开始退就不再吃点击（见 summary.css 里的 pointer-events），
+   * 所以它在那两百毫秒里挂着不拦任何人。纸屑当场收掉 —— 它是这一屏的一部分，不该活到下一屏。
+   */
   hide(): void {
-    this.root.hidden = true;
+    this.confetti.stop();
     currentItems.hide('summary');
+    if (this.root.hidden) return;
+    this.cancelClose();
+    this.root.dataset.phase = 'out';
+    this.closing = window.setTimeout(() => {
+      this.closing = 0;
+      this.root.hidden = true;
+      this.root.dataset.phase = '';
+    }, SUMMARY_EXIT_MS);
+  }
+
+  private cancelClose(): void {
+    if (!this.closing) return;
+    clearTimeout(this.closing);
+    this.closing = 0;
   }
 
   private build(): void {
+    // 纸屑在卡片**下面**：从字上盖过去会让人读不清这一局打了多少，而那才是这一屏要说的话。
+    this.root.appendChild(this.confetti.root);
     const card = el('div', 'summary-card');
     this.root.appendChild(card);
 
@@ -183,6 +244,8 @@ export class SummaryScreen {
     card.appendChild(head);
     card.appendChild(el('div', 'summary-rule'));
 
+    // 胜负大字摆在分割线下面、战况上面：读完它再往下看数据，顺序和玩家关心的顺序一致。
+    card.appendChild(this.verdict);
     card.appendChild(this.lead);
 
     // ---- 收集物：这一屏的主角

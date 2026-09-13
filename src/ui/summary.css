@@ -37,7 +37,57 @@
   display: none;
 }
 
+/*
+ * 进场和退场。
+ *
+ * 两条分开跑：幕布只淡入，卡片还要往上提一截并略微放大 —— 一块直接出现的牌子读作
+ * "弹窗"，而升上来的读作"这一局结了"。卡片比幕布慢一拍，所以是幕布先涂上去、牌子再上来。
+ */
+@keyframes summary-scrim-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes summary-card-in {
+  from { opacity: 0; transform: translateY(26px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes summary-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.summary[data-phase='in'] {
+  animation: summary-scrim-in 160ms ease-out both;
+}
+
+.summary[data-phase='in'] .summary-card {
+  animation: summary-card-in 260ms cubic-bezier(0.2, 0.9, 0.3, 1.08) 60ms both;
+}
+
+/*
+ * 退场那两百毫秒里不再吃点击。
+ *
+ * 和三选一幕布是同一个坑（见 hudCardPicker.css）：这一层是 inset: 0 铺满整屏的，
+ * 按完确认之后玩家通常立刻接着点下一屏，而那一下会落在这块还没消失的幕布上。
+ */
+.summary[data-phase='out'] {
+  pointer-events: none;
+  animation: summary-out 200ms ease-in both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .summary[data-phase],
+  .summary[data-phase] .summary-card {
+    animation-duration: 1ms;
+    animation-delay: 0ms;
+  }
+}
+
 .summary-card {
+  /* 纸屑比它低一层，所以这块得建个层起来。 */
+  position: relative;
   width: 100%;
   max-width: 620px;
   max-height: 100%;
@@ -73,9 +123,40 @@
   background: #262d3b;
 }
 
+/*
+ * 胜负那一行大字。
+ *
+ * 赢是米金、输是赤 —— 和"确认结束"那个按钮同一套颜色，这一屏里米色始终是好事、赤始终不是。
+ * 字距拉开到半个字：两个字的牌子不拉开就只是一个词，拉开才是一个结论。
+ */
+.summary-verdict {
+  margin: 2px 0 10px;
+  font-size: 34px;
+  line-height: 1.15;
+  letter-spacing: 0.5em;
+  /* letter-spacing 会在最后一个字后面也加一截，不抵掉的话居中会偏左。 */
+  text-indent: 0.5em;
+  text-align: center;
+}
+
+.summary-verdict[hidden] {
+  display: none;
+}
+
+.summary-verdict--won {
+  color: #f0e6d2;
+  text-shadow: 0 0 calc(18px) rgba(232, 180, 74, 0.45);
+}
+
+.summary-verdict--lost {
+  color: #c0483a;
+  text-shadow: 0 0 calc(18px) rgba(192, 72, 58, 0.3);
+}
+
 .summary-lead {
   font-size: 12px;
   color: #9aa6bd;
+  text-align: center;
 }
 
 /* ---------------------------------------------------------------- 收集物 */

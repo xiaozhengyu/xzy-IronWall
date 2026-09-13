@@ -1,0 +1,60 @@
+/*
+ * 礼花。见 confetti.ts。
+ *
+ * 铺满整个窗口、不吃点击：纸屑要能从卡片外面飘过去，而按钮得照常按得动。
+ * 压在结算卡片**下面**（卡片是 .summary-card，在同一层里排在后面）—— 纸屑从字上盖过去
+ * 会让人读不清这一局打了多少，而那才是这一屏要说的话。
+ */
+.confetti {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.confetti[hidden] {
+  display: none;
+}
+
+/*
+ * 一片纸屑。
+ *
+ * 两层结构（外层管下落，内层管翻转）本来更好写，但那是 54 × 2 个节点。改成一个节点同时
+ * 跑两条动画：translate 那条管下落和横向漂移，rotate 那条管翻转。两条动画作用在不同的
+ * 属性上，所以互不覆盖 —— 写在同一个 transform 里就只有后者生效了。
+ */
+.confetti-bit {
+  position: absolute;
+  top: -24px;
+  width: 6px;
+  border-radius: 1px;
+  opacity: 0;
+  animation:
+    confetti-fall var(--confetti-fall, 2600ms) linear var(--confetti-delay, 0ms) both,
+    confetti-spin var(--confetti-fall, 2600ms) linear var(--confetti-delay, 0ms) both;
+}
+
+@keyframes confetti-fall {
+  0% { opacity: 0; translate: 0 0; }
+  6% { opacity: 1; }
+  /* 最后一成才开始淡：飘到一半就没了读作"消失"，落到底下才淡出才像飘走了。 */
+  90% { opacity: 1; }
+  100% { opacity: 0; translate: var(--confetti-drift, 0) calc(100vh + 40px); }
+}
+
+@keyframes confetti-spin {
+  0% { rotate: var(--confetti-tilt, 0deg); }
+  100% { rotate: calc(var(--confetti-tilt, 0deg) + var(--confetti-spin, 360deg)); }
+}
+
+/*
+ * 关掉动效时不撒纸屑，而不是"撒得很快"。
+ *
+ * 这一层是纯庆祝，没有任何信息在里面 —— 而 54 个一毫秒跑完的节点只会在屏幕上闪一下，
+ * 那正是这条媒体查询要避免的东西。
+ */
+@media (prefers-reduced-motion: reduce) {
+  .confetti {
+    display: none !important;
+  }
+}

@@ -248,6 +248,10 @@ export class SetupScreen {
 
   show(): void {
     this.root.hidden = false;
+    // 入场动画。先清空再设回 'in'：值没变的话动画不会重播，而这一屏每打完一局就回来一次。
+    this.root.dataset.phase = '';
+    void this.root.offsetWidth;
+    this.root.dataset.phase = 'in';
     this.entering = false;
     this.entryVeil.hidden = true;
     this.startButton.disabled = false;
@@ -266,6 +270,7 @@ export class SetupScreen {
 
   hide(): void {
     this.root.hidden = true;
+    this.root.dataset.phase = '';
     this.clearNotice();
   }
 

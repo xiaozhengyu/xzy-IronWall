@@ -284,7 +284,7 @@ export function debrisReach(scale: number): number {
  */
 function skillTier(scale: number): number {
   const span = SKILL_LEVEL_DAMAGE * (SKILL_MAX_LEVEL - 1);
-  return span > 1e-6 ? Math.min(1, Math.max(0, (scale - 1) / span)) : 1;
+  return span > 1e-6 ? Math.min(1, Math.max(0, (scale - SKILL_DAMAGE_BASE) / span)) : 1;
 }
 export const SKILL_LEVEL_MP_DISCOUNT = 0.08;
 
@@ -301,7 +301,15 @@ export const SKILL_LEVEL_MP_DISCOUNT = 0.08;
  * 频率那一条乘在**冷却**上，不是乘在攻击速度上：挥击动作本身的长度是角色属性，把它也压短
  * 的话，满级的人会挥出一串看不清的残影。冷却只是"下一招要等多久"，压它是安全的。
  */
-export const SKILL_LEVEL_DAMAGE = 0.35;
+/**
+ * 一级的伤害倍率。
+ *
+ * 以前是 1（也就是"一级就是基准"），现在抬到 1.2 —— 开局的手感太轻。
+ * **满级那一档没动**：每级的增量从 0.35 降到 0.3，1.2 + 0.3×4 仍然是 2.4。
+ * 曲线变平了一点，但两头都在原处 —— 只是不再把前三级过得那么惨。
+ */
+export const SKILL_DAMAGE_BASE = 1.2;
+export const SKILL_LEVEL_DAMAGE = 0.3;
 export const SKILL_LEVEL_RATE = 0.09;
 
 /**
@@ -322,7 +330,7 @@ export const skillMpScale = (level: number): number =>
   1 - SKILL_LEVEL_MP_DISCOUNT * (Math.max(1, Math.min(level, SKILL_MAX_LEVEL)) - 1);
 
 export const skillDamageScale = (level: number): number =>
-  1 + SKILL_LEVEL_DAMAGE * (Math.max(1, Math.min(level, SKILL_MAX_LEVEL)) - 1);
+  SKILL_DAMAGE_BASE + SKILL_LEVEL_DAMAGE * (Math.max(1, Math.min(level, SKILL_MAX_LEVEL)) - 1);
 
 /** 乘在冷却上，所以是个小于 1 的数。满级大约是原来的三分之二。 */
 export const skillRateScale = (level: number): number =>
