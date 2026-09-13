@@ -78,3 +78,15 @@ export const segment = (t: number, from: number, to: number): number =>
 
 export const TWO_PI = Math.PI * 2;
 export const PI_OVER_2 = Math.PI / 2;
+
+/**
+ * 把角 a 朝 b 转，这一步最多转 step 弧度。
+ *
+ * 走的永远是短的那一边（差值先绕回 ±π），所以从 179° 转到 -179° 是擦过 180° 的那 2°，
+ * 不是反着绕一整圈。差值小于一步就直接落在 b 上，不会在目标附近抖。
+ */
+export const turnToward = (a: number, b: number, step: number): number => {
+  const d = Math.atan2(Math.sin(b - a), Math.cos(b - a));
+  if (Math.abs(d) <= step) return b;
+  return a + (d > 0 ? step : -step);
+};

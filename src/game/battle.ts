@@ -2,7 +2,7 @@ import { attackDuration } from '../characters/animator';
 import { RigSpec } from '../characters/rig';
 import { PALETTE_HERO, type CharacterPalette } from '../characters/palette';
 import { type UnitDef, type UnitPresetId, UnitPresets, unitAppearance } from '../characters/unitDef';
-import { clamp } from '../core/math';
+import { clamp, turnToward } from '../core/math';
 import { DamageNumbers, type DamageNumberLabel } from '../effects/damageNumbers';
 import {
   CRIT_CHANCE_BASIC,
@@ -47,7 +47,7 @@ import { rgb } from '../render/color';
 import { SpatialGrid } from './grid';
 import { WorldPopulation } from './worldPopulation';
 import { DistantMotion } from './distantMotion';
-import { SkillLoadout, SPRINT_SKILL, SPRINT_SLOT, runSkillPool, type ActiveSkillSlot } from './skillLoadout';
+import { SkillLoadout, SPRINT_SKILL, runSkillPool, type ActiveSkillSlot } from './skillLoadout';
 import {
   DEFAULT_SPAWN_TEMPLATE,
   WaveDirector,
@@ -321,6 +321,45 @@ const RESTORE_MARGIN = 0.15;
  * 也就是围杀的那个形态。
  */
 const FORWARD_BIAS = 0.85;
+
+/**
+ * 自动锁敌的搜索半径，世界单位。
+ *
+ * 出货那一档的视口大约 400 × 218 个单位，所以 240 差不多就是"屏幕上还看得见的那一圈"。再远
+ * 的人锁上没有意义 —— 朝着一个还要跑两秒才够得着的人站定，既打不到他，也看不出身体在指谁。
+ *
+ * 它**不跟着滚轮缩放走**，和出怪用出货视口是同一个道理：缩放是调试旋钮，玩家的手感不该跟着
+ * 一个调试旋钮变。
+ */
+const AIM_RANGE = 240;
+
+/**
+ * 转身的角速度，弧度/秒 —— 三个数，因为它不是匀速的。
+ *
+ * 匀速转身有两个毛病，而且都出在**收尾**那一下：转到位的那一帧角速度还是满的，然后戛然而
+ * 止，看着像卡了一下；而小角度的目标切换（人堆里换个人，二三十度）在满速下一两帧就走完了，
+ * 根本看不见转身这回事 —— 读作瞬移。
+ *
+ * 所以角速度跟着**还差多少**走：EASE 是那个比例，转得越近越慢，自己就带出一条缓出曲线。
+ * MAX 压住大角度（背后那个人倒下、要转回正面）起步时的速度，MIN 是个地板，免得最后那几度
+ * 拖出一条看不见尽头的尾巴。
+ *
+ * 这一组下来：转身后那个人（半圈）约 0.54 秒，人堆里换个人（三十度）约 0.22 秒、十几帧。
+ * 之前是匀速 14，同样这两件事分别是 0.22 秒和**两帧** —— 后者就是"基本上没有帧"的由来。
+ *
+ * 想再慢就调小 EASE（整条曲线一起慢），想让大角度起步更利落就调大 MAX。
+ */
+const AIM_TURN_EASE = 8;
+const AIM_TURN_MAX = 9;
+const AIM_TURN_MIN = 2;
+
+/**
+ * 换目标的粘性：新的人要近到旧目标的这个比例（对距离平方，所以 0.64 = 八成距离）才换。
+ *
+ * 人堆里永远有两三个人距离几乎相等，谁近谁远每帧都在变。没有这一条，身体就在他们之间来回
+ * 抖 —— 而那几个人站在哪个方向其实根本不重要，他们都在同一片。
+ */
+const AIM_SWITCH_STICK = 0.64;
 
 /**
  * "算不算在画面里"的余量，世界单位。
@@ -609,19 +648,44 @@ export function enemyArrowPosition(arrow: EnemyArrow, age = arrow.age): { x: num
 
 /** 这一帧玩家想干什么。由输入层翻译好再交进来，Battle 不认识鼠标和键盘。 */
 export interface BattleInput {
-  /** 该朝哪儿，弧度；null 表示保持不变（准星正压在人身上时方向没有意义）。 */
-  facing: number | null;
-  moving: boolean;
   /**
-   * 四个主动键位这一帧还按着没有，按 Q/W/E/R 的顺序。
+   * 朝向的**外部指定**，弧度。不给就自动锁最近的敌人（见 aimPlayer）——**游戏里从不给**。
    *
-   * 按键的**按下**走的是另一条路（onKey → triggerActiveSkill），这里报的是**按住**。目前
-   * 只有疾走读它：按住 R 就跑，松开就走。做成一个每帧刷新的数组而不是让 Battle 去记按键
-   * 状态，是因为"键盘现在什么样"本来就是 Controls 的事。
+   * 留这个口子只为 tools/ 下那些离线出图的脚本：那些图要的是一个定死的角度（"这一招朝正
+   * 右边放出来长什么样"），而自动锁敌会让人跟着人堆转，同一个脚本每次跑出来的图都不一样。
+   */
+  facing?: number;
+  /**
+   * 想往哪儿走：世界坐标下的方向，长度 0 或 1。(0, 0) = 站着不动。
+   *
+   * 以前这里是一个 moving 布尔，因为走路只有"朝着准星往前"这一种 —— 方向根本不用问。WASD
+   * 之后这是两个独立的答案：朝哪儿由 facing 说（准星），往哪儿挪由这里说。
+   *
+   * 可选：tools/ 下那些离线脚本不给方向时人就站着。
+   */
+  move?: { x: number; y: number };
+  /** 疾走这一帧按着没有（Shift）。它不占主动槽，所以单独一条，见 skillLoadout。 */
+  sprintHeld?: boolean;
+  /**
+   * 三个主动键位这一帧还按着没有，按 Q/E/R 的顺序。
+   *
+   * 按键的**按下**走的是另一条路（onKey → triggerActiveSkill），这里报的是**按住**。做成
+   * 一个每帧刷新的数组而不是让 Battle 去记按键状态，是因为"键盘现在什么样"本来就是 Controls
+   * 的事。
    *
    * 可选：tools/ 下那些离线脚本没有键盘，它们只想让世界跑起来。不给就等于一个都没按。
    */
   heldSlots?: readonly boolean[];
+}
+
+/**
+ * 朝着 facing 一直往前走的一帧输入。
+ *
+ * 给 tools/ 下那些离线脚本用：它们要的是"让人朝着一个定死的角度走起来"，好让同一个脚本每次
+ * 跑出来的是同一张图。玩家走不出这种输入 —— 他的朝向是自动锁敌锁出来的，走向才归他管。
+ */
+export function walkInput(facing: number): BattleInput {
+  return { facing, move: { x: Math.cos(facing), y: Math.sin(facing) } };
 }
 
 /**
@@ -833,6 +897,31 @@ export class Battle {
   private get effectDriftX(): number {
     return this.lunge ? 0 : this.playerVelocityX;
   }
+  /**
+   * 朝 heading 打出去的招该继承多少玩家速度 —— **只减不加**。
+   *
+   * 直接继承整个速度向量有一个毛病，它在这次改操作之前根本露不出来：速度里逆着 heading 的
+   * 那一份会把招式往回拖。以前玩家只能朝着准星走，逆行分量恒为零；现在朝向自动锁敌、走位
+   * 完全自由，一边后退一边放招是每一局都要做几十次的事。
+   *
+   * 破空最明显：它的判定和画面都挂在这个原点上（见 advanceSkills 里的 `w.x += w.vx * dt`），
+   * 于是后退着放出去的那一道波是真的飞得更近 —— 一招的射程跟着走位缩水，而玩家并没有做任何
+   * 换取这个代价的选择。
+   *
+   * 砍掉的只是逆行那一份，横向那一份留着：横向不改变招式沿 heading 走多快，而它正是继承速度
+   * 的本意 —— 让贴在身上的形状跟着人走（见 effectDriftX）。顺着走的时候一切照旧，招式仍然
+   * 借到那一份速度。
+   */
+  private driftAlong(heading: number): { x: number; y: number } {
+    const x = this.effectDriftX;
+    const y = this.effectDriftY;
+    const cos = Math.cos(heading);
+    const sin = Math.sin(heading);
+    const along = x * cos + y * sin;
+    if (along >= 0) return { x, y };
+    return { x: x - along * cos, y: y - along * sin };
+  }
+
   private get effectDriftY(): number {
     return this.lunge ? 0 : this.playerVelocityY;
   }
@@ -855,21 +944,30 @@ export class Battle {
   }
 
   /**
-   * 这一帧在跑（按住 R 且蓝还够）。
+   * 这一帧在跑（按住 Shift 且蓝还够）。
    *
-   * 跑步以前是按住 Shift、不花任何代价，所以它根本不是一个决定。现在它是 R 那一格上的技能
-   * （见 skills.ts 的 sprint），按住就扣蓝，蓝空了自己落回走路。
+   * 跑步最早是按住 Shift、不花任何代价，所以它根本不是一个决定。后来做成技能（见 skills.ts
+   * 的 sprint），按住就扣蓝，蓝空了自己落回走路。现在键位回到 Shift，**但代价留着** ——
+   * WASD 要走 W 那一格，而免费的跑步仍然是一个没人会拒绝的选项。
    */
   sprinting = false;
 
   /**
-   * 这一帧 R 还撑着（键按着、没进冷却、蓝也够）。
+   * 这一帧疾走还撑着（键按着、没进冷却、蓝也够）。
    *
    * 和 `sprinting` 分开是因为站着不动的时候这两件事不一样：姿态还撑着（松手才算结束），
-   * 但人没在跑 —— 跑步买的是位移，原地按着 R 不该烧蓝，也不该把自动攻击停下来。
+   * 但人没在跑 —— 跑步买的是位移，原地按着 Shift 不该烧蓝，也不该把自动攻击停下来。
    * 不分开的话还会多一个坑：跑着跑着松一下方向键就读作"技能结束"，当场挂上五秒冷却。
    */
   private sprintEngaged = false;
+
+  /**
+   * 这一帧朝向锁着谁。null = 附近没人。
+   *
+   * 记住它只为一件事：粘性（见 AIM_SWITCH_STICK）。持有的是一个可能已经被回收成无骨架数据
+   * 的 Character，但那不会出问题 —— 被回收的人早就在画面之外，下一帧的距离判定自然把他扔掉。
+   */
+  private aimTarget: Character | null = null;
 
   /**
    * 这一帧还开着的按住型技能。冷却从它们的**下降沿**起算（见 trackSustain）。
@@ -1309,7 +1407,7 @@ export class Battle {
     this.player.def = unitAppearance(hero.appearance);
     this.presetIndex = PlayerPresets.findIndex((preset) => preset.id === hero.appearance);
     if (this.presetIndex < 0) this.presetIndex = 0;
-    this.skillLoadout.startRun(hero.attackSkill);
+    this.skillLoadout.startRun(hero.attackSkill, hero.passiveAtStart ? hero.passive : null);
     this.applyPlayerStats();
     this.player.hp = this.player.maxHp;
     this.currentMp = this.player.stats.maxMp;
@@ -1845,6 +1943,8 @@ export class Battle {
     this.enemies.length = 0;
     // 预留的是"刚才那片人海"，重开之后它不该再长回来。
     this.reserved.length = 0;
+    // 锁着的那个人属于上一局。
+    this.aimTarget = null;
     this.kills = 0;
     this.deaths = 0;
     this.damageTaken = 0;
@@ -1860,7 +1960,7 @@ export class Battle {
     this.resetSkillRuntime();
     // 重开就是重新开一局：抽到的招、练出来的等级、拿到的属性卡全部清空，回到"一个自动攻击
     // 技加一双靴子"。技能和灵石同生共死，留着上一局堆出来的强度就不是重开了。
-    this.skillLoadout.startRun(this.hero.attackSkill);
+    this.skillLoadout.startRun(this.hero.attackSkill, this.hero.passiveAtStart ? this.hero.passive : null);
     this.runBonus = {};
     this.timedBonuses.length = 0;
     this.regens.length = 0;
@@ -2050,7 +2150,9 @@ export class Battle {
   private spawnAngle(): number {
     const bias = clamp(this.player.speed / PLAYER_RUN_SPEED, 0, 1) * FORWARD_BIAS;
     if (bias < 0.02) return Math.random() * Math.PI * 2;
-    const dir = this.player.facing;
+    // "前方"是他**走**的方向，不是他脸朝的方向。自动锁敌之后这两件事经常差得很远 —— 一边
+    // 打身边这个一边往外撤，正是最常见的走位。生在脸朝的那一边就又回到了追不上的老问题。
+    const dir = this.player.moveDir;
     for (let i = 0; i < 8; i++) {
       const a = Math.random() * Math.PI * 2;
       if (Math.random() * (1 + bias) <= 1 + bias * Math.cos(a - dir)) return a;
@@ -2346,9 +2448,9 @@ export class Battle {
     this.clock += dt;
     if (!this.defeated) this.runTime += dt;
 
-    // 跑步那一格这一帧按着没有。拿到外面来是因为有三个人要读它：松键收冷却、推进跑步本身、
+    // 跑步这一帧按着没有。拿到外面来是因为有三个人要读它：松键收冷却、推进跑步本身、
     // 以及盯住它的下降沿。
-    const sprintHeld = input.heldSlots?.[SPRINT_SLOT] === true;
+    const sprintHeld = input.sprintHeld === true;
     this.advanceSprint(dt, input, sprintHeld);
     this.trackSustain(SPRINT_SKILL, this.sprintEngaged);
     // 法相按着没有。松手那一帧就落进收势，所以它必须在 advanceSkills 之前刷。
@@ -2357,6 +2459,8 @@ export class Battle {
     // 那个冷却恰恰要等到那之后的某一帧松手才开始走。
     if (this.dharma) this.dharma.held = this.heldSkill(input, 'dharma');
     this.movePlayer(dt, input);
+    // 先挪再转：朝向要用这一帧真正的走向（场上没人时人看着自己要去的地方）。
+    this.aimPlayer(dt, input);
     this.advanceEnemyArrows(dt);
     this.syncEnemyVisibility(view);
     this.worldPopulation.update(dt, () => this.enemyPositions(), this.worldBudget - this.worldEnemyCount,
@@ -2459,6 +2563,8 @@ export class Battle {
       // 方向和速度都在起手那一刻就存进去了：冲到一半换个技能不该改变这一次冲刺。
       const speed = this.lunge.speed;
       player.facing = this.lunge.heading;
+      // 冲刺这一段朝向就是走向：方向在起手那一刻定死，人整个朝那边扑出去。
+      player.moveAngle = null;
       player.speed = speed;
       const to = moveWithCollision(
         field.terrain,
@@ -2476,27 +2582,31 @@ export class Battle {
       return;
     }
 
-    if (input.facing !== null) player.facing = input.facing;
-
-    if (!input.moving) {
+    // 这里只管挪。朝哪儿是另一件事，由 aimPlayer 在这之后决定 —— 判定、特效和模型读的都是
+    // facing，而它现在指着最近的敌人，和人往哪边走无关。
+    const moveX = input.move?.x ?? 0;
+    const moveY = input.move?.y ?? 0;
+    if (moveX === 0 && moveY === 0) {
+      player.moveAngle = null;
       player.speed = 0;
       this.playerVelocityX = 0;
       this.playerVelocityY = 0;
       return;
     }
     // 走多快是角色的属性，不再是两个常量。跑是走路乘一个固定倍率 —— 快多少是全局手感，
-    // 不该每个角色各调一遍。跑不跑由疾走那一格说了算，见 advanceSprint。
+    // 不该每个角色各调一遍。跑不跑由疾走说了算，见 advanceSprint。
     const walk = player.stats.moveSpeed;
     const speed = this.sprinting ? walk * RUN_MULTIPLIER : walk;
     player.speed = speed;
+    player.moveAngle = Math.atan2(moveY, moveX);
     const to = moveWithCollision(
       field.terrain,
       field.props,
       player.radius,
       player.x,
       player.y,
-      field.clampX(player.x + Math.cos(player.facing) * speed * dt),
-      field.clampY(player.y + Math.sin(player.facing) * speed * dt),
+      field.clampX(player.x + moveX * speed * dt),
+      field.clampY(player.y + moveY * speed * dt),
     );
     player.x = to.x;
     player.y = to.y;
@@ -2505,7 +2615,79 @@ export class Battle {
   }
 
   /**
-   * 这一帧跑不跑：按住 R、蓝还够、人还活着、而且没在突进。
+   * 朝哪儿打：自动锁住最近的那个敌人，玩家不用管。
+   *
+   * 这是割草游戏的标准做法，而且它解决的是一个真问题 —— 一只手走位、另一只手瞄准，在一个
+   * 四面被围、每秒挥两三下的场面里，瞄准那一半其实没有决策可言：该打的永远是贴着你的那个。
+   * 把它交给玩家，只是要求他每秒转十次鼠标去做一件没有选择的事。
+   *
+   * 锁的是**最近**，不是血最少、也不是首领：贴着你的那个是唯一能打到你的人，也是唯一你能
+   * 打到的人。粘性和转速见 AIM_SWITCH_STICK / AIM_TURN_RATE。
+   *
+   * 附近一个人都没有时朝着走的方向 —— 空场上人总该看着自己要去的地方。连走都没在走就保持
+   * 原样，站着不动的人不该自己转圈。
+   */
+  private aimPlayer(dt: number, input: BattleInput): void {
+    const { player } = this;
+    // 离线脚本直接指定朝向，见 BattleInput.facing。
+    if (input.facing !== undefined) {
+      player.facing = input.facing;
+      this.aimTarget = null;
+      return;
+    }
+    // 突进期间不转：方向在起手那一刻就定死了（见 movePlayer），转身会让判定那条线和人真正
+    // 走过的路对不上。
+    if (this.lunge || !player.alive) return;
+
+    const target = this.pickAimTarget();
+    this.aimTarget = target;
+    let want: number;
+    if (target) want = Math.atan2(target.y - player.y, target.x - player.x);
+    else if (player.moveAngle !== null) want = player.moveAngle;
+    else return;
+    // 还差多少度决定这一帧转多快，见 AIM_TURN_EASE。
+    const gap = Math.abs(Math.atan2(Math.sin(want - player.facing), Math.cos(want - player.facing)));
+    const rate = clamp(gap * AIM_TURN_EASE, AIM_TURN_MIN, AIM_TURN_MAX);
+    player.facing = turnToward(player.facing, want, rate * dt);
+  }
+
+  /**
+   * 这一帧该锁谁。
+   *
+   * 线性扫一遍活着的完整怪物。没走网格：那张表是按人挤人的间距建的，一格才几个单位，要覆盖
+   * 240 的半径得扫上千个格子，比直接比一遍还贵。而"比一遍"在同屏上限（1200）下也只是一千
+   * 多次平方距离，和这一帧里的分离、驱动比起来不值一提。
+   *
+   * 只看 enemies —— 被抹成无骨架数据的那些（reserved）远在画面之外，本来就够不着。
+   */
+  private pickAimTarget(): Character | null {
+    const { player } = this;
+    const range2 = AIM_RANGE * AIM_RANGE;
+    let best: Character | null = null;
+    let bestD2 = range2;
+    for (const e of this.enemies) {
+      if (!e.alive) continue;
+      const dx = e.x - player.x;
+      const dy = e.y - player.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        best = e;
+      }
+    }
+    // 旧目标还活着、还在圈里，就粘着他，除非新的明显更近。
+    const held = this.aimTarget;
+    if (held && held.alive) {
+      const dx = held.x - player.x;
+      const dy = held.y - player.y;
+      const heldD2 = dx * dx + dy * dy;
+      if (heldD2 <= range2 && (best === null || bestD2 >= heldD2 * AIM_SWITCH_STICK)) return held;
+    }
+    return best;
+  }
+
+  /**
+   * 这一帧跑不跑：按住 Shift、蓝还够、人还活着、而且没在突进。
    *
    * 蓝是**边跑边扣**的，不是起步时一次性收 —— 一次性扣费的跑步等于"点一下开始跑，然后永远
    * 免费"。扣不动就当场落回走路，不用玩家自己松手：他正被人追着，这时候要他去看蓝条是强人
@@ -2547,9 +2729,10 @@ export class Battle {
       return;
     }
     this.sprintEngaged = true;
-    // 站着不动就不扣蓝：跑步买的是位移，原地按着 R 烧一管蓝换不来任何东西。姿态仍然撑着
-    // （sprintEngaged），所以不会读作"技能结束"；而 sprinting 是假的，自动攻击照挥。
-    this.sprinting = input.moving && this.spendMp(rate * dt);
+    // 站着不动就不扣蓝：跑步买的是位移，原地按着 Shift 烧一管蓝换不来任何东西。姿态仍然
+    // 撑着（sprintEngaged），所以不会读作"技能结束"；而 sprinting 是假的，自动攻击照挥。
+    const walking = (input.move?.x ?? 0) !== 0 || (input.move?.y ?? 0) !== 0;
+    this.sprinting = walking && this.spendMp(rate * dt);
   }
 
   /**
@@ -2630,11 +2813,6 @@ export class Battle {
     // 自己收手则随时能再开（见 advanceSkills 里的 consume）。在这里收会把“有蓝就能放”变回“五秒一次”。
     if (skill.kind !== 'dharma') this.skillLoadout.consume(id);
     return true;
-  }
-
-  /** 手动挥一下（空格）。已经在挥或者还在冷却就忽略。 */
-  swingNow(): void {
-    this.startPlayerAttack();
   }
 
   skillCooldown(id: SkillId): number {
@@ -2935,6 +3113,9 @@ export class Battle {
             const heading = player.facing + blade.side * arc;
             const originX = player.x + Math.cos(heading) * fanOrigin;
             const originY = player.y + Math.sin(heading) * fanOrigin;
+            // 每片刀光按自己那个角度算继承，见 driftAlong。横扫的判定是发招那一帧一次算清的，
+            // 所以这里被拖回来的只有画面 —— 但画面小于判定同样是错的，只是错在看不见的那一侧。
+            const bladeDrift = this.driftAlong(heading);
             this.effects.spawn(originX, originY, heading, {
               power: player.def.bulk,
               // 接近破空单片波的 0.9 弧度，不再是上一版看不清的 0.32 小弧。
@@ -2949,8 +3130,8 @@ export class Battle {
               sparks: 0.32,
               trail: 0,
               tint: blade.tint,
-              velocityX: this.effectDriftX,
-              velocityY: this.effectDriftY,
+              velocityX: bladeDrift.x,
+              velocityY: bladeDrift.y,
             });
           }
         }
@@ -3002,11 +3183,13 @@ export class Battle {
 
       case 'wave': {
         const arc = skill.arc ?? player.stats.attackArc;
+        // 后退着放不该让这道波飞得更近，见 driftAlong。
+        const drift = this.driftAlong(player.facing);
         const wave: SkillWave = {
           x: at.x,
           y: at.y,
-          vx: this.effectDriftX,
-          vy: this.effectDriftY,
+          vx: drift.x,
+          vy: drift.y,
           heading: player.facing,
           age: 0,
           life: skill.duration,
@@ -3083,8 +3266,8 @@ export class Battle {
       }
 
       case 'heavenSplit': {
-        // 玩家只有“朝准星向前走”这一种移动方式，所以 cast 这一帧的 facing 就是行走朝向。
-        // 起手后把它锁进状态，飞剑不会再跟着鼠标拐弯。
+        // 朝着锁定的那个人放出去。起手后把角度锁进状态，飞剑不会再跟着身体转 —— 目标半路
+        // 倒下时，已经飞出去的那一剑不该拐弯去追下一个。
         const heading = player.facing;
         const clearance = SKY_BLADE_WIDTH * 1.4;
         const outOfView = exitDistance(player.x, player.y, heading, {
@@ -3144,9 +3327,17 @@ export class Battle {
         const dashSpeed =
           player.stats.moveSpeed * RUN_MULTIPLIER * skill.reach * this.skillLoadout.reachScale(skill.id);
         const dashDistance = dashSpeed * skill.duration;
+        /*
+         * 冲**走的那个方向**，不是脸朝的方向。
+         *
+         * 突进是一件走位的事：进去、出来、绕开。朝向已经不归玩家管了（自动锁敌），如果冲刺
+         * 也跟着朝向走，玩家就只剩下"冲进最近的那个人怀里"这一种用法 —— 而这一招一半的价值
+         * 在于脱身。站着不按方向时 moveDir 就退回 facing，那时候冲向敌人才是他唯一的意思。
+         */
+        const dashHeading = player.moveDir;
         this.lunge = {
           left: skill.duration,
-          heading: player.facing,
+          heading: dashHeading,
           speed: dashSpeed,
           power: skill.power,
           scale,
@@ -3156,7 +3347,7 @@ export class Battle {
           fromY: player.y,
         };
         // 突进：一道窄而急的前推弧，跟着人一起冲出去。弧的长度按**真正冲出去的距离**给。
-        this.effects.spawn(at.x, at.y, player.facing, {
+        this.effects.spawn(at.x, at.y, dashHeading, {
           power: 1,
           span: 1.1,
           from: 2,

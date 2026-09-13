@@ -36,6 +36,25 @@ const LIFT_PER_SPEED = 0.05;
 const SWAY_AMPLITUDE = 0.35;
 const LEAN_PER_SPEED = 0.012;
 
+/**
+ * 正着走和倒着走的切换阈值，量的是"走向在脸朝方向上的投影"（cos）。
+ *
+ * ±0.17 是垂直左右各十度。中间那条二十度宽的带子就是迟滞区 —— 见 syncStepDirection。
+ */
+const BACK_ENTER = -0.17;
+const BACK_EXIT = 0.17;
+/** 前倾和披风从"向前"倒向"向后"的速度，每秒。脚是一下翻过来的，这两样得跟上但不能跟太死。 */
+const BACK_BLEND_RATE = 9;
+
+/**
+ * 后仰是前倾的几成。
+ *
+ * **不是对称的**，这是有道理的：往前走是身体带着腿跑，重心压在前面，倾角越快越大；往后退
+ * 是腿在够、身体几乎不动，人只是把重心往后挪了一点点。一比一地仰回去，读出来像被一根绳子
+ * 往后拽着走。
+ */
+const BACK_LEAN_SCALE = 0.3;
+
 const SPINE_LENGTH = RigSpec.chestZ - RigSpec.hipZ;
 const ARM_LENGTH = RigSpec.upperArm + RigSpec.forearm;
 
@@ -92,9 +111,40 @@ export class CharacterAnimator {
   /** 步态循环位置，0..1。一个循环是两步。 */
   phase = 0;
 
+  /**
+   * 这一帧在倒着走。见 syncStepDirection。
+   *
+   * 只有玩家会立起来：别人朝哪儿就往哪儿走。
+   */
+  backward = false;
+
   private breath = 0;
   private stride = 0;
   private lift = 0;
+  /** 倒着走的平滑量，0..1。脚只能整个翻过来，但前倾和披风是连续的。 */
+  private backBlend = 0;
+
+  /**
+   * 这一帧是正着走还是倒着走。**每帧在 update 之前调一次**（坐骑要和人用同一个答案）。
+   *
+   * 这是"朝向和走向分家"之后最便宜的那一半补救：脚的迈步方向在身体局部空间里就是一个正负
+   * 号，翻过来，人就是在往后退而不是在往前走 —— 不用把上下半身拆成两个投影。
+   *
+   * 它**只解决进退这条轴**。走向和朝向垂直时（绕着人转圈，割草里最常走的那条线）两边都不
+   * 对，那时候腿仍然是朝正前方迈而人在横移。真要那一档也对，就得让迈步方向跟着走向转，
+   * 或者把上下半身分开。
+   *
+   * @param stepDelta 走的方向减去脸朝的方向，弧度。0 = 朝哪儿就往哪儿走。
+   */
+  syncStepDirection(dt: number, stepDelta: number): void {
+    const forwardness = Math.cos(stepDelta);
+    // 迟滞：进和退的阈值错开，各偏离垂直 10 度。不错开的话，绕着人转圈时正好垂直的那一段
+    // 会在正着走和倒着走之间每隔几帧翻一次 —— 而垂直恰恰是最常走的那条线。
+    if (this.backward ? forwardness > BACK_EXIT : forwardness < BACK_ENTER) {
+      this.backward = !this.backward;
+    }
+    this.backBlend = lerp(this.backBlend, this.backward ? 1 : 0, clamp(dt * BACK_BLEND_RATE, 0, 1));
+  }
 
   /**
    * @param speed     当前移动速度（世界单位/秒）
@@ -244,7 +294,9 @@ export class CharacterAnimator {
     // 二次谐波让松垮的下摆在每次落脚时抖一下，又不至于把整件斗篷变成正弦缎带。
     const hemSnap = (0.5 + 0.5 * Math.sin(step * 2 + 0.65)) * moving;
     pose.capeSwing = Math.sin(step - 0.55) * sideAmplitude;
-    pose.capeTrail = trail + hemSnap * lerp(0.08, 0.32, running);
+    // 布是往人**走**的反方向飘的，不是往他背后飘。倒着退的时候披风扑在身前 —— 这一条和
+    // 脚一起，才是让人读作"他在后退"而不是"他的腿反了"的东西。
+    pose.capeTrail = (trail + hemSnap * lerp(0.08, 0.32, running)) * (1 - 2 * this.backBlend);
     pose.capeLift = lift + hemSnap * lerp(0.06, 0.28, running);
   }
 
@@ -289,7 +341,10 @@ export class CharacterAnimator {
 
     // 步幅保持在胯宽上。原本大步时会收窄近 18%，那等于让人走钢丝：从正面或背面看两条
     // 小腿都往身体底下并，靴子几乎碰在一起，无论脚尖怎么摆都读作内八字。
-    return v3(sideX, y, z);
+    //
+    // 倒着走就是把这条轴整个翻过来：站定的那只脚改成从身后往身前滑，人于是被"推"着后退。
+    // 相位推进的公式一个字没改，所以脚照样不打滑 —— 翻的是方向，不是速度。
+    return v3(sideX, this.backward ? -y : y, z);
   }
 
   private buildUpperBody(
@@ -301,7 +356,12 @@ export class CharacterAnimator {
     mounted = false,
   ): void {
     // 骑在马上的人本来就是前倾的，而且不会随速度越倾越多 —— 他靠鞍子固定，不是靠往前扑。
-    const lean = mounted ? 0.1 + speed * 0.004 : speed * LEAN_PER_SPEED;
+    //
+    // 步兵的前倾要跟着进退翻：往后退的人是往后仰着的，一个前倾着倒退的人读起来像被拖走。
+    // 但只仰一点点，见 BACK_LEAN_SCALE。
+    const lean = mounted
+      ? 0.1 + speed * 0.004
+      : speed * LEAN_PER_SPEED * lerp(1, -BACK_LEAN_SCALE, this.backBlend);
     pose.spineLean = lean;
     pose.spineYaw = 0;
     pose.bowDraw = 0;

@@ -118,11 +118,18 @@ export class HorseAnimator {
   phase = 0;
 
   private galloping = false;
+  private backward = false;
   private stride = 0;
   private lift = 0;
   private tailPhase = 0;
 
-  update(dt: number, speed: number, pose: HorsePose): void {
+  /**
+   * @param backward 这一帧在倒着走。骑手身上那个答案直接传下来（见 CharacterAnimator
+   *                 .syncStepDirection）—— 人和马必须用同一个，否则马往前小跑、鞍上的人
+   *                 在往后退。马自己不再判一次：它没有"朝向"这回事，它的朝向就是骑手的。
+   */
+  update(dt: number, speed: number, pose: HorsePose, backward = false): void {
+    this.backward = backward;
     // 带回滞，免得速度刚好卡在阈值上时两种步态每帧互跳。
     if (this.galloping && speed < GALLOP_THRESHOLD * 0.75) this.galloping = false;
     else if (!this.galloping && speed > GALLOP_THRESHOLD) this.galloping = true;
@@ -270,8 +277,8 @@ export class HorseAnimator {
       z = this.lift * Math.sin(Math.PI * t);
     }
 
-    // 蹄子落在身体底下一点，不是关节正下方。
-    return v3(root.x * 0.92, root.y * 0.92 + y, z);
+    // 蹄子落在身体底下一点，不是关节正下方。倒着走时迈步那条轴整个翻过来，和人一样。
+    return v3(root.x * 0.92, root.y * 0.92 + (this.backward ? -y : y), z);
   }
 
   /**

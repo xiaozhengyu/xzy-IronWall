@@ -9,7 +9,7 @@
  * 量不到 GPU，也量不到 Pixi 的提交和 DOM，但这两样以外的东西全在这里：世界推进、图元
  * 生成、深度排序（含画面外剔除）、写顶点缓冲。顺序照着 Scene.draw 抄。
  */
-import { Battle } from '../src/game/battle';
+import { Battle, walkInput } from '../src/game/battle';
 import { DEFAULT_SPAWN_TEMPLATE } from '../src/game/waves';
 import { Field } from '../src/game/field';
 import { Camera } from '../src/render/camera';
@@ -173,7 +173,7 @@ for (let frame = 0; frame < WARMUP + FRAMES; frame++) {
   camera.follow(battle.player.x, battle.player.y, field.width, field.height);
   const view = viewOf();
   // 玩家一直在走，而且慢慢转向：镜头动起来，出怪和回收才跑得到稳态。
-  battle.update(dt, { facing: Math.sin(frame * 0.017) * Math.PI, moving: true, running: false }, view);
+  battle.update(dt, walkInput(Math.sin(frame * 0.017) * Math.PI), view);
   if (measuring) stamp('battle.update');
 
   const camX = camera.x;

@@ -63,13 +63,16 @@ export interface HudQuickbarItemUse {
 }
 
 /*
- * 四个主动键位。**只有键位，没有图** —— 装的是哪一招每帧跟着 Battle 走（setSkill）。
+ * 四格键位。**只有键位，没有图** —— 装的是哪一招每帧跟着 Battle 走（setSkill）。
  *
- * Q/W/E 原来各硬写着一张图（横扫、铁布衫、天地法相），那是塑界面时的占位。现在开局三个主动
+ * Q/E/R 原来各硬写着一张图（横扫、铁布衫、天地法相），那是塑界面时的占位。现在开局三个主动
  * 槽本来就是空的，那三张图永远不是玩家真正装着的招，只会让这三格在第一帧里长成不属于它们
- * 的样子。四格现在和 R 一样：空着，抽到才长出图来。
+ * 的样子。三格现在都一样：空着，抽到才长出图来。
+ *
+ * 最后那一格是疾走，钉死的（见 SPRINT_SKILL）。它不在那三个主动槽里 —— W 让给了走路 ——
+ * 但它仍然是一招、仍然扣蓝、仍然有冷却，所以它照样要在这条栏上占一格，和别的招同一个样子。
  */
-const DEFAULT_SKILLS: readonly HudQuickSlotOptions[] = ['Q', 'W', 'E', 'R'].map((key) => ({
+const DEFAULT_SKILLS: readonly HudQuickSlotOptions[] = ['Q', 'E', 'R', '⇧'].map((key) => ({
   key,
   label: 'activeSkillSlot' as const,
   emptyLabel: 'emptyActiveSkillSlot' as const,
@@ -79,7 +82,8 @@ const ACTIVE_SKILL_PRESENTATION: Partial<Record<SkillId, { name: HudTextKey }>> 
   lunge: { name: 'skillLunge' },
   aegis: { name: 'skillAegis' },
   dharma: { name: 'skillDharma' },
-  // 疾走固定占 R。一双靴子，和别的招那几张符箓一眼就分得开 —— 它本来也不是一招，是走位。
+  // 疾走固定占最后那一格（Shift）。一双靴子，和别的招那几张符箓一眼就分得开 —— 它本来也
+  // 不是一招，是走位。
   sprint: { name: 'skillSprint' },
 };
 

@@ -20,7 +20,7 @@ import { Pose, RigSpec } from '../src/characters/rig';
 import { type UnitDef, UnitPresets } from '../src/characters/unitDef';
 import { ImpactEffects, weaponImpactPoint } from '../src/effects/impact';
 import { Character } from '../src/game/character';
-import { Battle } from '../src/game/battle';
+import { Battle, walkInput } from '../src/game/battle';
 import { DEFAULT_SPAWN_TEMPLATE } from '../src/game/waves';
 import { Field } from '../src/game/field';
 import { DamageNumbers } from '../src/effects/damageNumbers';
@@ -257,6 +257,11 @@ interface Cell {
   grain?: number;
   /** 移动速度。骑兵要用它才能跑到疾驰那一档（见 HorseAnimator 的 GALLOP_THRESHOLD）。 */
   speed?: number;
+  /**
+   * 走的方向减去脸朝的方向，弧度。0 = 朝哪儿就往哪儿走；π = 脸朝前、人往后退。
+   * 见 CharacterAnimator.syncStepDirection。
+   */
+  stepDelta?: number;
 }
 
 function renderCell(cell: Cell, cellW: number, cellH: number, canvas: Canvas, ox: number, oy: number): number {
@@ -272,7 +277,9 @@ function renderCell(cell: Cell, cellW: number, cellH: number, canvas: Canvas, ox
   const dt = 1 / 60;
   const steps = Math.max(1, Math.round(cell.walk / dt));
   for (let i = 0; i < steps; i++) {
-    if (horse && horseGait) horseGait.update(dt, speed, horse);
+    // 和 Character.advance 同一个顺序：先定这一帧正着走还是倒着走，人和马共用这个答案。
+    animator.syncStepDirection(dt, cell.stepDelta ?? 0);
+    if (horse && horseGait) horseGait.update(dt, speed, horse, animator.backward);
     animator.update(dt, speed, walkSpeed, cell.def, cell.attack, pose, horse);
   }
 
@@ -393,6 +400,35 @@ const MOUNTS: [string, () => UnitDef, CharacterPalette][] = [
     }
   });
   writePng('.preview-mounted.png', strip.upscale(2));
+}
+
+// 倒着走：同一个人、同一个朝向，一行往前走、一行往后退。
+//
+// 朝向和走向分家之后（朝向自动锁最近的敌人，走向归玩家），"脸朝前而人在后退"是每一局里
+// 都会发生几十次的事。步态是算出来的，所以倒着走只是把迈步那条轴翻个号 —— 这张图就是用来
+// 确认它真的翻了：**看站定的那只脚往哪边滑**。上排它往身后滑（人被推着向前），下排往身前滑。
+//
+// 侧对镜头，因为迈步的方向正是正对镜头时被压扁得最厉害的那一个。
+{
+  const FRAMES = 8;
+  const cycle = 0.585;
+  const ROWS: [string, number][] = [['forward', 0], ['backward', Math.PI]];
+  const strip = new Canvas(CELL_W * FRAMES, CELL_H * (ROWS.length * 2), [71, 105, 59]);
+  ROWS.forEach(([, stepDelta], row) => {
+    for (let i = 0; i < FRAMES; i++) {
+      renderCell(
+        { def: UnitPresets.warlord(), palette: PALETTE_BLUE, facing: 0, walk: 0.2 + (i / FRAMES) * cycle, attack: -1, grain: GRAIN, stepDelta },
+        CELL_W, CELL_H, strip, i * CELL_W, row * CELL_H,
+      );
+      // 骑兵那两行：马和人必须一起翻，否则马往前小跑而鞍上的人在后退。
+      renderCell(
+        { def: UnitPresets.lancer(), palette: PALETTE_BLUE, facing: 0, walk: 0.5 + (i / FRAMES) * 0.432, speed: 44, attack: -1, grain: GRAIN, stepDelta },
+        CELL_W, CELL_H, strip, i * CELL_W, (ROWS.length + row) * CELL_H,
+      );
+    }
+  });
+  writePng('.preview-backstep.png', strip.upscale(2));
+  console.log('倒着走：上两行步兵（前 / 后），下两行骑兵（前 / 后），各八帧一个完整步态循环');
 }
 
 // 攻击动作：剑士横扫 + 弓手开弓。
@@ -1251,7 +1287,7 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   });
   b.seed(look());
   // 让人群涌过来围住玩家，形成真实的间距
-  for (let i = 0; i < Math.round(14 / STEP); i++) b.update(STEP, { facing: 0, moving: false, running: false }, look());
+  for (let i = 0; i < Math.round(14 / STEP); i++) b.update(STEP, { facing: 0 }, look());
   console.log(`  冲刺前场上 ${b.enemies.filter((e) => e.alive).length} 人（稳态）`);
   b.autoAttack = false;
 
@@ -1334,12 +1370,12 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   // 先推进到这一招真的开始（发招有一段起手）
   const started = () => (shot.id === 'lunge' ? b.dashing : b.skyArrow !== null);
   for (let i = 0; i < Math.round(1.5 / STEP) && !started(); i++) {
-    b.update(STEP, { facing: 0, moving: false, running: false }, look());
+    b.update(STEP, { facing: 0 }, look());
   }
   let clock = 0;
   for (let col = 0; col < FRAMES; col++) {
     while (clock < shot.at[col]) {
-      b.update(STEP, { facing: 0, moving: false, running: false }, look());
+      b.update(STEP, { facing: 0 }, look());
       clock += STEP;
     }
     shoot(col);
@@ -1439,7 +1475,7 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
     });
     b.seed(look());
     b.autoAttack = true;
-    const walk = (i: number) => ({ facing: Math.sin(i * 0.017) * Math.PI, moving: true, running: false });
+    const walk = (i: number) => walkInput(Math.sin(i * 0.017) * Math.PI);
     for (let i = 0; i < Math.round(40 / STEP); i++) b.update(STEP, walk(i), look());
 
     const cell = new Canvas(W, H, [71, 105, 59]);

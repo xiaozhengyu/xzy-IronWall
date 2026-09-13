@@ -120,6 +120,10 @@ export const Heroes: readonly HeroDef[] = [
     },
     attackSkill: 'spin',
     passive: 'bulwark',
+    // 四个人里只有他开局就戴着护身技，见 HeroDef.passiveAtStart。他是唯一一个"扛得住才打得
+    // 动"的角色，而开局那几波恰恰是他最扛不住的时候 —— 磐石那一包防御和血上限，加上绕着他
+    // 转的那颗流星，正好补在这儿。
+    passiveAtStart: true,
   },
   {
     id: 'swordsman',

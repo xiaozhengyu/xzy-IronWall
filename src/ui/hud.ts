@@ -16,6 +16,7 @@ import { HudQuickbar } from './hudQuickbar';
 import { HUD_COOLDOWN_SKILLS, HudCooldownPanel } from './hudCooldownPanel';
 import { HudText, type HudLocale } from './text/hudText';
 import { HurtFlash } from './hurtFlash';
+import { SPRINT_SKILL } from '../game/skillLoadout';
 import { cardCost } from '../data/balance';
 import { ITEM_SLOT_COUNT } from '../data/pickups';
 export { createHudButton, type HudButtonOptions, type HudButtonSkin } from './hudButton';
@@ -368,8 +369,11 @@ export class Hud {
     this.waveInfo.setCountdown(stand > 0 ? stand : wave.countdown);
     this.waveInfo.setUrgent(stand > 0);
     this.waveInfo.setWaveProgress(wave.cleared, wave.waves);
-    for (let index = 0; index < battle.skillLoadout.activeSkillSlots.length; index++) {
-      const skillId = battle.skillLoadout.activeSkillSlots[index];
+    // 三个主动槽（Q/E/R）加末尾钉死的疾走（Shift）。疾走不在槽数组里，见 SPRINT_SKILL，
+    // 但它在这条栏上有自己的一格 —— 冷却、蓝够不够、练到几级，都和别的招一样要看得见。
+    const slots = battle.skillLoadout.activeSkillSlots;
+    for (let index = 0; index <= slots.length; index++) {
+      const skillId = index < slots.length ? slots[index] : SPRINT_SKILL;
       this.quickbar.setSkill(index, skillId);
       // 正放着的按住型招式（疾走、法相）照样置灰，但不写秒数；收招之后那五秒才开始跑。
       this.quickbar.setSkillCooldown(index,

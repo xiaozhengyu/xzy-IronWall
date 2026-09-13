@@ -349,7 +349,6 @@ function onKeyPressed(code: string): void {
   // 这条路（跑步读的是 Controls 自己的按键集合），所以试练地上照样能跑。
   if (state !== 'playing' && state !== 'paused') return;
 
-  if (code === 'Space') battle.swingNow();
   if (code === 'KeyK') showSkeleton = !showSkeleton;
 
   // 图鉴。暂停时面板得跟着让开，否则那张图正好被遮罩盖住 —— 状态归这里管，所以由这里
@@ -494,22 +493,44 @@ function layout(): void {
 }
 
 /**
- * 四个主动键位这一帧按着没有。数组复用，别长期持有。
+ * 三个主动键位（Q/E/R）这一帧按着没有。数组复用，别长期持有。
  *
- * 目前只有 R 那一格（疾走）会去读它。跑步以前是按住 Shift，那条路已经拆了 —— 跑步现在是
- * 一个要花蓝的技能，和别的主动技走同一套键位和同一份预算。
+ * 按住型的招（法相）读它；疾走不在这三格里，它单独走 sprintHeld。
  */
-const heldSlots = [false, false, false, false];
+const heldSlots = ACTIVE_SKILL_CODES.map(() => false);
 
-/** 把这一帧的输入翻译成"玩家想干什么"。 */
+/** 这一帧他想往哪儿走。复用同一份，别长期持有。 */
+const moveWanted = { x: 0, y: 0 };
+
+/**
+ * 把这一帧的输入翻译成"玩家想干什么"。
+ *
+ * 输入现在**只说走**。朝哪儿打不在这里 —— 战斗自己锁最近的敌人（见 Battle.aimPlayer），
+ * 所以这里不再算准星角度。
+ *
+ * 走有两条路，说的是同一件事：WASD，或者按住左键朝光标走。**键盘优先** —— 按下方向键的
+ * 那一刻手已经表态了，这时候左键多半还压在别的什么事上（刚点完一张升级卡、正拖着看地形）。
+ */
 function readInput() {
   const player = battle.player;
   for (let i = 0; i < ACTIVE_SKILL_CODES.length; i++) {
     heldSlots[i] = controls.held(ACTIVE_SKILL_CODES[i]);
   }
+  const keys = controls.keyboardMove();
+  moveWanted.x = keys.x;
+  moveWanted.y = keys.y;
+  if (keys.x === 0 && keys.y === 0 && controls.moving) {
+    // 光标压在人身上时 aimAngle 是 null：那儿没有方向可言，当成没在走。这也顺带给了一小圈
+    // 死区，鼠标停在脚下不会让人原地抖。
+    const toCursor = camera.aimAngle(player.x, player.y, controls.cursor.x, controls.cursor.y);
+    if (toCursor !== null) {
+      moveWanted.x = Math.cos(toCursor);
+      moveWanted.y = Math.sin(toCursor);
+    }
+  }
   return {
-    facing: camera.aimAngle(player.x, player.y, controls.cursor.x, controls.cursor.y),
-    moving: controls.moving,
+    move: moveWanted,
+    sprintHeld: controls.sprintHeld,
     heldSlots,
   };
 }
@@ -1287,9 +1308,12 @@ const setup = new SetupScreen(
         return Number.isFinite(need) ? { have: entry.exp, need } : { have: 1, need: 1 };
       },
       stats: (hero) => resolveHeroStats(hero, profile.level(hero.id)),
-      // 技能条上摆的是**开局手里的那两张**：这个角色的自动攻击技，和钉在 R 上的疾走。
-      // 别的招都要进去之后抽牌拿，摆在选人界面上会让人以为带着就能上场。
-      skills: (hero) => [hero.attackSkill, SPRINT_SKILL],
+      // 技能条上摆的是**开局真的握在手里的那几张**：自动攻击技、钉在 Shift 上的疾走，外加
+      // 骑士那张开局就戴着的护身技（见 HeroDef.passiveAtStart）。别的招都要进去之后抽牌拿，
+      // 摆在选人界面上会让人以为带着就能上场。
+      skills: (hero) => (hero.passiveAtStart
+        ? [hero.attackSkill, SPRINT_SKILL, hero.passive]
+        : [hero.attackSkill, SPRINT_SKILL]),
     },
     maps: GameMaps,
     portrait: heroPortrait,

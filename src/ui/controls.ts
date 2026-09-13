@@ -15,12 +15,21 @@ export interface ControlHooks {
   onEscape(): void;
 }
 
-/** 普通鼠标坐标驱动瞄准，ESC 交给上层处理，不锁定或重定位系统鼠标。 */
+/**
+ * 走路有两条路，看向哪儿一条也没有。
+ *
+ * 走：WASD，或者按住左键朝光标走。两条路说的是同一件事（"我要往那边挪"），键盘优先 ——
+ * 按下方向键的那一刻，手已经明确表态了。翻译成一个方向向量是上层的事（见 main 的 readInput），
+ * 这里只管报"键盘指着哪儿"和"左键按着没有"。
+ *
+ * 打：不归这里管，也不归玩家管。朝向由战斗自己锁最近的敌人（见 Battle.aimPlayer）。
+ */
 export class Controls {
-  /** 准星的缓冲坐标，与人物投影保持一致。 */
+  /** 光标的缓冲坐标，与人物投影保持一致。按住左键时人朝它走。 */
   readonly cursor = { x: 0, y: 0 };
   readonly keys = new Set<string>();
   active = false;
+  /** 左键按在画布上、人正朝光标走。 */
   moving = false;
 
   /**
@@ -38,6 +47,9 @@ export class Controls {
    * —— 否则玩家一回到游戏就朝着他刚才点确认的位置冲出去。
    */
   private holdBlocked = false;
+
+  /** WASD 折出来的世界方向，长度 0 或 1。复用同一份，见 keyboardMove。 */
+  private readonly move = { x: 0, y: 0 };
 
   private readonly canvas: HTMLCanvasElement;
   private readonly camera: Camera;
@@ -104,6 +116,8 @@ export class Controls {
       }
       if (!this.keys.has(event.code)) hooks.onKey(event.code);
       this.keys.add(event.code);
+      // 空格本身已经不干任何事（自动攻击是常态，不需要手动挥），但仍然要拦：不拦的话它会
+      // 去按 HUD 上刚刚被点过、还留着焦点的那个按钮。
       if (event.code === 'Space') event.preventDefault();
     });
     addEventListener('keyup', (event) => this.keys.delete(event.code));
@@ -128,11 +142,41 @@ export class Controls {
     return this.keys.has(code);
   }
 
+  /** 疾走这一帧按着没有。左右两个 Shift 都算 —— 手放在哪半边键盘上是玩家的事。 */
+  get sprintHeld(): boolean {
+    return this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+  }
+
+  /**
+   * 这一帧 WASD 指着世界的哪个方向；一个键都没按就是 (0, 0)。返回的是复用的那一份，别长期
+   * 持有。
+   *
+   * 世界的 +x 是屏幕右、+y 是屏幕下（见 Camera.worldToScreen），所以 W 是 -y。斜着按要
+   * 归一化：不归一化的话对角线快出 41%，"斜着走"就成了唯一正确的走法。
+   *
+   * 对着按（A 和 D 一起压住）互相抵消，读作没按。比"后按的赢"简单，而且松开其中一个之后
+   * 立刻回到另一个方向，手上不会空一帧。
+   */
+  keyboardMove(): { x: number; y: number } {
+    let x = 0;
+    let y = 0;
+    if (this.keys.has('KeyW')) y -= 1;
+    if (this.keys.has('KeyS')) y += 1;
+    if (this.keys.has('KeyA')) x -= 1;
+    if (this.keys.has('KeyD')) x += 1;
+    const len = Math.hypot(x, y);
+    this.move.x = len > 0 ? x / len : 0;
+    this.move.y = len > 0 ? y / len : 0;
+    return this.move;
+  }
+
   resume(): void {
     if (this.active || !this.hooks.canActivate()) return;
     this.moving = false;
     // 点回来的这一下按住不放也不许走，直到松手 —— 见 holdBlocked。
     this.holdBlocked = this.primaryDown;
+    // 回来时键盘当成一个都没按。切出去时压着的那些键收不到 keyup，留着就是几个永远弹不
+    // 起来的方向。
     this.keys.clear();
     this.syncCursor();
     this.active = true;

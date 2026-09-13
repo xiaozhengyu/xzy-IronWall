@@ -138,6 +138,18 @@ export class Character {
   y = 0;
   /** 地面平面上的朝向角，和 Projector 用同一套。 */
   facing = 0;
+  /**
+   * 往哪儿走。null = 和 facing 是同一个数。
+   *
+   * 除了玩家，场上每个人朝哪儿就往哪儿走，所以这一格一直是 null。玩家用 WASD 之后这两件事
+   * 分开了：facing 归准星（判定和模型都读它），走归这里。谁问的是"他往哪边挪"（脚下溅起的
+   * 水往哪边飞、以后下半身的步态朝哪边迈）就读 moveDir。
+   */
+  moveAngle: number | null = null;
+  /** 往哪儿走。没单独指定就是朝向本身。 */
+  get moveDir(): number {
+    return this.moveAngle ?? this.facing;
+  }
   /** 当前移动速度，世界单位/秒。动画靠它决定走还是站。 */
   speed = 0;
 
@@ -624,9 +636,12 @@ export class Character {
     }
 
     if (animate) {
+      // 正着走还是倒着走，先定下来：人和马要用同一个答案。moveAngle 是空的（除了玩家，
+      // 所有人都是）时差值就是 0，永远正着走。
+      this.animator.syncStepDirection(dt, this.moveAngle === null ? 0 : this.moveAngle - this.facing);
       // 马先走一步：骑手的胯是坐在鞍上的，鞍的位置这一帧得先算出来。
       const horse = this.ensureMount();
-      if (horse) this.horseAnimator?.update(dt, this.speed, horse);
+      if (horse) this.horseAnimator?.update(dt, this.speed, horse, this.animator.backward);
       this.animator.update(dt, this.speed, this.walkSpeed, this.def, attackT, this.pose, horse);
     }
     return landed;

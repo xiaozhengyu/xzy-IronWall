@@ -8,18 +8,22 @@ import {
 } from './skills';
 import { SKILL_MAX_LEVEL, skillDamageScale, skillMpScale, skillRateScale, skillReachScale } from '../data/balance';
 
-/** 主动槽与键位一一对应；UI、输入和战斗逻辑都从这里读，避免各写一份顺序。 */
-export const ACTIVE_SKILL_KEYS = ['Q', 'W', 'E', 'R'] as const;
-export const ACTIVE_SKILL_CODES = ['KeyQ', 'KeyW', 'KeyE', 'KeyR'] as const;
-export type ActiveSkillSlot = 0 | 1 | 2 | 3;
+/**
+ * 主动槽与键位一一对应；UI、输入和战斗逻辑都从这里读，避免各写一份顺序。
+ *
+ * 三格，不是四格。W 归了走路（WASD），而疾走从槽里搬到了 Shift 上 —— 于是能自由配的槽位
+ * 一个没少：原来是四格扣掉钉死的疾走，剩三格能配，现在就是这三格。
+ */
+export const ACTIVE_SKILL_KEYS = ['Q', 'E', 'R'] as const;
+export const ACTIVE_SKILL_CODES = ['KeyQ', 'KeyE', 'KeyR'] as const;
+export type ActiveSkillSlot = 0 | 1 | 2;
 
 /**
- * 疾走固定占最后那一格（R），四个角色都一样，装不上也卸不掉。
+ * 疾走。**不占主动槽**，键位是 Shift，四个角色都一样，装不上也卸不掉。
  *
  * 它是走位本身，不是一个配招选择。而且跑步的键位必须永远是同一个 —— 跟着配招变的话，手就
- * 没法记。所以它不进 apply 那一轮分配，而是在分配完之后直接钉在这一格上。
+ * 没法记。所以它既不进牌库，也不进 Q/E/R 那三格：一直都在，一直在 Shift 上。
  */
-export const SPRINT_SLOT: ActiveSkillSlot = 3;
 export const SPRINT_SKILL: SkillId = 'sprint';
 
 export interface SkillLoadoutSnapshot {
@@ -66,7 +70,7 @@ export function runSkillPool(passive: SkillId | null): SkillId[] {
 /**
  * 玩家这一局带着哪些招、各自练到几级、各自冷却到哪儿。
  *
- * **开局是空的**：一个自动攻击技，加一双钉死在 R 上的靴子，别的全靠场上收灵石抽牌拿（见
+ * **开局是空的**：一个自动攻击技，加一双钉死在 Shift 上的靴子，别的全靠场上收灵石抽牌拿（见
  * startRun）。以前这几个字段的初值是一整套配好的招 —— 那是**调试**用的，调试菜单一开就能
  * 把每一招都摆出来看。把调试的方便当成开局状态，玩家第一分钟就拿着满配，一局里再没有"我
  * 变强了"这回事。
@@ -75,7 +79,7 @@ export class SkillLoadout {
   attackSkill: SkillId = 'sweep';
   guardSkill: SkillId | null = null;
   readonly projectileSkills = new Set<SkillId>();
-  readonly activeSkillSlots: (SkillId | null)[] = [null, null, null, SPRINT_SKILL];
+  readonly activeSkillSlots: (SkillId | null)[] = [null, null, null];
 
   private readonly cooldowns = cooldownTable();
 
@@ -163,7 +167,9 @@ export class SkillLoadout {
       case 'guard':
         return this.guardSkill === id;
       case 'active':
-        return this.activeSkillSlots.includes(id);
+        // 疾走不在那三格里，可它一直都装着（Shift 永远能按）。不特判的话，它会被读作"没装"
+        // —— 于是抽牌时它算成一张可抽的新牌，调试菜单里也显示成卸掉了。
+        return id === SPRINT_SKILL || this.activeSkillSlots.includes(id);
     }
   }
 
@@ -187,7 +193,7 @@ export class SkillLoadout {
         return true;
 
       case 'active': {
-        // 疾走那一格谁也动不了：它不是配招的一部分，见 SPRINT_SLOT。
+        // 疾走谁也动不了：它不是配招的一部分，见 SPRINT_SKILL。
         if (id === SPRINT_SKILL) return enabled;
         const current = this.activeSkillSlots.indexOf(id);
         if (!enabled) {
@@ -196,7 +202,7 @@ export class SkillLoadout {
         }
         if (current >= 0) return true;
         const empty = this.activeSkillSlots.indexOf(null, 0);
-        if (empty < 0 || empty === SPRINT_SLOT) return false;
+        if (empty < 0) return false;
         this.activeSkillSlots[empty] = id;
         return true;
       }
@@ -204,21 +210,23 @@ export class SkillLoadout {
   }
 
   /**
-   * 开一局：清空一切，只留这个角色的自动攻击技和 R 上的疾走。
+   * 开一局：清空一切，只留这个角色的自动攻击技和 Shift 上的疾走。
    *
    * 清空是必须的，不是保险 —— 上一局抽到的发射技和主动槽还在的话，装出来的会是两局的并集，
    * 而这一局的全部乐趣就是从零再堆一套。等级和冷却一起归零，理由相同。
    *
    * @param attack 这个角色的自动攻击技。**自动攻击那一栏不许为空**（见 setEquipped），它是
    *               玩家手上唯一一件一直能用的东西。
+   * @param guard  开局就戴着的护身技，没有就传 null。目前只有骑士有一张，见
+   *               HeroDef.passiveAtStart。
    */
-  startRun(attack: SkillId): void {
+  startRun(attack: SkillId, guard: SkillId | null = null): void {
     this.projectileSkills.clear();
     this.guardSkill = null;
     for (let i = 0; i < this.activeSkillSlots.length; i++) this.activeSkillSlots[i] = null;
     this.setEquipped(attack, true);
-    // 疾走钉回 R。它不参与抽牌，也不占牌库的位置 —— 换谁上场、抽到什么，跑步都在同一个键上。
-    this.activeSkillSlots[SPRINT_SLOT] = SPRINT_SKILL;
+    if (guard) this.setEquipped(guard, true);
+    // 疾走不用装：它不在这三格里，也不参与抽牌 —— 换谁上场、抽到什么，跑步都在 Shift 上。
     this.resetCooldowns();
     this.resetLevels();
   }
@@ -232,8 +240,8 @@ export class SkillLoadout {
   /** 把主动技能放到指定键位；同一技能换槽时会先从旧槽移走。 */
   assignActive(slot: ActiveSkillSlot, id: SkillId | null): boolean {
     if (slot < 0 || slot >= this.activeSkillSlots.length) return false;
-    // R 那一格是疾走的，换不了。
-    if (slot === SPRINT_SLOT || id === SPRINT_SKILL) return false;
+    // 疾走不占槽，也就没法往槽里放。
+    if (id === SPRINT_SKILL) return false;
     if (id === null) {
       this.activeSkillSlots[slot] = null;
       return true;
