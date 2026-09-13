@@ -1835,6 +1835,18 @@ export class Battle {
     this.itemFlash = 0;
     this.applyPlayerStats();
     this.enemyArrows.length = 0;
+    /*
+     * 冲击弧也要抹掉。
+     *
+     * 弹片、扭曲、伤害数字都在这儿清了，就漏了这一层 —— 于是上一局最后那一招的扇面会
+     * 跨过结算和选人界面，在新的一局开场那几帧里接着飘出来。
+     */
+    this.effects.clear();
+    // 金钟罩外面那圈磐石。它不在任何一个粒子池里，是一组每帧重算的坐标 ——
+    // 上一局开着罩子死的话，count 会就那么留着。
+    this.orbit.count = 0;
+    this.orbit.radius = 0;
+    this.orbit.angle = 0;
     this.debris.clear();
     this.warp.clear();
     this.damageNumbers.clear();
@@ -2865,10 +2877,19 @@ export class Battle {
             });
           }
         }
-        // 扇面正中也砸一个洞，比回旋小、比回旋短。
-        //
-        // 圆心不在脚下而在身前六成距离处：横扫的力气是甩出去的，洞跟着落点走才对得上眼睛看到
-        // 的那一下；摆在脚下会读成"他自己脚底炸了"。
+        /*
+         * 扇面外缘砸一个洞，比回旋小、比回旋短。
+         *
+         * 圆心不在脚下：横扫的力气是甩出去的，洞跟着落点走才对得上眼睛看到的那一下；
+         * 摆在脚下会读成"他自己脚底炸了"。
+         *
+         * **而且得离人足够远。** 原来圆心在身前六成距离、半径六成二 —— 镜头是**涨开**的
+         * （warpFilter 里 radius 从 open 倍长到满），长到最后半径反而超过了圆心到人的距离，
+         * 于是挥到一半角色自己被扭进去了。现在圆心推到九成五、半径收到五成，
+         * 满开时内沿还在四成五距离外 —— 双锤一级的横扫是 22 个单位，而人的身体半径才四出头。
+         * 外沿落在 1.45 倍距离上，比刀尖（1.0）还外一截：撕开的是扫出去那一圈的空气，
+         * 不是他站的地方。
+         */
         //
         // 旋进取负 = 画面上顺时针，和这一刀本身的走向一致：applySlash 的手从身体右后绕到左前
         // （animator.ts），换算到屏幕上正好是顺时针。反着拧会让人觉得画面在跟招式较劲。
@@ -2876,11 +2897,11 @@ export class Battle {
         // depth 0.17 不是"变弱了"：重映射从钟形衰减换成球面 pow 之后（warpFilter.ts），
         // 同一个数字对应的位移大了约两倍半。0.17 是按峰值位移反解出来的，横扫看到的深浅
         // 和换之前一样。
-        const holeAt = reach * 0.6;
+        const holeAt = reach * 0.95;
         this.warp.spawn(
           player.x + Math.cos(player.facing) * holeAt,
           player.y + Math.sin(player.facing) * holeAt,
-          reach * 0.62,
+          reach * 0.5,
           { life: 0.34, depth: 0.17, swirl: -0.95, dark: 0.4, rim: 0.4, open: 0.62 },
         );
         for (const e of this.enemies) {

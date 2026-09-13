@@ -129,6 +129,16 @@ export class ImpactEffects {
   }
 
   /**
+   * 一下全抹掉。重开一局用（见 Battle.reset）。
+   *
+   * 漏了这一行的后果是：上一局最后那一招的弧会跨过结算和选人界面，在新的一局开场
+   * 那几帧里接着飘出来 —— 上一局的弹片和扭曲都已经在 reset 里清了，只有这一层没有。
+   */
+  clear(): void {
+    this.waves.length = 0;
+  }
+
+  /**
    * @param heading 推进方向的角度，和 actor.facing 用同一套地面坐标。
    */
   spawn(x: number, y: number, heading: number, options: ShockwaveOptions = {}): void {

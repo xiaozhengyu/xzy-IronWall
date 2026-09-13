@@ -46,13 +46,33 @@ const baseline: UnitStats = {
   defense: 40,
   moveSpeed: 32,
   attackRange: 34,
-  attackArc: 1.9,
+  /*
+   * 挥出去有多宽，弧度。1.9 是 109°，那已经是"身前一切"了 —— 配上横扫的距离倍率，
+   * 玩家看到的是一把刷子从屏幕这头刷到那头，不是一道挥击。
+   *
+   * 1.4 是 80°：仍然是全场最宽的一招（骑士 1.7 是回旋的整圈、不走这一项，剑士 1.7，
+   * 骠骑 0.95），但两侧重新有了空档 —— 玩家绕到供侧面这件事才重新有意义。
+   */
+  attackArc: 1.4,
   attackSpeed: 1,
   // 原来写死在 collectibles.ts 里的 MAGNET_RADIUS。
   pickupRange: 68,
 };
 
 const stats = (overrides: Partial<UnitStats>): UnitStats => ({ ...baseline, ...overrides });
+
+/*
+ * 关于成长表里的 attackRange：**它比看上去重得多。**
+ *
+ * 每一招的作用半径都是 `attackRange × skill.reach`（见 battle.ts 的 castSkill），而横扫的
+ * reach 是 1.8 —— 攻击距离每涨一点，扫出去的扇面就涨两点一，而扇面的**面积**涨得更快（平方）。
+ * 双锤武将原来每级 0.35，到 27 级扫出的半径是 78 个单位 —— 而出货视口的半宽才 155，
+ * 一招就盖出去半个屏幕。那不是"练得更强"，那是整局没有距离可言了。
+ *
+ * 所以这一项压到原来的四分之一：十几二十级下来长一两个单位，能感觉到但不改变局面。
+ * **攻击力和出手频率那两项一动不动** —— 等级该换来的是"打得更疼、挥得更快"，
+ * 不是"站在原地就能够到屏幕边上"。
+ */
 
 export const Heroes: readonly HeroDef[] = [
   {
@@ -71,7 +91,7 @@ export const Heroes: readonly HeroDef[] = [
       attack: 9,
       defense: 1.2,
       moveSpeed: 0.15,
-      attackRange: 0.35,
+      attackRange: 0.08,
       attackSpeed: 0.012,
       pickupRange: 0.8,
     },
@@ -94,7 +114,7 @@ export const Heroes: readonly HeroDef[] = [
       attack: 6,
       defense: 2.4,
       moveSpeed: 0.1,
-      attackRange: 0.16,
+      attackRange: 0.04,
       attackSpeed: 0.008,
       pickupRange: 0.8,
     },
@@ -117,7 +137,7 @@ export const Heroes: readonly HeroDef[] = [
       attack: 12,
       defense: 0.9,
       moveSpeed: 0.18,
-      attackRange: 0.2,
+      attackRange: 0.05,
       attackSpeed: 0.016,
       pickupRange: 1,
     },
@@ -145,7 +165,7 @@ export const Heroes: readonly HeroDef[] = [
       // 三十级是 38 + 0.42 × 29 = 50.2，仍然低于他自己的冲刺（× 1.875 = 71）。速度型是
       // "跑得比别人快"，不是"不需要冲刺"。
       moveSpeed: 0.42,
-      attackRange: 0.3,
+      attackRange: 0.07,
       attackSpeed: 0.02,
       pickupRange: 1.2,
     },
