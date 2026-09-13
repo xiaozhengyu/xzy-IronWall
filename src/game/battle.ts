@@ -531,6 +531,16 @@ interface SkillWave {
   power: number;
   /** 发招那一刻的技能等级倍率（见 SkillLoadout.damageScale）。 */
   scale: number;
+  /**
+   * 这一道波已经砍过谁。**一个人一道波只挺一下。**
+   *
+   * 没这一张表的时候它是每帧结算的：判定写的是"波前越过他了没有"（dist <= radius），
+   * 而 radius 一路涨到头 —— 早早被包进去的人在接下来的三十多帧里会被反复结算。
+   * 那条判定写的时候敌人还是"碰到就死"，重复结算看不出来；接上血量之后它就成了
+   * 一招打三十下，而且帧率越高打得越疼。和金钟罩、天地法相那两个壳子是同一类错（见 AURA_HIT_GAP），
+   * 只是壳子是持续的、用免疫窗口，而波只扫一遍、用一张名单。
+   */
+  hit: Set<Character>;
 }
 
 /**
@@ -2928,6 +2938,7 @@ export class Battle {
           power: skill.power,
           // 倍率在**发招那一刻**定下：波还在飞的时候抽到升级牌，不该回过头来加强它。
           scale,
+          hit: new Set(),
         };
         this.skillWaves.push(wave);
         // 特效和判定共用同一条推进曲线和同一组端点，所以画面上波扫到谁，谁就正好死。
@@ -3191,8 +3202,10 @@ export class Battle {
       w.y += w.vy * dt;
       const radius = frontRadius(Math.min(w.age / w.life, 1), w.from, w.to);
       for (const e of this.enemies) {
-        if (!e.alive) continue;
+        if (!e.alive || w.hit.has(e)) continue;
         if (sweptBy(e, w.x, w.y, w.heading, radius, w.arc, WAVE_NEAR_HALF_WIDTH)) {
+          // 记上名字再砍：这一道波对他就这一下，剩下的三十多帧它只是从他身上越过去。
+          w.hit.add(e);
           this.strike(e, w.x, w.y, w.power, w.scale);
         }
       }
