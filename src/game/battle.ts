@@ -977,6 +977,12 @@ export class Battle {
   private bossDeadline = 0;
   /** 这一秒里共扣了多少蓝，攒满一秒飘一个数（见 advanceMpFloat）。 */
   private spentMp = 0;
+  /**
+   * 上一秒掉了多少血，留给屏幕四周那一下红。读一次就清（takeHurtPulse）。
+   *
+   * 和头顶那个数字同一个时机、同一个节奏：两边说的本来就是同一件事，分开跑会错开成两件。
+   */
+  private hurtPulse = 0;
   /** 同理，这一秒里挨了多少伤害。 */
   private tookHp = 0;
   private floatSince = 0;
@@ -1201,10 +1207,20 @@ export class Battle {
      */
     if (hp >= 1) {
       this.floatGain(hp, 'heal', 'minus', 'HP');
+      this.hurtPulse = hp;
     }
     if (mp >= 1) {
       this.floatGain(mp, 'mana', 'minus', 'MP');
     }
+  }
+
+  /**
+   * 这一秒掉了多少血。读一次就清 —— 屏幕四周那一下红只该为一次扣血闪一遍。
+   */
+  takeHurtPulse(): number {
+    const pulse = this.hurtPulse;
+    this.hurtPulse = 0;
+    return pulse;
   }
 
   /**
@@ -1799,6 +1815,7 @@ export class Battle {
     this.kills = 0;
     this.deaths = 0;
     this.damageTaken = 0;
+    this.hurtPulse = 0;
     this.earnedExp = 0;
     this.defeated = false;
     this.outcome = 'none';

@@ -15,6 +15,7 @@ import { HudPlayerPanel } from './hudPlayerPanel';
 import { HudQuickbar } from './hudQuickbar';
 import { HUD_COOLDOWN_SKILLS, HudCooldownPanel } from './hudCooldownPanel';
 import { HudText, type HudLocale } from './text/hudText';
+import { HurtFlash } from './hurtFlash';
 import { cardCost } from '../data/balance';
 import { ITEM_SLOT_COUNT } from '../data/pickups';
 export { createHudButton, type HudButtonOptions, type HudButtonSkin } from './hudButton';
@@ -93,6 +94,8 @@ export class Hud {
   readonly quickbar: HudQuickbar;
   readonly cooldownInfo: HudCooldownPanel;
   readonly cards: HudCardPicker;
+  /** 挨打时屏幕四周红一下。见 hurtFlash.ts。 */
+  private readonly hurtFlash = new HurtFlash();
   readonly text: HudText;
 
   /** 灵石收满是否弹卡牌。菜单里可以关掉，关掉就是接这个功能之前的样子。 */
@@ -219,6 +222,8 @@ export class Hud {
     this.root.appendChild(this.cards.root);
     this.quickbarResizeObserver = new ResizeObserver(() => this.syncGemProgressWidth());
 
+    // 挨打那一圈红挂在画幅上、HUD 下：它说的是画面里的事，糊到小地图和血条上去会读成"面板坏了"。
+    host.appendChild(this.hurtFlash.root);
     host.appendChild(this.root);
     // 光标是一枚真的 CSS cursor，挂在 body 上（见 cursorImage.ts）。固定在窗口顶层那一层已经
     // 不存在了 —— 换成系统来画之后，ESC 菜单、画框留边、掉出窗口都自然就对了。
@@ -313,6 +318,8 @@ export class Hud {
    */
   setVisible(on: boolean): void {
     this.root.hidden = !on;
+    // 上一局最后那一下的红不能跟着下一局一起淡出去。
+    if (!on) this.hurtFlash.clear();
   }
 
   /**
@@ -342,6 +349,17 @@ export class Hud {
     this.playerInfo.setExperience(battle.expIntoLevel, battle.expForLevel);
     // 蓝条。主动技能的开销从这里出，自己按每秒回复涨回来。
     this.playerInfo.setMana(Math.max(0, Math.floor(battle.mp)), battle.maxMp);
+    /*
+     * 屏幕四周那一下红。
+     *
+     * 跟着头顶那个扣血数字走（一秒一次），不是每挨一下闪一下 —— 末波人堆里每秒十几下，
+     * 一下一闪就是一层抹不掉的红。两边同一个时机同一个节奏，读起来才是一件事。
+     */
+    const hurt = battle.takeHurtPulse();
+    if (hurt > 0) {
+      const maxHp = Math.max(1, battle.player.maxHp);
+      this.hurtFlash.hit(hurt / maxHp, battle.player.hp / maxHp);
+    }
     // 波次面板：三个数都自己判重，值没变时一个 DOM 节点也不会碰。
     const wave = battle.waveStatus;
     this.waveInfo.setWave(wave.wave);

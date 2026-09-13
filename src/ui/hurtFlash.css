@@ -1,0 +1,27 @@
+/*
+ * 挨打红边。压在画布上、HUD 下（`.hud` 是 z-index 4）—— 红糊在小地图和血条上会读成
+ * "面板坏了"，而它说的是画面里的事。
+ *
+ * **四条沿边的直带，不是一圈椭圆。** 先用的是 radial-gradient 的椭圆渐晕，换掉了：椭圆在
+ * 四条边的中点最薄、往四个角越来越厚，于是红像一个会呼吸的圆窗口扣在画面上 —— 那是一层
+ * 盖住画面的东西。四条等宽的直带读起来是**画框自己红了一下**，画面本身一点没被动过。
+ *
+ * 每条带子从画幅外沿往里淡出，宽度由 --hurt-flash-band 给（各自占那一条轴的百分比，所以
+ * 横竖两向在视觉上一样厚）。四个角上两条带子叠在一起、颜色重一点，正好是画框该有的样子。
+ */
+.hurt-flash {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  opacity: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(to right, rgba(150, 8, 5, 0.95), rgba(178, 14, 9, 0.45) 45%, rgba(186, 16, 10, 0))
+      left / var(--hurt-flash-band, 5%) 100% no-repeat,
+    linear-gradient(to left, rgba(150, 8, 5, 0.95), rgba(178, 14, 9, 0.45) 45%, rgba(186, 16, 10, 0))
+      right / var(--hurt-flash-band, 5%) 100% no-repeat,
+    linear-gradient(to bottom, rgba(150, 8, 5, 0.95), rgba(178, 14, 9, 0.45) 45%, rgba(186, 16, 10, 0))
+      top / 100% var(--hurt-flash-band, 5%) no-repeat,
+    linear-gradient(to top, rgba(150, 8, 5, 0.95), rgba(178, 14, 9, 0.45) 45%, rgba(186, 16, 10, 0))
+      bottom / 100% var(--hurt-flash-band, 5%) no-repeat;
+}
