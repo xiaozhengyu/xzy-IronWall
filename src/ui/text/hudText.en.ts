@@ -38,6 +38,7 @@ export const HUD_TEXT_EN: HudMessages = {
   skillSprint: 'SPRINT',
   skillIronBody: 'IRON BODY',
   skillBulwark: 'BULWARK',
-  skillKeenEdge: 'KEEN EDGE',
-  skillSwiftStrike: 'SWIFT STRIKE',
+  skillMend: 'MEND',
+  skillBerserk: 'BERSERK',
+  skillBloodthirst: 'BLOODTHIRST',
 };

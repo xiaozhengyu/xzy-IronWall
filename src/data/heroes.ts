@@ -44,6 +44,13 @@ const baseline: UnitStats = {
   mpRegen: 3.4,
   attack: 120,
   defense: 40,
+  /*
+   * 暴击率。基准就是以前那个写死的全局值，所以双锤武将的手感一点没变。
+   *
+   * 它是四个角色里最好拉开的一项：别的五项都直接改手感（跑多快、挥多快、撑多久），
+   * 而暴击改的是**节奏的起伏** —— 高暴击的人均伤不一定高，但他的画面上一直在跳大数字。
+   */
+  crit: 0.09,
   moveSpeed: 32,
   attackRange: 34,
   /*
@@ -105,7 +112,7 @@ export const Heroes: readonly HeroDef[] = [
     archetype: 'defense',
     appearance: 'knight',
     // 防御型：血最厚、防御最高，代价是够不远（16 是原来挂在 knight 预设上的那个数）也打不快。
-    base: stats({ maxHp: 1600, attack: 95, defense: 60, moveSpeed: 30, attackRange: 16, attackArc: 1.7, attackSpeed: 0.92, maxMp: 120, mpRegen: 3 }),
+    base: stats({ crit: 0.05, maxHp: 1600, attack: 95, defense: 60, moveSpeed: 30, attackRange: 16, attackArc: 1.7, attackSpeed: 0.92, maxMp: 120, mpRegen: 3 }),
     growth: {
       maxHp: 42,
       maxMp: 3,
@@ -130,7 +137,7 @@ export const Heroes: readonly HeroDef[] = [
     archetype: 'offense',
     appearance: 'hero',
     // 进攻型：攻击力涨得最快，血和防御最薄。他本来也不该挤进人堆。
-    base: stats({ maxHp: 900, attack: 105, defense: 30, moveSpeed: 33, attackRange: 16, attackArc: 1.7, pickupRange: 76, maxMp: 110, mpRegen: 4.2 }),
+    base: stats({ crit: 0.16, maxHp: 900, attack: 105, defense: 30, moveSpeed: 33, attackRange: 16, attackArc: 1.7, pickupRange: 76, maxMp: 110, mpRegen: 4.2 }),
     growth: {
       maxHp: 20,
       maxMp: 2.8,
@@ -155,7 +162,7 @@ export const Heroes: readonly HeroDef[] = [
     // 手离地面本来就远）。
     // 蓝池最小、回得最快：他的打法是冲进去扎一下再冲出来，一局里按突进的次数比谁都多，
     // 吃的是**回复速度**而不是池子大小 —— 池子再大也只是多冲一次，回得快才跟得上这个节奏。
-    base: stats({ maxHp: 1000, attack: 110, defense: 35, moveSpeed: 38, attackRange: 30, attackArc: 0.95, attackSpeed: 1.05, pickupRange: 72, maxMp: 90, mpRegen: 5.7 }),
+    base: stats({ crit: 0.12, maxHp: 1000, attack: 110, defense: 35, moveSpeed: 38, attackRange: 30, attackArc: 0.95, attackSpeed: 1.05, pickupRange: 72, maxMp: 90, mpRegen: 5.7 }),
     growth: {
       maxHp: 22,
       maxMp: 2,

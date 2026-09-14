@@ -16,6 +16,7 @@ const DEFAULT_STATS: UnitStats = {
   maxHp: 40,
   maxMp: 0,
   mpRegen: 0,
+  crit: 0.09,
   attack: 12,
   defense: 4,
   moveSpeed: 26,

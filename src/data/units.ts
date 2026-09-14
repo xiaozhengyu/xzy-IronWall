@@ -13,6 +13,7 @@
  */
 
 import { PALETTE_PEASANT, PALETTE_RED } from '../characters/palette';
+import { CRIT_CHANCE_BASIC } from './balance';
 import { unitAppearance } from '../characters/unitDef';
 import type { ResolvedUnitKind, UnitKindDef, UnitStats } from './types';
 
@@ -46,6 +47,8 @@ const grunt = (overrides: Partial<UnitStats>): UnitStats => ({
   // 属性形状，让敌人少一个字段就得给每个读它的地方加一个分支。
   maxMp: 0,
   mpRegen: 0,
+  // 敌人的暴击率全部用基准线。暴击是给玩家看的一个奖励，敌人那一侧只需要一个数。
+  crit: CRIT_CHANCE_BASIC,
   attack: 10,
   defense: 4,
   moveSpeed: 12,
