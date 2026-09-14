@@ -354,6 +354,18 @@ const AIM_TURN_MAX = 9;
 const AIM_TURN_MIN = 2;
 
 /**
+ * 突进那 0.22 秒里的转身角速度，弧度/秒。固定速度，不走上面那条缓出曲线。
+ *
+ * 24 是按"最坏情况也要转得完"倒推的：掉头（π）要 0.13 秒，比突进本身短一截，所以人落地
+ * 时一定已经朝着冲出去的方向了。走缓出曲线的话掉头要半秒，而突进只有 0.22 —— 人会冲完了
+ * 还在转，紧接着又被锁敌拽回去，读作原地拧了一下。
+ *
+ * 不直接瞬切：一帧之内转半圈是这个工程一直在躲的那种"抽搐"。摊到七八帧上就是一个甩身，
+ * 而突进本来就该读作甩身。
+ */
+const LUNGE_TURN_RATE = 24;
+
+/**
  * 换目标的粘性：新的人要近到旧目标的这个比例（对距离平方，所以 0.64 = 八成距离）才换。
  *
  * 人堆里永远有两三个人距离几乎相等，谁近谁远每帧都在变。没有这一条，身体就在他们之间来回
@@ -2564,12 +2576,11 @@ export class Battle {
       const speed = this.lunge.speed;
       const heading = this.lunge.heading;
       /*
-       * **朝向一个字不动。** 冲的是 heading，脸还朝着冲之前朝的那一边。
+       * 走的是 heading，**不是 facing**。
        *
-       * 以前这里写 `player.facing = heading`，那时候是对的：突进冲的就是准星方向，而朝向
-       * 也是准星，两者本来就是同一个数，写不写都一样。现在冲的是走位方向（见 castSkill 的
-       * dashHeading），再照抄一遍就成了"一冲出去人就扭过去" —— 而突进多半是用来脱身的，
-       * 那一下扭头正好把眼睛从刚才盯着的那个人身上扯开。
+       * 这两个数在突进期间是分开的：人整个沿着 heading 那条直线冲出去，而模型是在这几帧里
+       * 转过去的（见 aimPlayer 的 LUNGE_TURN_RATE）。拿 facing 来推位移的话，转身还没转完
+       * 的那几帧就会把人带偏，判定那条线段跟着歪 —— 而它必须是起手那一刻定下的那条直线。
        */
       player.moveAngle = heading;
       player.speed = speed;
@@ -2642,17 +2653,24 @@ export class Battle {
       this.aimTarget = null;
       return;
     }
-    /*
-     * 突进期间朝向定死，停在起手那一刻的样子。
-     *
-     * 它只有零点二几秒，而且判定是这一帧走过的那条线段（见 advanceSkills）—— 方向在起手
-     * 那一刻就定下了，中途转身会让判定和人真正走过的路对不上。何况它多半是用来脱身的：
-     * 扑出去的同时眼睛还盯着刚才那个人，正是这一下该有的样子。
-     */
-    if (this.lunge || !player.alive) return;
+    if (!player.alive) return;
 
     let want: number;
-    if (this.sprinting) {
+    /** 突进那一档用固定的高转速，别的走缓出曲线。见 LUNGE_TURN_RATE。 */
+    let whip = false;
+    if (this.lunge) {
+      /*
+       * 突进期间**朝着冲出去的那个方向**，和疾走同一条规矩：人在位移，就看着自己要去的
+       * 地方。冲的方向本身是走位方向（见 castSkill 的 dashHeading），所以站着不动按下去时
+       * 它就退回当前朝向 —— 那一下是"朝着锁住的那个人扑过去"，人不会莫名其妙扭一下。
+       *
+       * 转的只是模型。判定走的仍然是 lunge.heading 那条直线（见 movePlayer 和
+       * advanceSkills），从第一帧起就是准的 —— 身体转得再快也是画面上的事，不会让判定
+       * 和人真正走过的路对不上。
+       */
+      want = this.lunge.heading;
+      whip = true;
+    } else if (this.sprinting) {
       /*
        * 疾走期间**不锁敌，朝着自己跑的方向**。
        *
@@ -2676,9 +2694,10 @@ export class Battle {
       else if (player.moveAngle !== null) want = player.moveAngle;
       else return;
     }
-    // 还差多少度决定这一帧转多快，见 AIM_TURN_EASE。
+    // 还差多少度决定这一帧转多快，见 AIM_TURN_EASE。突进那一档例外，它要在零点二几秒里
+    // 无论如何转得完，所以吃一个固定的高转速。
     const gap = Math.abs(Math.atan2(Math.sin(want - player.facing), Math.cos(want - player.facing)));
-    const rate = clamp(gap * AIM_TURN_EASE, AIM_TURN_MIN, AIM_TURN_MAX);
+    const rate = whip ? LUNGE_TURN_RATE : clamp(gap * AIM_TURN_EASE, AIM_TURN_MIN, AIM_TURN_MAX);
     player.facing = turnToward(player.facing, want, rate * dt);
   }
 
