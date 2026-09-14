@@ -2562,9 +2562,16 @@ export class Battle {
       this.lunge.fromY = player.y;
       // 方向和速度都在起手那一刻就存进去了：冲到一半换个技能不该改变这一次冲刺。
       const speed = this.lunge.speed;
-      player.facing = this.lunge.heading;
-      // 冲刺这一段朝向就是走向：方向在起手那一刻定死，人整个朝那边扑出去。
-      player.moveAngle = null;
+      const heading = this.lunge.heading;
+      /*
+       * **朝向一个字不动。** 冲的是 heading，脸还朝着冲之前朝的那一边。
+       *
+       * 以前这里写 `player.facing = heading`，那时候是对的：突进冲的就是准星方向，而朝向
+       * 也是准星，两者本来就是同一个数，写不写都一样。现在冲的是走位方向（见 castSkill 的
+       * dashHeading），再照抄一遍就成了"一冲出去人就扭过去" —— 而突进多半是用来脱身的，
+       * 那一下扭头正好把眼睛从刚才盯着的那个人身上扯开。
+       */
+      player.moveAngle = heading;
       player.speed = speed;
       const to = moveWithCollision(
         field.terrain,
@@ -2572,8 +2579,8 @@ export class Battle {
         player.radius,
         player.x,
         player.y,
-        field.clampX(player.x + Math.cos(player.facing) * speed * dt),
-        field.clampY(player.y + Math.sin(player.facing) * speed * dt),
+        field.clampX(player.x + Math.cos(heading) * speed * dt),
+        field.clampY(player.y + Math.sin(heading) * speed * dt),
       );
       player.x = to.x;
       player.y = to.y;
@@ -2635,9 +2642,19 @@ export class Battle {
       this.aimTarget = null;
       return;
     }
-    // 突进期间不转：方向在起手那一刻就定死了（见 movePlayer），转身会让判定那条线和人真正
-    // 走过的路对不上。
-    if (this.lunge || !player.alive) return;
+    /*
+     * 突进和疾走期间**完全不转**，朝向就停在进入这两个状态那一刻的样子。
+     *
+     * 这两段是同一件事：人在**位移**，不在打。位移的时候还让身体跟着最近的敌人转，在一个
+     * 每帧都可能换目标的人堆里就是原地打转 —— 而这两招恰恰都是用来从人堆里出来的。
+     *
+     * 突进还多一条：它的判定是这一帧走过的那条线段（见 advanceSkills），方向在起手那一刻
+     * 就定死了，中途转身会让判定和人真正走过的路对不上。
+     *
+     * 用 sprinting 而不是 sprintEngaged：站着按住 Shift 不算跑（见 advanceSprint），那时候
+     * 人该照常转过去看着敌人。
+     */
+    if (this.lunge || this.sprinting || !player.alive) return;
 
     const target = this.pickAimTarget();
     this.aimTarget = target;
