@@ -13,6 +13,8 @@
  */
 
 import { MAX_LEVEL, expToNextLevel } from '../data/balance';
+import { MASTERY_MAX, ROOT_MAX_RANK, Roots, SUPPLY_MAX } from '../data/shop';
+import type { StatBonus } from '../data/types';
 import { Heroes } from '../data/heroes';
 
 const STORAGE_KEY = 'ironwall.profile.v1';
@@ -79,6 +81,16 @@ export interface ProfileData {
   heroes: Record<string, HeroProgress>;
   /** 每个角色的战绩。老存档里没有，读的时候补一份空的。 */
   records: Record<string, HeroRecord>;
+  /**
+   * 商店买的三样东西。都是**全账号**的，不按角色分。
+   *
+   * 金币本来就是一个公共池，按角色分的话四个角色等于四条独立的长线，而练满一个角色
+   * 已经要八十五万经验了。
+   */
+  roots: Partial<Record<string, number>>;
+  mastery: Partial<Record<string, number>>;
+  /** 屯着的补给，进图那一刻发到快捷栏。 */
+  supplies: Partial<Record<string, number>>;
   /** 上次选的角色和地图，回到备战界面时停在原处。 */
   lastHero: string;
   lastMap: string;
@@ -113,6 +125,9 @@ function freshProfile(): ProfileData {
     coins: 0,
     heroes,
     records,
+    roots: {},
+    mastery: {},
+    supplies: {},
     lastHero: Heroes[0].id,
     lastMap: 'proving',
   };
@@ -148,6 +163,10 @@ export class Profile {
       // 存档是上一版写的时候，新加的角色在里面没有记录。补齐而不是整份作废。
       // 战绩那一块是后加的，旧存档里整个不存在 —— 同样补一份空的，不当作版本不匹配。
       profile.data.records ??= {};
+      // 商店那三块也是后加的，同样补空而不是整份作废。
+      profile.data.roots ??= {};
+      profile.data.mastery ??= {};
+      profile.data.supplies ??= {};
       for (const hero of Heroes) {
         if (!profile.data.heroes[hero.id]) profile.data.heroes[hero.id] = freshProgress();
         if (!profile.data.records[hero.id]) profile.data.records[hero.id] = freshRecord();
@@ -256,6 +275,76 @@ export class Profile {
     entry.bestWave = Math.max(entry.bestWave, run.wave);
     entry.last = run;
     this.save();
+  }
+
+  // ------------------------------------------------------------ 商店
+
+  /** 这一项根基买到几级。0 = 没买。 */
+  root(key: string): number {
+    return Math.max(0, Math.min(ROOT_MAX_RANK, this.data.roots[key] ?? 0));
+  }
+
+  /** 这一招的师承买到几级。0 = 没买，起始等级就是 1。 */
+  mastery(id: string): number {
+    return Math.max(0, Math.min(MASTERY_MAX, this.data.mastery[id] ?? 0));
+  }
+
+  /** 手上屯着几个这种补给。 */
+  supply(id: string): number {
+    return Math.max(0, Math.min(SUPPLY_MAX, this.data.supplies[id] ?? 0));
+  }
+
+  /**
+   * 根基那一包加成。算在角色属性的**第四层**（见 game/stats.ts）。
+   *
+   * 每帧都会被问到，但里面只有六项，现算比缓存一份再想着什么时候失效便宜得多。
+   */
+  rootBonus(): StatBonus {
+    const out: StatBonus = {};
+    for (const def of Roots) {
+      const rank = this.root(def.key);
+      if (rank > 0) out[def.key] = def.perRank * rank;
+    }
+    return out;
+  }
+
+  /** 买一级根基。钱不够或者已满返回 false。 */
+  buyRoot(key: string, price: number): boolean {
+    if (this.root(key) >= ROOT_MAX_RANK || !this.spendCoins(price)) return false;
+    this.data.roots[key] = this.root(key) + 1;
+    this.save();
+    return true;
+  }
+
+  buyMastery(id: string, price: number): boolean {
+    if (this.mastery(id) >= MASTERY_MAX || !this.spendCoins(price)) return false;
+    this.data.mastery[id] = this.mastery(id) + 1;
+    this.save();
+    return true;
+  }
+
+  buySupply(id: string, price: number): boolean {
+    if (this.supply(id) >= SUPPLY_MAX || !this.spendCoins(price)) return false;
+    this.data.supplies[id] = this.supply(id) + 1;
+    this.save();
+    return true;
+  }
+
+  /**
+   * 进图那一刻把屯着的补给全发出去，存档里清空。
+   *
+   * **发出去就算花了，没用完也不退。** 这是故意的：局内打出来的符和买来的符摧在同一排
+   * 格子里，要分出"剩下的这两张是买的还是损的"就得给每一张符记一个来历，
+   * 而那一整套账只为了退几枚金币。"这一局的补给"本来就该随这一局一起结束。
+   */
+  takeSupplies(): { id: string; count: number }[] {
+    const out: { id: string; count: number }[] = [];
+    for (const [id, count] of Object.entries(this.data.supplies)) {
+      if ((count ?? 0) > 0) out.push({ id, count: count as number });
+    }
+    this.data.supplies = {};
+    if (out.length > 0) this.save();
+    return out;
   }
 
   get lastHero(): string {

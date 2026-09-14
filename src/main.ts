@@ -17,7 +17,7 @@ import { ACTIVE_SKILL_CODES, SPRINT_SKILL, type ActiveSkillSlot } from './game/s
 import { Field } from './game/field';
 import { ItemCatalog } from './items/catalog';
 import { ItemSheet } from './items/renderer';
-import { loadPickupTextures } from './items/pickupIcons';
+import { loadPickupTextures, pickupIcon } from './items/pickupIcons';
 import { ITEM_SLOT_COUNT, pickupById } from './data/pickups';
 import type { ItemStripEntry } from './ui/itemStrip';
 import { clamp, v2 } from './core/math';
@@ -34,6 +34,8 @@ import { Menu } from './ui/menu';
 import { SetupScreen, type MapPin } from './ui/setup';
 import { curtain } from './ui/curtain';
 import { HistoryScreen } from './ui/history';
+import { ShopScreen } from './ui/shop';
+import { masterySkills, startLevelOf, Supplies } from './data/shop';
 import { SummaryScreen, type SummaryStats } from './ui/summary';
 import './style.css';
 
@@ -1261,7 +1263,19 @@ function enterMap(hero: HeroDef, map: GameMapDef, weather: WeatherKind): void {
        * 清在这儿而不是 Battle.reset 里：清场重来（X 键）仍然该留在那一波。
        */
       battle.pinnedWave = 0;
+      /*
+       * 商店买的三样东西在这一刻生效，不是买的时候。
+       *
+       * 根基和师承得赶在 reset 之前：reset 会重算属性、把所有技能等级拍回起始值，
+       * 放在后面设的话要等到下一次重算才会被读到。补给得赶在 reset 之后：那一下会把
+       * 快捷栏清空。
+       */
+      battle.rootBonus = profile.rootBonus();
+      for (const id of masterySkills()) {
+        battle.skillLoadout.startLevels[id] = startLevelOf(profile.mastery(id));
+      }
       battle.reset(viewOf());
+      battle.grantItems(profile.takeSupplies());
       layout();
       // 零步长跑一次，让每个人先把姿势搭出来 —— 和开场那一次是同一个道理。
       battle.update(0, readInput(), viewOf());
@@ -1287,6 +1301,29 @@ function enterMap(hero: HeroDef, map: GameMapDef, weather: WeatherKind): void {
     }, 0),
   );
 }
+
+/**
+ * 商店。三个货架都读写同一份存档，买完当场写盘（Profile 里每一条 buy 都自己 save）。
+ *
+ * 买完不用通知别人：根基在进图那一刻才读（enterMap 里把 rootBonus 交给 Battle），师承同理，
+ * 补给也是那一刻才发。选人界面上那一排属性数字要跟着变，所以关商店时重新 show 一下选人界面。
+ */
+const shop = new ShopScreen({
+  view: () => ({
+    coins: profile.coins,
+    root: (key) => profile.root(key),
+    mastery: (id) => profile.mastery(id),
+    supply: (id) => profile.supply(id),
+  }),
+  buyRoot: (key, price) => profile.buyRoot(key, price),
+  buyMastery: (id, price) => profile.buyMastery(id, price),
+  buySupply: (id, price) => profile.buySupply(id, price),
+  onClose: () => {
+    shop.hide();
+    // 买完根基之后那排属性和六边形都变了，重新搭一遍。
+    setup.show();
+  },
+});
 
 /**
  * 战绩。从选人界面右上那个按钮进去，按返回回去。
@@ -1335,6 +1372,17 @@ const setup = new SetupScreen(
      */
     progress: {
       coins: () => profile.coins,
+      // 商店买的补给。图走 pickupIcon，和快捷栏、地上那件是同一张。
+      supplies: () => Supplies
+        .map((def) => ({ def, item: pickupById(def.id), count: profile.supply(def.id) }))
+        .filter((entry) => entry.count > 0 && entry.item !== null)
+        .map((entry) => ({
+          id: entry.def.id,
+          name: entry.item!.name,
+          note: entry.item!.note,
+          icon: pickupIcon(entry.def.id),
+          count: entry.count,
+        })),
       level: (hero) => profile.level(hero.id),
       exp: (hero) => {
         const entry = profile.progress(hero.id);
@@ -1388,7 +1436,7 @@ const setup = new SetupScreen(
      * 和以后的属性表出，付钱走 profile.spendCoins，买到的技能走 profile.unlock。那三样
      * 在 game/profile.ts 上已经是现成的了。
      */
-    onShop: () => setup.notice('商店还没有开张。金币先攒着 —— 它是这一局打完唯一带得走的东西。'),
+    onShop: () => shop.show(),
     onHistory: (heroId) => history.show(heroId),
   },
   menu.text,

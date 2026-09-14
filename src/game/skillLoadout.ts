@@ -156,8 +156,18 @@ export class SkillLoadout {
     return skillMpScale(this.levels[id]);
   }
 
+  /**
+   * 每一招的起始等级。默认全是 1，商店买了师承的那几招高一截（见 data/shop.ts）。
+   *
+   * 存在 SkillLoadout 上而不是每次 startRun 传进来：重开一局（X 键）走的也是 startRun，
+   * 而那一条路上没有 profile。
+   */
+  startLevels: Partial<Record<SkillId, number>> = {};
+
   resetLevels(): void {
-    for (const skill of Skills) this.levels[skill.id] = 1;
+    for (const skill of Skills) {
+      this.levels[skill.id] = Math.max(1, Math.min(SKILL_MAX_LEVEL, this.startLevels[skill.id] ?? 1));
+    }
   }
 
   isEquipped(id: SkillId): boolean {

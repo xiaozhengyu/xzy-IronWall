@@ -30,6 +30,7 @@ import {
   damageAfterDefense,
 } from '../data/balance';
 import { ITEM_SLOT_COUNT, ITEM_STACK_MAX, REGEN_TICK, pickupById, rollBossPickup, rollPickup } from '../data/pickups';
+import { FORTUNE_COIN_MULTIPLIER } from '../data/shop';
 import { Heroes } from '../data/heroes';
 import { NEUTRAL_MODIFIER, type HeroDef, type MapModifier, type StatBonus, type UnitStats } from '../data/types';
 import type { ResolvedUnitKind } from '../data/types';
@@ -1206,6 +1207,13 @@ export class Battle {
    * 而到期是分开到期的 —— 合并之后就没法把先到期的那一份减回去了。
    */
   private readonly timedBonuses: { bonus: StatBonus; left: number }[] = [];
+  /**
+   * 正开着的符都有哪几张。
+   *
+   * 单独记一份而不是去翻 timedBonuses：那一排里只有一包包属性，早就不知道自己是从哪张符
+   * 来的了。而聚宝符这种改**规则**的符必须能被按名字问到。
+   */
+  private readonly timedCharms = new Map<string, number>();
 
   /**
    * 正在慢慢回的那几口药，以及各自还剩几秒、离下一跳还差多久。
@@ -1249,6 +1257,17 @@ export class Battle {
     const held = this.itemSlots.find((entry) => entry?.id === id);
     if (held) return held.count < ITEM_STACK_MAX;
     return this.itemSlots.some((entry) => entry === null);
+  }
+
+  /**
+   * 把一批补给发到快捷栏里。进图那一刻调一次（见 main 的 enterMap）。
+   *
+   * 走 takeItem 而不是直接写格子：摧满、格子不够那几条规矩只应该存在一份。
+   */
+  grantItems(items: { id: string; count: number }[]): void {
+    for (const entry of items) {
+      for (let i = 0; i < entry.count; i++) this.takeItem(entry.id);
+    }
   }
 
   private takeItem(id: string): void {
@@ -1362,6 +1381,14 @@ export class Battle {
    * 默认中性（全是 1），所以离线脚本不设置它也能跑。
    */
   private modifier: MapModifier = NEUTRAL_MODIFIER;
+
+  /**
+   * 商店买的根基，属性的**第四层**。由 main 从存档里取一份交进来。
+   *
+   * 和局内那些加成分开放：那些打完就清（runBonus、timedBonuses），这一包是带着进来的。
+   * 混在一起的话，重开一局清局内加成那一下会把玩家买的东西一起清掉。
+   */
+  rootBonus: StatBonus = {};
 
   /**
    * 这一局挣到的经验。一局打完由 main 一次性结进存档。
@@ -1518,9 +1545,16 @@ export class Battle {
    *
    * 同一项上的多个来源是相加再乘一次（见 applyBonuses 那段），所以这里也只是把数加起来。
    */
+  /** 这一张符正开着吗。聚宝符那种改规则而不改属性的符靠它问。 */
+  private hasCharm(id: string): boolean {
+    return this.timedCharms.has(id);
+  }
+
   private mergedBonus(): StatBonus {
-    if (this.timedBonuses.length === 0) return this.runBonus;
-    const out: StatBonus = { ...this.runBonus };
+    const out: StatBonus = { ...this.rootBonus };
+    for (const key of Object.keys(this.runBonus) as (keyof UnitStats)[]) {
+      out[key] = (out[key] ?? 0) + (this.runBonus[key] ?? 0);
+    }
     for (const entry of this.timedBonuses) {
       for (const key of Object.keys(entry.bonus) as (keyof UnitStats)[]) {
         out[key] = (out[key] ?? 0) + (entry.bonus[key] ?? 0);
@@ -1566,6 +1600,7 @@ export class Battle {
       const beforeHp = this.player.maxHp;
       const beforeMp = this.player.stats.maxMp;
       this.timedBonuses.push({ bonus: def.buff, left: def.duration });
+      this.timedCharms.set(def.id, Math.max(this.timedCharms.get(def.id) ?? 0, def.duration));
       this.applyPlayerStats();
       // 上限涨出来的那一截当场补满。不补的话"生命上限 +25%"在满血时什么也没发生，读起来像
       // 一张废牌，而到期缩回去时反倒会掉一截血。
@@ -1667,6 +1702,10 @@ export class Battle {
 
   /** 符的倒计时。到期一条就把属性重算一遍。 */
   private advanceTimedBonuses(dt: number): void {
+    for (const [id, left] of this.timedCharms) {
+      if (left - dt > 0) this.timedCharms.set(id, left - dt);
+      else this.timedCharms.delete(id);
+    }
     if (this.timedBonuses.length === 0) return;
     let expired = false;
     for (let i = this.timedBonuses.length - 1; i >= 0; i--) {
@@ -1971,6 +2010,7 @@ export class Battle {
     this.skillLoadout.startRun(this.hero.attackSkill, this.hero.startGuard ?? null);
     this.runBonus = {};
     this.timedBonuses.length = 0;
+    this.timedCharms.clear();
     this.regens.length = 0;
     this.itemSlots.fill(null);
     this.itemFlash = 0;
@@ -3080,8 +3120,11 @@ export class Battle {
      * 灵石和金币照旧从小兵身上出：灵石是这一局的节奏（攒够就抽牌），抽牌的门槛又是从出兵预算
      * 倒推的 —— 把它也挪到首领身上会让整条升级曲线散架。
      */
+    // 聚宝符：金币掉落翻倍。它是唯一一张改"掉什么"而不是改属性的符，所以只能在这儿问一句。
+    const coinChance = COIN_DROP_CHANCE
+      * (this.hasCharm('charm-fortune') ? FORTUNE_COIN_MULTIPLIER : 1);
     if (isBoss) this.collectibles.dropPickup(rollBossPickup().id, e.x, e.y);
-    else if (Math.random() < COIN_DROP_CHANCE) this.collectibles.dropCoin(e.x, e.y);
+    else if (Math.random() < coinChance) this.collectibles.dropCoin(e.x, e.y);
     else this.collectibles.dropGem(e.x, e.y);
 
     // 甩多远跟着等级走，和人被掀飞多远同一条规则。

@@ -673,6 +673,70 @@
   }
 }
 
+/*
+ * 开始按钮底下那一排补给。
+ *
+ * 图的尺寸和快捷栏对齐（见 itemStrip.css 里那一段）：这一排存在的全部理由就是
+ * "进去之后快捷栏里会有这几个"，两边长得不一样就白摆了。
+ */
+.setup-carry {
+  margin-top: 8px;
+  text-align: center;
+}
+
+.setup-carry[hidden] {
+  display: none;
+}
+
+.setup-carry-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 10px;
+}
+
+/* 一格的宽度由**名字**定，不是图：名字比图宽，按图定宽的话名字会挤到隔壁那一格上。 */
+.setup-carry-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.setup-carry-frame {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  background: rgba(8, 10, 14, 0.92);
+  border: 1px solid #3a4254;
+}
+
+.setup-carry-name {
+  font-size: 10px;
+  line-height: 1.2;
+  color: #8b94a8;
+  white-space: nowrap;
+}
+
+.setup-carry-icon {
+  width: 26px;
+  height: 26px;
+  image-rendering: pixelated;
+}
+
+.setup-carry-n {
+  position: absolute;
+  right: -3px;
+  bottom: -5px;
+  padding: 1px 4px;
+  background: rgba(0, 0, 0, 0.82);
+  color: #f0e6d2;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
 .setup-veil {
   position: absolute;
   inset: 0;

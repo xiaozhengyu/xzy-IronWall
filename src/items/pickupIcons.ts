@@ -4,6 +4,10 @@ import charmSwiftUrl from '../../assets/hud/item/talisman/talisman-01.png';
 import charmWardUrl from '../../assets/hud/item/talisman/talisman-04.png';
 import pillHpOverTimeUrl from '../../assets/hud/item/pill/pill-05.png';
 import pillMpOverTimeUrl from '../../assets/hud/item/pill/pill-07.png';
+import charmRageUrl from '../../assets/hud/item/talisman/talisman-06.png';
+import charmGaleUrl from '../../assets/hud/item/talisman/talisman-02.png';
+import charmAegisUrl from '../../assets/hud/item/talisman/talisman-08.png';
+import charmFortuneUrl from '../../assets/hud/item/talisman/talisman-10.png';
 import { Assets, type Texture } from 'pixi.js';
 
 /**
@@ -24,6 +28,17 @@ export const PICKUP_ICONS: Record<string, string> = {
   'potion-mp-over-time': pillMpOverTimeUrl,
   'charm-swift': charmSwiftUrl,
   'charm-ward': charmWardUrl,
+  /*
+   * 商店独有的四张。各用一张没人用过的符篓图。
+   *
+   * 写在这里而不是商店自己再配一份：这一张表同时给快捷栏、地上那件、小地图和结算页
+   * 供图。商店跟着用同一份，**买的时候看到的图和进去之后快捷栏里那一格就是同一张** ——
+   * 否则玩家要把"我买的那个"和"栏里这个"对上号，而这两个本来就是一件东西。
+   */
+  'charm-rage': charmRageUrl,
+  'charm-gale': charmGaleUrl,
+  'charm-aegis': charmAegisUrl,
+  'charm-fortune': charmFortuneUrl,
 };
 
 export const pickupIcon = (id: string): string => PICKUP_ICONS[id] ?? pillHpUrl;

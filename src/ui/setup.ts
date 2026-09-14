@@ -100,6 +100,8 @@ export interface SetupProgress {
   stats(hero: HeroDef): UnitStats;
   /** 这个角色已经解锁的主动技，外加被动和自动攻击技。技能条按它画。 */
   skills(hero: HeroDef): SkillId[];
+  /** 这一局会带进去的补给（商店买的）。空数组就是一件都没买。 */
+  supplies(): { id: string; name: string; note: string; icon: string; count: number }[];
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -205,6 +207,13 @@ export class SetupScreen {
   readonly foeSlots: HTMLElement[] = [];
   private readonly foeBox = el('div', 'setup-foes');
   private readonly startButton = el('button', 'setup-main', '开始游戏');
+  /**
+   * 开始按钮底下那一排：这一局会带进去的补给。
+   *
+   * 摆在这儿是因为它回答的是"按下去会发生什么"。玩家在商店里买了两张符，回到这一屏
+   * 如果看不见它们，他就得进去之后看快捷栏才知道买没买成。
+   */
+  private readonly carryBox = el('div', 'setup-carry');
   private readonly summary = el('div', 'setup-summary');
   /**
    * 金币。摆在开始按钮旁边而不是塞进角色那一栏：它是**跨局**的家底，不属于任何一个角色，
@@ -532,6 +541,39 @@ export class SetupScreen {
   private refreshSummary(): void {
     this.summary.textContent = `${this.currentHero.name} · ${this.currentMap.name}`;
     this.purse.textContent = String(this.bridge.progress.coins());
+    this.refreshCarry();
+  }
+
+  /** 开始按钮底下那一排。一件都没买就整排藏起来，不摆一行"暂无"。 */
+  private refreshCarry(): void {
+    const carried = this.bridge.progress.supplies();
+    this.carryBox.replaceChildren();
+    this.carryBox.hidden = carried.length === 0;
+    if (carried.length === 0) return;
+    /*
+     * 不写"随身"这个牌子，图底下写物品名就够了。
+     *
+     * 牌子回答的是"这一排是什么"，而它摆在开始按钮底下、里面是几个药符图标，这件事
+     * 本来就不需要解释。真正读不出来的是"每一个分别是什么" —— 四张符的图彼此很像，
+     * 而名字一眼就分得开。
+     */
+    const row = el('div', 'setup-carry-row');
+    for (const entry of carried) {
+      const cell = el('span', 'setup-carry-item');
+      cell.title = entry.note;
+      const frame = el('span', 'setup-carry-frame');
+      const icon = el('img', 'setup-carry-icon');
+      icon.src = entry.icon;
+      icon.alt = '';
+      icon.draggable = false;
+      frame.appendChild(icon);
+      // 个数压在右下角，和快捷栏上那个数字同一个位置。
+      frame.appendChild(el('span', 'setup-carry-n', String(entry.count)));
+      cell.appendChild(frame);
+      cell.appendChild(el('span', 'setup-carry-name', entry.name));
+      row.appendChild(cell);
+    }
+    this.carryBox.appendChild(row);
   }
 
   // ---------------------------------------------------------------- 进入
@@ -619,6 +661,7 @@ export class SetupScreen {
     foot.appendChild(this.summary);
     this.startButton.addEventListener('click', () => this.start());
     foot.appendChild(this.startButton);
+    foot.appendChild(this.carryBox);
     colRight.appendChild(foot);
     body.appendChild(colRight);
 
