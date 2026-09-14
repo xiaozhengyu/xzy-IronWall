@@ -354,18 +354,6 @@ const AIM_TURN_MAX = 9;
 const AIM_TURN_MIN = 2;
 
 /**
- * 突进那 0.22 秒里的转身角速度，弧度/秒。固定速度，不走上面那条缓出曲线。
- *
- * 24 是按"最坏情况也要转得完"倒推的：掉头（π）要 0.13 秒，比突进本身短一截，所以人落地
- * 时一定已经朝着冲出去的方向了。走缓出曲线的话掉头要半秒，而突进只有 0.22 —— 人会冲完了
- * 还在转，紧接着又被锁敌拽回去，读作原地拧了一下。
- *
- * 不直接瞬切：一帧之内转半圈是这个工程一直在躲的那种"抽搐"。摊到七八帧上就是一个甩身，
- * 而突进本来就该读作甩身。
- */
-const LUNGE_TURN_RATE = 24;
-
-/**
  * 换目标的粘性：新的人要近到旧目标的这个比例（对距离平方，所以 0.64 = 八成距离）才换。
  *
  * 人堆里永远有两三个人距离几乎相等，谁近谁远每帧都在变。没有这一条，身体就在他们之间来回
@@ -2655,22 +2643,28 @@ export class Battle {
     }
     if (!player.alive) return;
 
-    let want: number;
-    /** 突进那一档用固定的高转速，别的走缓出曲线。见 LUNGE_TURN_RATE。 */
-    let whip = false;
+    /*
+     * 突进期间**朝着冲出去的那个方向，而且是瞬间转过去的**。
+     *
+     * 和疾走同一条规矩：人在位移，就看着自己要去的地方。冲的方向本身是走位方向（见
+     * castSkill 的 dashHeading），所以站着不动按下去时它退回当前朝向 —— 那一下仍然是
+     * "朝着锁住的那个人扑过去"，人不会莫名其妙扭一下。
+     *
+     * **这一档不插帧。** 别处的转身都要几帧过渡，那是为了不让身体抽搐；但突进不是"转身"，
+     * 是一个起手动作 —— 人已经弹出去了，身体还在慢慢拧过来，看着就是模型没跟上，而不是
+     * 一个甩身。骠骑将军身上最明显：马是一根长条，它的朝向在俯视角下比人清楚得多，差几帧
+     * 就是马横着飘出去。整段只有 0.22 秒，任何过渡都占掉它的一大半。
+     *
+     * 转的只是模型。判定走的仍然是 lunge.heading 那条直线（见 movePlayer 和 advanceSkills），
+     * 从第一帧起就是准的。
+     */
     if (this.lunge) {
-      /*
-       * 突进期间**朝着冲出去的那个方向**，和疾走同一条规矩：人在位移，就看着自己要去的
-       * 地方。冲的方向本身是走位方向（见 castSkill 的 dashHeading），所以站着不动按下去时
-       * 它就退回当前朝向 —— 那一下是"朝着锁住的那个人扑过去"，人不会莫名其妙扭一下。
-       *
-       * 转的只是模型。判定走的仍然是 lunge.heading 那条直线（见 movePlayer 和
-       * advanceSkills），从第一帧起就是准的 —— 身体转得再快也是画面上的事，不会让判定
-       * 和人真正走过的路对不上。
-       */
-      want = this.lunge.heading;
-      whip = true;
-    } else if (this.sprinting) {
+      player.facing = this.lunge.heading;
+      return;
+    }
+
+    let want: number;
+    if (this.sprinting) {
       /*
        * 疾走期间**不锁敌，朝着自己跑的方向**。
        *
@@ -2694,10 +2688,9 @@ export class Battle {
       else if (player.moveAngle !== null) want = player.moveAngle;
       else return;
     }
-    // 还差多少度决定这一帧转多快，见 AIM_TURN_EASE。突进那一档例外，它要在零点二几秒里
-    // 无论如何转得完，所以吃一个固定的高转速。
+    // 还差多少度决定这一帧转多快，见 AIM_TURN_EASE。
     const gap = Math.abs(Math.atan2(Math.sin(want - player.facing), Math.cos(want - player.facing)));
-    const rate = whip ? LUNGE_TURN_RATE : clamp(gap * AIM_TURN_EASE, AIM_TURN_MIN, AIM_TURN_MAX);
+    const rate = clamp(gap * AIM_TURN_EASE, AIM_TURN_MIN, AIM_TURN_MAX);
     player.facing = turnToward(player.facing, want, rate * dt);
   }
 
@@ -3385,6 +3378,16 @@ export class Battle {
          * 在于脱身。站着不按方向时 moveDir 就退回 facing，那时候冲向敌人才是他唯一的意思。
          */
         const dashHeading = player.moveDir;
+        /*
+         * 朝向**在这一刻**就甩过去，不等到下一帧的 aimPlayer。
+         *
+         * 因为底下那道前推弧的落点（at）是按朝向算出来的武器落点。不先转，弧就从他扑出去
+         * 的**反**方向那一侧冒出来 —— 一道本该跟着人往前推的波，看着像是从背后掉下来的。
+         *
+         * 站着不动按下去时 dashHeading 就是当前朝向，这一行是个空操作。
+         */
+        player.facing = dashHeading;
+        const dashFrom = weaponImpactPoint(player.pose, player.def, player.x, player.y, dashHeading);
         this.lunge = {
           left: skill.duration,
           heading: dashHeading,
@@ -3397,7 +3400,8 @@ export class Battle {
           fromY: player.y,
         };
         // 突进：一道窄而急的前推弧，跟着人一起冲出去。弧的长度按**真正冲出去的距离**给。
-        this.effects.spawn(at.x, at.y, dashHeading, {
+        // 落点用 dashFrom（按冲的方向算的那个），不是外面那个按旧朝向算的 at。
+        this.effects.spawn(dashFrom.x, dashFrom.y, dashHeading, {
           power: 1,
           span: 1.1,
           from: 2,
