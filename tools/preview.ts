@@ -15,6 +15,10 @@ import { CharacterAnimator, attackDuration, attackImpact } from '../src/characte
 import { HorseAnimator, HorsePose } from '../src/characters/horse';
 import { PALETTE_BLUE, PALETTE_HERO, PALETTE_PEASANT, PALETTE_RED, flatPalette, type CharacterPalette } from '../src/characters/palette';
 import { drawFigureStage, spawnStageSkill, STAGE_TILE_RADIUS, type StageSkillShape } from '../src/render/figureStage';
+import { SkillStage, skillDemo } from '../src/ui/skillDemo';
+import { FIGURE_GRAIN, FIGURE_HEIGHT, FIGURE_WIDTH, figureAnchor } from '../src/ui/skillFigure';
+import { skillById, type SkillId } from '../src/game/skills';
+import { heroById } from '../src/data/heroes';
 import { drawCharacter } from '../src/characters/renderer';
 import { Pose, RigSpec } from '../src/characters/rig';
 import { type UnitDef, UnitPresets } from '../src/characters/unitDef';
@@ -1887,6 +1891,88 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
     + '地块宽度 = 身高 ×1.5；上排走位 4 拍，中排 3 个角色，下排 5 个敌人按界面格子尺寸',
   );
 }
+
+
+// ---------------------------------------------------------------- 牌上那一招演到哪一步
+//
+// 三选一那几张技能牌底下各铺着一台演示（src/ui/skillDemo.ts）。这张图把每一招的整个周期拍
+// 成一条连拍，验两件事：**这一招演完了没有**，以及牌上那一下和它在战场上是不是同一件事。
+//
+// 上一版这块只有三种弧（扇、圈、波）分给十三个招式，没匹配上的兽底给波 —— 穿云箭于是在牌上
+// 演成了破空：牌面写"冲天后随机落下"，画面是一道当场推出去的波。那种事只能在图上看出来，
+// 因为它在代码里读起来完全正常。
+//
+// 走的是线上那一份 SkillStage，不是另写一遍的近似 —— 图上验过的就是玩家看到的。
+{
+  const W = FIGURE_WIDTH;
+  const H = FIGURE_HEIGHT;
+  const FRAMES = 8;
+  const STEP = 1 / 120;
+  const WARLORD = heroById('warlord');
+
+  // 一律用双锤武将：这一张比的是招，不是人。骑马的那个落点更低（figureAnchor 自己会分），
+  // 但换个人会把"这一招长什么样"和"这个角色长什么样"混在一起。
+  const rows: SkillId[] = [
+    'sweep', 'spin', 'wave', 'lunge', 'aegis', 'dharma',
+    'heavenSplit', 'skyArrow', 'sprint', 'ironBody', 'bulwark', 'keenEdge',
+  ];
+
+  const sheet = new Canvas(W * FRAMES, H * rows.length, [11, 13, 18]);
+
+  rows.forEach((id, row) => {
+    const demo = skillDemo(id);
+    const stage = new SkillStage(UnitPresets.warlord(), id, { width: W, height: H }, WARLORD.base.attackRange);
+    /*
+     * 采样点往**起手那一头**挤（指数 1.5）。
+     *
+     * 均匀取八帧对横扫够了，对穿云箭不够：它的冲天段只有 0.18 秒，而整个周期 2.6 秒 ——
+     * 均匀采样会整段跳过剑上天那一下，而那恰恰是这一招和破空最不一样的地方。
+     */
+    const at = (i: number) => demo.cast + (demo.loop - demo.cast) * (i / (FRAMES - 1)) ** 1.5;
+
+    let t = 0;
+    for (let i = 0; i < FRAMES; i++) {
+      const until = at(i);
+      while (t < until) {
+        stage.step(STEP);
+        t += STEP;
+      }
+      /*
+       * 每一格**先按牌面那块画布画**（原点在 0,0、按 W×H 裁），再整体挪到格子上。
+       *
+       * 直接画在格子的位置上也出得了图，但那样裁剪框就不是牌上那一块了 —— 飞出画布的那半
+       * 把剑会落到旁边一格里，看着像"还在画面里"。这张图要验的恰恰是有没有被切掉。
+       */
+      const shapes = new ShapeBatch();
+      const origin = figureAnchor(stage.actor.def.mounted, W, H);
+      stage.draw(shapes, origin, FIGURE_GRAIN);
+      const sink = new ShapeSink();
+      shapes.flushToMesh(sink, W, H);
+      const ox = i * W;
+      const oy = row * H;
+      for (const sh of sink.shapes) {
+        for (let k = 0; k < sh.pts.length; k += 2) {
+          sh.pts[k] += ox;
+          sh.pts[k + 1] += oy;
+        }
+        sheet.fillPolygon(sh);
+      }
+      // 格子的边：牌上是没有框的，画出来只为了数格子。
+      const frame = new ShapeBatch();
+      const edge = rgba(44, 50, 64, 255);
+      frame.bar(v2(ox, oy + 0.5), v2(ox + W, oy + 0.5), 1, edge, 0);
+      frame.bar(v2(ox + 0.5, oy), v2(ox + 0.5, oy + H), 1, edge, 0);
+      const frameSink = new ShapeSink();
+      frame.flushToMesh(frameSink);
+      for (const sh of frameSink.shapes) sheet.fillPolygon(sh);
+    }
+  });
+
+  writePng('.preview-cards.png', sheet);
+  const spans = rows.map((id) => `${skillById(id).name} ${skillDemo(id).loop.toFixed(1)}s`).join('、');
+  console.log(`牌面演示：${rows.length} 招 × ${FRAMES} 帧，采样偏向起手那一头；周期 ${spans}`);
+}
+
 
 
 // ---------------------------------------------------------------- 选图那一步的地图视图

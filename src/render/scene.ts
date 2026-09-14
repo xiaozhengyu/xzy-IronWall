@@ -10,7 +10,7 @@ import type { Pose } from '../characters/rig';
 import type { HorsePose } from '../characters/horse';
 import type { UnitDef } from '../characters/unitDef';
 import type { CharacterPalette } from '../characters/palette';
-import { brightenPalette, flatPalette } from '../characters/palette';
+import { IRON_BODY_GLOW, brightenPalette, flatPalette } from '../characters/palette';
 import type { Character } from '../game/character';
 import { enemyArrowPosition, type Battle } from '../game/battle';
 import type { Field } from '../game/field';
@@ -120,7 +120,6 @@ const RIM_OFFSETS: readonly (readonly [number, number])[] = [
 const HERO_RIM_PALETTE = flatPalette(rgba(255, 236, 176, 190));
 /** 冲刺时那一档：几乎不透明的暖白，偏移也翻倍（见 drawRim）。 */
 const HERO_DASH_PALETTE = flatPalette(rgba(255, 248, 214, 246));
-const IRON_BODY_GLOW = rgb(255, 242, 190);
 
 /**
  * 金钟罩压在玩家之上（他站在罩子里），但比技能弧低一档 —— 弧是一瞬间的事件，罩子一直都在，

@@ -184,6 +184,14 @@ export const flatPalette = (color: Rgba): CharacterPalette => {
   return all as CharacterPalette;
 };
 
+/**
+ * 铁布衫那层呼吸提亮朝哪个色推。
+ *
+ * 放在调色板这边而不是 Scene 里：牌上那张铁布衫的演示也要用同一个色（见 ui/skillDemo.ts），
+ * 而"牌上看到的就是场上会出现的东西"这件事，得靠两处读同一个常量来保证。
+ */
+export const IRON_BODY_GLOW = rgb(255, 242, 190);
+
 /** 保留各材质原有色差，把整套人物颜色朝指定亮色推近。 */
 export const brightenPalette = (palette: CharacterPalette, amount: number, glow: Rgba): CharacterPalette => {
   const brightened = {} as Record<keyof CharacterPalette, Rgba>;

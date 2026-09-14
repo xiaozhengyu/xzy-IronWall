@@ -216,8 +216,8 @@ export type StageSkillShape = 'fan' | 'ring' | 'wave';
  * 三分之一，所以脱离的火花（sparks）一律关掉：它的长度是按世界单位给的，在这么小的弧上
  * 是一圈比弧本身还长的直刺，读作海胆而不是刀光。
  */
-const STAGE_ARC_WEIGHT = 0.5;
-const STAGE_ARC_FLASH = 0.4;
+export const STAGE_ARC_WEIGHT = 0.5;
+export const STAGE_ARC_FLASH = 0.4;
 
 /**
  * 在台子上放一道弧。
