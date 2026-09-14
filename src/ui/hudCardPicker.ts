@@ -5,6 +5,13 @@ import { SKILL_ICONS } from './skillIcons';
 import { HudFrame } from './hudFrame';
 import { currentItems } from './currentItems';
 import type { ItemStripEntry } from './itemStrip';
+import {
+  CARD_GOLD_AMOUNTS,
+  CARD_OBTAIN_FROM,
+  STAT_CARD_CAP,
+  skillDamageScale,
+  SKILL_LEVEL_REACH,
+} from '../data/balance';
 import './hudCardPicker.css';
 
 /**
@@ -26,6 +33,8 @@ export interface HudCardOffer {
   skill?: SkillId;
   /** 技能牌是"获取"（这一局还没有它）还是"升一级"。 */
   obtain?: boolean;
+  /** 金币牌：给多少金币。只在什么都满了的时候出。 */
+  gold?: number;
 }
 
 /** 属性牌可能出现的幅度，百分比。 */
@@ -68,7 +77,9 @@ const CARD_COUNT = 3;
 const EXIT_MS = 200;
 
 /**
- * 从候选里抽 n 张，**三张之间既不重样、也不撞图**。
+ * 从候选里接着抽，抽到 out 有 upTo 张为止。**三张之间既不重样、也不撞图**。
+ *
+ * 续摆而不是一次抽完：三格里要先给技能牌留一格，剩下的才从全部货架里抽。
  *
  * 光靠"从池子里取走"是不够的：那只保证不抽到同一条记录，而不同的记录仍然可能共用一张图。
  * 玩家读牌先看图 —— 两张一样的图摆在一起，第一反应是"这一轮出重复了"，哪怕名字不同。所以
@@ -76,17 +87,14 @@ const EXIT_MS = 200;
  *
  * 去重之后可能凑不满三张（牌库快抽空的时候）。那就有多少给多少：少一张牌比摆一张重复的强。
  */
-function pick(pool: HudCardOffer[], n: number): HudCardOffer[] {
-  const rest = pool.slice();
-  const out: HudCardOffer[] = [];
-  const icons = new Set<string>();
-  while (out.length < n && rest.length > 0) {
+function take(pool: HudCardOffer[], upTo: number, out: HudCardOffer[], icons: Set<string>): void {
+  const rest = pool.filter((offer) => !out.some((had) => had.key === offer.key));
+  while (out.length < upTo && rest.length > 0) {
     const [offer] = rest.splice(Math.floor(Math.random() * rest.length), 1);
     if (icons.has(offer.icon)) continue;
     icons.add(offer.icon);
     out.push(offer);
   }
-  return out;
 }
 
 /**
@@ -116,6 +124,8 @@ export interface HudCardHooks {
   onObtainSkill(skill: SkillId): void;
   /** 玩家选了一张"升级"牌。 */
   onUpgradeSkill(skill: SkillId): void;
+  /** 玩家选了那张金币牌。金币是跨局的家底，直接进存档。 */
+  onGoldCard(amount: number): void;
   /**
    * 手上有哪些药和符。摆在牌底下，图在上、字在下，排法和战场上的快捷栏一致。
    *
@@ -138,6 +148,12 @@ export class HudCardPicker {
   private offers: HudCardOffer[] = [];
   /** 出场动画跑完才真正藏起来；这期间不再接受选择。 */
   private closing = 0;
+  /**
+   * 这一局已经抽过几轮。前几轮不上新招（见 CARD_OBTAIN_FROM）。
+   */
+  private round = 0;
+  /** 每一项属性牌这一局拿过几张。拿满就下架（见 STAT_CARD_CAP）。 */
+  private readonly statTaken = new Map<string, number>();
 
   /** 接上结算。不接也能弹、能点，只是不产生效果 —— 离线预览图就是这么用的。 */
   connect(hooks: HudCardHooks): void {
@@ -180,6 +196,17 @@ export class HudCardPicker {
     this.root.dataset.phase = 'in';
   }
 
+  /**
+   * 新的一局。轮次和属性牌的计数都清掉。
+   *
+   * 跟着 Hud.setGemsPerCycle 走 —— 那一句本来就是"换图了，灵石进度从头算"，和这里要清的
+   * 是同一件事。自己再开一个 reset 只会多一个要记得调的地方。
+   */
+  resetRun(): void {
+    this.round = 0;
+    this.statTaken.clear();
+  }
+
   /** 立刻收起，不走动画。菜单里关掉开关走这条。 */
   hide(): void {
     this.cancelClose();
@@ -207,8 +234,12 @@ export class HudCardPicker {
   choose(index: number): boolean {
     if (!this.open || this.closing || index < 0 || index >= this.offers.length) return false;
     const offer = this.offers[index];
-    if (offer.bonus) this.hooks?.onStatCard(offer.bonus);
-    else if (offer.skill && offer.obtain) this.hooks?.onObtainSkill(offer.skill);
+    this.round++;
+    if (offer.gold !== undefined) this.hooks?.onGoldCard(offer.gold);
+    else if (offer.bonus) {
+      this.statTaken.set(offer.key, (this.statTaken.get(offer.key) ?? 0) + 1);
+      this.hooks?.onStatCard(offer.bonus);
+    } else if (offer.skill && offer.obtain) this.hooks?.onObtainSkill(offer.skill);
     else if (offer.skill) this.hooks?.onUpgradeSkill(offer.skill);
     // 这一版没有效果可以结算，选中就只剩下收场。选中那张单独标一下，出场时的动作和
     // 另外两张不一样。
@@ -234,46 +265,93 @@ export class HudCardPicker {
   }
 
   /**
-   * 抽三张。
+   * 抽三张。货架上有三种东西，上架规则各不相同：
    *
-   * 技能牌只出这个角色**还没拿到**的主动技 —— 抽到一张自己早就在用的招是最扫兴的一种结果，
-   * 而且它和"技能要在游戏里获得"这件事直接矛盾。全拿到之后就只剩属性牌。
+   *   **属性牌** —— 每一项一局最多拿 STAT_CARD_CAP 张，拿满就下架。不封顶的话，
+   *   一局三十多张牌可以全砸在攻击力上，而那不是一个构筑，是一个乘法。
+   *
+   *   **获取牌**（这一局还没拿到的招）—— 前 CARD_OBTAIN_FROM 轮不上。开局只有一个
+   *   自动攻击技，第一张牌就塞一招新的进来的话，玩家手上立刻有两件没练过的东西。
+   *
+   *   **升级牌** —— 已经在用、还没满级的招。从第一轮就在。
+   *
+   * **只要还有技能牌，三格里就留一格给它。**
+   *
+   * 最要紧的是头两轮：那时货架上只有八张属性牌加一张自动攻击技的升级，不留格的话
+   * 那一张升级只有三成三的机会露面 —— 也就是说有三分之二的开局玩家根本没得选，
+   * 只能在三张属性牌里挑一张。而头两轮不上新招的全部意义就是"先把本命那一招推上去"。
+   * 留一格之后，每一轮都至少有一张招式牌。
+   *
+   * 什么都没了（招全拿全满、属性也封顶）就摆一张金币牌。只摆一张：这一轮已经没有选择了，
+   * 摆三张一模一样的牌只是把"没得选"写成了三遍。
    */
   private roll(): HudCardOffer[] {
-    const stats: HudCardOffer[] = STAT_CARDS.map((c) => {
-      const step = STAT_STEPS[Math.floor(Math.random() * STAT_STEPS.length)];
-      return {
-        key: c.key,
-        icon: c.icon,
-        name: c.name,
-        detail: c.detail(step),
-        bonus: { [c.key]: (step * (c.scale ?? 1)) / 100 } as StatBonus,
-      };
-    });
+    const stats: HudCardOffer[] = STAT_CARDS
+      .filter((c) => (this.statTaken.get(c.key) ?? 0) < STAT_CARD_CAP)
+      .map((c) => {
+        const step = STAT_STEPS[Math.floor(Math.random() * STAT_STEPS.length)];
+        return {
+          key: c.key,
+          icon: c.icon,
+          name: c.name,
+          detail: c.detail(step),
+          bonus: { [c.key]: (step * (c.scale ?? 1)) / 100 } as StatBonus,
+        };
+      });
     // 获取：这一局还没拿到的招。牌面上写清它是哪一类，那决定它会占哪一格。
-    const obtain: HudCardOffer[] = (this.hooks?.obtainableSkills() ?? []).map((id) => {
-      const skill = skillById(id);
-      return {
-        key: `get:${id}`,
-        icon: SKILL_ICONS[id],
-        name: skill.name,
-        detail: `${skill.note}\n获得【${SkillCategoryRules[skill.category].name}】`,
-        skill: id,
-        obtain: true,
-      };
-    });
+    const obtain: HudCardOffer[] = this.round < CARD_OBTAIN_FROM
+      ? []
+      : (this.hooks?.obtainableSkills() ?? []).map((id) => {
+        const skill = skillById(id);
+        return {
+          key: `get:${id}`,
+          icon: SKILL_ICONS[id],
+          name: skill.name,
+          detail: `${skill.note}
+获得【${SkillCategoryRules[skill.category].name}】`,
+          skill: id,
+          obtain: true,
+        };
+      });
     // 升级：已经在用、还没满级的招。牌面上写清现在几级、升到几级。
     const upgrade: HudCardOffer[] = (this.hooks?.upgradableSkills() ?? []).map((entry) => {
       const skill = skillById(entry.id);
+      // 伤害那一条是现算的：每级的增量是固定的，但它占当前值的比例逐级变小
+      // （一级升二级 +25%，四级升满级 +14%）。写死一个数就有四分之三的时候是假的。
+      const gain = Math.round((skillDamageScale(entry.level + 1) / skillDamageScale(entry.level) - 1) * 100);
+      const reach = Math.round(SKILL_LEVEL_REACH * 100);
       return {
         key: `up:${entry.id}`,
         icon: SKILL_ICONS[entry.id],
         name: skill.name,
-        detail: `${skill.note}\n${entry.level} 级 → ${entry.level + 1} 级（范围 +10%，耗蓝 -8%）`,
+        detail: `${skill.note}
+${entry.level} 级 → ${entry.level + 1} 级（伤害 +${gain}%，范围 +${reach}%）`,
         skill: entry.id,
       };
     });
-    return pick([...stats, ...obtain, ...upgrade], CARD_COUNT);
+
+    const skills = [...obtain, ...upgrade];
+    if (stats.length === 0 && skills.length === 0) return [this.goldOffer()];
+
+    const out: HudCardOffer[] = [];
+    const icons = new Set<string>();
+    // 先给技能牌留一格，剩下两格从全部货架里抽。
+    take(skills, 1, out, icons);
+    take([...stats, ...skills], CARD_COUNT, out, icons);
+    return out;
+  }
+
+  /** 什么都满了之后那一张。 */
+  private goldOffer(): HudCardOffer {
+    const gold = CARD_GOLD_AMOUNTS[Math.floor(Math.random() * CARD_GOLD_AMOUNTS.length)];
+    return {
+      key: `gold:${gold}`,
+      icon: HUD_ICON_URLS.coin,
+      name: '金币',
+      detail: `本局已经满配
+金币 +${gold}（带得走）`,
+      gold,
+    };
   }
 
   private createCard(index: number): HTMLButtonElement {

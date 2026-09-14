@@ -31,6 +31,7 @@ import {
   skillPassiveScale,
 } from '../data/balance';
 import { passiveById } from '../data/passives';
+import type { SkillId } from './skills';
 import { NEUTRAL_MODIFIER, type HeroDef, type MapModifier, type StatBonus, type UnitStats } from '../data/types';
 import type { ResolvedUnitKind } from '../data/types';
 import { spawnsThroughWave, type SpawnTemplate } from '../data/waves';
@@ -50,11 +51,13 @@ export function resolveHeroStats(
   hero: HeroDef,
   level: number,
   runBonus: StatBonus = {},
+  /** 手上那张护身技。四张谁都抽得到，所以它是参数而不是从角色表上读。 */
+  guard: SkillId | null = null,
   passiveLevel = 0,
 ): UnitStats {
   const grown = applyGrowth(hero.base, hero.growth, level);
   // 0 = 这一局还没抽到护身技。开局是没有的 —— 一局从一个自动攻击技加一双靴子起步。
-  const passive = passiveLevel >= 1 ? passiveById(hero.passive) : null;
+  const passive = guard && passiveLevel >= 1 ? passiveById(guard) : null;
   // 被动跟着**两个**等级长，两者管的不是一回事：
   //
   //   角色等级   跨局的、练出来的。一个一级时 +12% 的被动到三十级还是 +12% 的话，练级越久

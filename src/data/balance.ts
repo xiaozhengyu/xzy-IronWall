@@ -210,7 +210,32 @@ export const GEMS_PER_SPAWN = 1.12;
  * 往上走的门槛把这条曲线掰平：开局那一波能抽两三张，往后每张都更贵一点，而三十二张抽完的
  * 时刻**一点没动**（base 是按累计值倒解出来的，见 gemsPerCard）。
  */
-export const CARD_COST_GROWTH = 0.06;
+export const CARD_COST_GROWTH = 0.12;
+
+/**
+ * 前几轮不出"获取新招"的牌，只出属性牌和手上那招的升级。
+ *
+ * 开局只有一个自动攻击技。第一张牌就把一招新的塞给玩家，他手上立刻有两件没练过的东西，
+ * 而两件都是一级。先把本命那一招推上两级，“我变强了”才有一个能比的基准。
+ */
+export const CARD_OBTAIN_FROM = 2;
+
+/**
+ * 同一项属性牌一局最多拿几张。拿满了就不再上货架。
+ *
+ * 不封顶的话，一局三十多张牌里可以全砸在攻击力上 —— 而那不是一个构筑，是一个乘法。
+ * 封到 5 是因为八项属性 × 5 = 40，比一局能抽的张数还多一截：封顶只掘掉“全堆一项”，
+ * 不会把牌库提前抽干。
+ */
+export const STAT_CARD_CAP = 5;
+
+/**
+ * 什么都满了之后那张金币牌给多少。
+ *
+ * 只摆一张：这一轮已经没有选择了，摆三张一模一样的牌只是把“没得选”写成了三遍。
+ * 金币是唯一带得走的东西，所以满配之后再收的灵石不再活该白收。
+ */
+export const CARD_GOLD_AMOUNTS = [30, 50] as const;
 
 /** 抽满 picks 张牌一共要多少个 base。∑(1 + growth × k)，k 从 0 到 picks-1。 */
 export const cardCostTotalUnits = (picks: number): number =>

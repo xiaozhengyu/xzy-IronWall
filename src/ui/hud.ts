@@ -337,6 +337,8 @@ export class Hud {
     this.gemFloor = 0;
     this.gemNext = cardCost(next, 0);
     this.gemProgress.setValue(0, this.gemNext, false);
+    // 牌库那边也是一局一算：抽了几轮、哪几项属性封顶了。和这一句本来就是同一件事。
+    this.cards.resetRun();
   }
 
   draw(field: Field, battle: Battle, camera: Camera): void {

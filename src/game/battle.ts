@@ -1407,7 +1407,7 @@ export class Battle {
     this.player.def = unitAppearance(hero.appearance);
     this.presetIndex = PlayerPresets.findIndex((preset) => preset.id === hero.appearance);
     if (this.presetIndex < 0) this.presetIndex = 0;
-    this.skillLoadout.startRun(hero.attackSkill, hero.passiveAtStart ? hero.passive : null);
+    this.skillLoadout.startRun(hero.attackSkill, hero.startGuard ?? null);
     this.applyPlayerStats();
     this.player.hp = this.player.maxHp;
     this.currentMp = this.player.stats.maxMp;
@@ -1422,7 +1422,7 @@ export class Battle {
   upgradeSkill(id: SkillId): boolean {
     if (!this.skillLoadout.raiseLevel(id)) return false;
     // 护身技那一包加成是算进属性里的，升一级得当场重算一遍。
-    if (id === this.hero.passive) this.refreshPassiveStats();
+    if (skillById(id).category === 'guard') this.refreshPassiveStats();
     return true;
   }
 
@@ -1438,7 +1438,12 @@ export class Battle {
    */
   obtainableSkills(): SkillId[] {
     const slotsFull = this.skillLoadout.activeSkillSlots.every((id) => id !== null);
-    return runSkillPool(this.hero.passive).filter((id) => {
+    // 已经戴着一张护身技了就不再上护身牌。护身只有一格（SkillCategoryRules 的 guard），
+    // 再抽一张是把手上那张连同它练出来的等级一起换掉 —— 牌面上写的是"获得"，而实际发生的
+    // 是一次没写在牌上的损失。哪一张先露面就是哪一张，这就是护身那一格全部的选择。
+    const hasGuard = this.skillLoadout.guardSkill !== null;
+    return runSkillPool().filter((id) => {
+      if (hasGuard && skillById(id).category === 'guard') return false;
       if (this.skillLoadout.isEquipped(id)) return false;
       return !(slotsFull && skillById(id).category === 'active');
     });
@@ -1446,7 +1451,7 @@ export class Battle {
 
   /** 拿到一招。抽牌选了"获取"就走这条路，一局之内有效。 */
   obtainSkill(id: SkillId): boolean {
-    if (!runSkillPool(this.hero.passive).includes(id)) return false;
+    if (!runSkillPool().includes(id)) return false;
     if (!this.skillLoadout.setEquipped(id, true)) return false;
     // 护身技那一包加成是算进属性里的，拿到手当场重算一遍。
     if (skillById(id).category === 'guard') this.refreshPassiveStats();
@@ -1675,14 +1680,14 @@ export class Battle {
 
   /** 重算玩家属性并挂到 Character 上。角色、等级、局内加成、调试倍率任何一个变了都要跑一次。 */
   private applyPlayerStats(): void {
+    const guard = this.skillLoadout.guardSkill;
     const stats = resolveHeroStats(
       this.hero,
       this.heroLevel,
       this.mergedBonus(),
-      // 没抽到护身技就传 0，那一包加成整个不算。
-      this.skillLoadout.guardSkill === this.hero.passive
-        ? this.skillLoadout.level(this.hero.passive)
-        : 0,
+      // 手上那张护身技是哪一张、练到几级。没有就传 null，那一包加成整个不算。
+      guard,
+      guard ? this.skillLoadout.level(guard) : 0,
     );
     this.player.stats = stats;
     this.player.walkSpeed = stats.moveSpeed;
@@ -1960,7 +1965,7 @@ export class Battle {
     this.resetSkillRuntime();
     // 重开就是重新开一局：抽到的招、练出来的等级、拿到的属性卡全部清空，回到"一个自动攻击
     // 技加一双靴子"。技能和灵石同生共死，留着上一局堆出来的强度就不是重开了。
-    this.skillLoadout.startRun(this.hero.attackSkill, this.hero.passiveAtStart ? this.hero.passive : null);
+    this.skillLoadout.startRun(this.hero.attackSkill, this.hero.startGuard ?? null);
     this.runBonus = {};
     this.timedBonuses.length = 0;
     this.regens.length = 0;

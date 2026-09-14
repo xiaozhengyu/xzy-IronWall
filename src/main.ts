@@ -1309,10 +1309,10 @@ const setup = new SetupScreen(
       },
       stats: (hero) => resolveHeroStats(hero, profile.level(hero.id)),
       // 技能条上摆的是**开局真的握在手里的那几张**：自动攻击技、钉在 Shift 上的疾走，外加
-      // 骑士那张开局就戴着的护身技（见 HeroDef.passiveAtStart）。别的招都要进去之后抽牌拿，
+      // 骑士那张开局就戴着的护身技（见 HeroDef.startGuard）。别的招都要进去之后抽牌拿，
       // 摆在选人界面上会让人以为带着就能上场。
-      skills: (hero) => (hero.passiveAtStart
-        ? [hero.attackSkill, SPRINT_SKILL, hero.passive]
+      skills: (hero) => (hero.startGuard
+        ? [hero.attackSkill, SPRINT_SKILL, hero.startGuard]
         : [hero.attackSkill, SPRINT_SKILL]),
     },
     maps: GameMaps,
@@ -1457,6 +1457,14 @@ hud.cards.connect({
   onStatCard: (bonus) => battle.addRunBonus(bonus),
   onObtainSkill: (skill) => battle.obtainSkill(skill),
   onUpgradeSkill: (skill) => battle.upgradeSkill(skill),
+  /*
+   * 金币牌直接进家底，不等结算。
+   *
+   * 和小兵身上掉的金币不同：那些要先被捡起来、计在 battle.collectedCoins 上，打完这一局才
+   * 结进存档（settleRun）—— 因为它们是“这一局收了多少”的一部分，结算上要写。而这一张牌
+   * 不是战果，是一个兑换：满配之后再收的灵石本来就无处可花。
+   */
+  onGoldCard: (amount) => profile.addCoins(amount),
   heldItems: () => heldItems(),
 });
 

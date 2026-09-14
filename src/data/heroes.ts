@@ -96,7 +96,6 @@ export const Heroes: readonly HeroDef[] = [
       pickupRange: 0.8,
     },
     attackSkill: 'sweep',
-    passive: 'ironBody',
   },
   {
     id: 'knight',
@@ -119,11 +118,9 @@ export const Heroes: readonly HeroDef[] = [
       pickupRange: 0.8,
     },
     attackSkill: 'spin',
-    passive: 'bulwark',
-    // 四个人里只有他开局就戴着护身技，见 HeroDef.passiveAtStart。他是唯一一个"扛得住才打得
-    // 动"的角色，而开局那几波恰恰是他最扛不住的时候 —— 磐石那一包防御和血上限，加上绕着他
-    // 转的那颗流星，正好补在这儿。
-    passiveAtStart: true,
+    // 四人里只有他开局就戴着护身技，见 HeroDef.startGuard。他是唯一一个"扛得住才打得
+    // 出来"的角色，而护身技现在是谁都能抽的，所以这一行只是把他的开局提前到手。
+    startGuard: 'bulwark',
   },
   {
     id: 'swordsman',
@@ -146,7 +143,6 @@ export const Heroes: readonly HeroDef[] = [
       pickupRange: 1,
     },
     attackSkill: 'wave',
-    passive: 'keenEdge',
   },
   {
     id: 'rider',
@@ -174,7 +170,6 @@ export const Heroes: readonly HeroDef[] = [
       pickupRange: 1.2,
     },
     attackSkill: 'sweep',
-    passive: 'swiftStrike',
   },
 ];
 

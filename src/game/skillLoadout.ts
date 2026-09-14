@@ -53,18 +53,21 @@ const levelTable = (): Record<SkillId, number> =>
  * 在 skills.ts 登记 category 与 cooldown；只在出现全新结算形状时才需要扩展 Battle.castSkill。
  */
 /**
- * 一局之内能抽到的招，按类别分好。自动攻击技和疾走不在里面 —— 那两样开局就带着。
+ * 一局之内能抽到的招。自动攻击技和疾走不在里面 —— 那两样开局就带着。
  *
- * 从 Skills 表里现算而不是手写一份：加一个新的主动技或者发射技，牌库自己就长出来了，不用
- * 再记得回来改一张清单。护身技是例外，一人一张，由角色表指定（HeroDef.passive）。
+ * 从 Skills 表里现算而不是手写一份：加一个新的招，牌库自己就长出来了，不用再记得回来改
+ * 一张清单。
+ *
+ * **护身技也在里面，四张谁都抽得到。** 以前是一人一张、写死在角色表上的，于是用双锤打就
+ * 永远看不到磐石 —— 而它们本来就只是四包不同的属性加成（见 data/passives.ts），没有任何理由
+ * 挂在某一个人名下。骑士仍然开局就戴着磐石，那是给他补的一块底（见 HeroDef.startGuard），
+ * 不是对牌库的限制。
  */
-export function runSkillPool(passive: SkillId | null): SkillId[] {
-  const pool = Skills
+export function runSkillPool(): SkillId[] {
+  return Skills
     .filter((skill) => skill.id !== SPRINT_SKILL)
-    .filter((skill) => skill.category === 'active' || skill.category === 'projectile')
+    .filter((skill) => skill.category !== 'attack')
     .map((skill) => skill.id);
-  if (passive) pool.push(passive);
-  return pool;
 }
 
 /**
@@ -218,7 +221,7 @@ export class SkillLoadout {
    * @param attack 这个角色的自动攻击技。**自动攻击那一栏不许为空**（见 setEquipped），它是
    *               玩家手上唯一一件一直能用的东西。
    * @param guard  开局就戴着的护身技，没有就传 null。目前只有骑士有一张，见
-   *               HeroDef.passiveAtStart。
+   *               HeroDef.startGuard。
    */
   startRun(attack: SkillId, guard: SkillId | null = null): void {
     this.projectileSkills.clear();
