@@ -2031,6 +2031,10 @@ export class Battle {
     this.damageTaken = 0;
     this.hurtPulse = 0;
     this.drainedHp = 0;
+    // 尚未到飘字时机的事件也属于上一局，不能在新局重新生成。
+    this.tookHp = 0;
+    this.spentMp = 0;
+    this.floatSince = 0;
     this.earnedExp = 0;
     this.defeated = false;
     this.outcome = 'none';

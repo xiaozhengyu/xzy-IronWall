@@ -133,6 +133,12 @@ export class HudCooldownPanel {
     this.updateEntry(view, duration, duration);
   }
 
+  clearEffects(): void {
+    this.effects.clear();
+    this.effectContent.replaceChildren();
+    this.effectContent.hidden = true;
+  }
+
   update(dt: number): void {
     const elapsed = Number.isFinite(dt) ? Math.max(0, dt) : 0;
     if (elapsed <= 0) return;

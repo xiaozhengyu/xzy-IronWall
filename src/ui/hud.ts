@@ -330,6 +330,10 @@ export class Hud {
    * 已经打了一会儿。
    */
   setGemsPerCycle(gems: number): void {
+    this.cardsPending = false;
+    this.cards.hide();
+    this.hurtFlash.clear();
+    this.cooldownInfo.clearEffects();
     const next = Number.isFinite(gems) ? Math.max(1, Math.floor(gems)) : this.gemsPerCycle;
     this.gemsPerCycle = next;
     this.lastCollectedGems = 0;
