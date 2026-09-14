@@ -79,12 +79,95 @@
   outline: none;
 }
 
+/*
+ * 图那一格。**两种牌长得不一样。**
+ *
+ * 属性牌还是原来那样：一个居中的大图标。"攻击力 +15%" 没有形状可言，给它配一个台子
+ * 只会摆出一个站着不动的人，那比什么都不摆更坏。
+ *
+ * 技能牌是一个台子：这个角色正在放这一招（见 skillFigure.ts），图标缩到左上角当角标。
+ * 先把图标摧在台子中间试过，不行：符篓图是不透明的一大块，正好把人盖住。
+ */
+.hud-card-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 128px;
+  height: 128px;
+}
+
+/*
+ * 台子那一格比属性牌那一格高。
+ *
+ * 骠骑将军骑马，从马蹄到盔顶比步兵高出六个多世界单位 —— 方格子里他的头正好被切掉。
+ * 把格子变高而不是把人缩小：四个角色点过去，人必须是同一个大小。
+ */
+.hud-card-stage--figure {
+  width: 132px;
+  height: 159px;
+}
+
 .hud-card-icon {
   display: block;
   width: 128px;
   height: 128px;
   object-fit: contain;
   filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.75));
+}
+
+.hud-card-stage--figure .hud-card-icon {
+  position: absolute;
+  top: -6px;
+  left: -10px;
+  width: 46px;
+  height: 46px;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.85));
+}
+
+/* 台子那块画布。像素图，放大时必须最近邻 —— 平滑过的人在一屏硬像素里一眼就是外来的。 */
+.skill-figure {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+/*
+ * 角标。压在牌的右上角，跨在边框上 —— 牌面里面已经排满了，而这一个要的是
+ * "扫一眼三张牌就知道哪一张是新的"，它得在轮廓上。
+ */
+.hud-card-tag {
+  position: absolute;
+  top: -10px;
+  right: -8px;
+  min-width: 22px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-size: calc(10px * var(--hud-font-scale, 1));
+  line-height: 1.3;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+
+.hud-card-tag[hidden] {
+  display: none;
+}
+
+/* 新招：青。这一局里青一直是"没见过的东西"（灵石、进度条）。 */
+.hud-card-tag--new {
+  color: #05202a;
+  background: #8bfaff;
+  box-shadow: 0 0 10px rgba(139, 250, 255, 0.45);
+}
+
+/* 升级：金。和牌框、牌名同一套颜色 —— 它说的是"手上那一招又好了一点"。 */
+.hud-card-tag--up {
+  color: #2a1d05;
+  background: #f4ce72;
+  font-size: calc(12px * var(--hud-font-scale, 1));
+  box-shadow: 0 0 10px rgba(244, 206, 114, 0.45);
 }
 
 .hud-card-name {

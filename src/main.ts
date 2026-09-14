@@ -1532,6 +1532,9 @@ menu.hide();
  * 走的只有金币和角色等级，那两样在存档里；这一局堆出来的强度打完就没，和灵石一样。
  */
 hud.cards.connect({
+  // 牌面那个台子要画的是现在在打的人，不是选人界面上选中的那个 —— 两者在一局里总是同一个，
+  // 但读 battle 才是对的：这一层回答的是“这一局是谁”。
+  hero: () => battle.heroDef,
   obtainableSkills: () => battle.obtainableSkills(),
   upgradableSkills: () => battle.upgradableSkills().map((id) => ({
     id,

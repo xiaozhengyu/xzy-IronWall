@@ -2,6 +2,8 @@ import { SkillCategoryRules, skillById, type SkillId } from '../game/skills';
 import type { StatBonus } from '../data/types';
 import { HUD_ICON_URLS } from './hudIcons';
 import { SKILL_ICONS } from './skillIcons';
+import { SkillFigure } from './skillFigure';
+import type { HeroDef } from '../data/types';
 import { HudFrame } from './hudFrame';
 import { currentItems } from './currentItems';
 import type { ItemStripEntry } from './itemStrip';
@@ -118,6 +120,8 @@ export interface HudCardHooks {
   obtainableSkills(): SkillId[];
   /** 这一局还能升级的技能：已经拿到了、而且没满级。 */
   upgradableSkills(): { id: SkillId; level: number; max: number }[];
+  /** 现在是谁在打。牌面上那个台子要画的就是他 —— 四个角色拿同一招长得不一样。 */
+  hero(): HeroDef;
   /** 玩家选了一张属性牌。 */
   onStatCard(bonus: StatBonus): void;
   /** 玩家选了一张"获取"牌。 */
@@ -154,6 +158,15 @@ export class HudCardPicker {
   private round = 0;
   /** 每一项属性牌这一局拿过几张。拿满就下架（见 STAT_CARD_CAP）。 */
   private readonly statTaken = new Map<string, number>();
+  /**
+   * 这一轮牌上那几个台子。开着的时候由一个 rAF 推，收牌时停。
+   *
+   * 自己起一个循环而不是搭主循环：弹牌那一刻世界是停住的（main 里直接 return），
+   * 而这几个台子恰恰要在那段时间里动。
+   */
+  private readonly figures: SkillFigure[] = [];
+  private raf = 0;
+  private lastFrame = 0;
 
   /** 接上结算。不接也能弹、能点，只是不产生效果 —— 离线预览图就是这么用的。 */
   connect(hooks: HudCardHooks): void {
@@ -184,6 +197,7 @@ export class HudCardPicker {
   show(): void {
     if (this.open) return;
     this.cancelClose();
+    this.figures.length = 0;
     this.offers = this.roll();
     for (let i = 0; i < this.cards.length; i++) this.fill(this.cards[i], this.offers[i]);
     // 和结算那块共用同一个节点，所以两处的位置天然重合（见 currentItems.ts）。
@@ -194,6 +208,28 @@ export class HudCardPicker {
     this.root.dataset.phase = '';
     void this.root.offsetWidth;
     this.root.dataset.phase = 'in';
+    this.startFigures();
+  }
+
+  /** 台子的循环。牌一开就跑，一收就停 —— 没牌的时候一帧都不该占。 */
+  private startFigures(): void {
+    this.stopFigures();
+    if (this.figures.length === 0) return;
+    this.lastFrame = performance.now();
+    const tick = (now: number): void => {
+      // 夹一下：切后台再回来会攒出一个很大的步长，那会把整段动作一帧跳完。
+      const dt = Math.min((now - this.lastFrame) / 1000, 1 / 20);
+      this.lastFrame = now;
+      for (const figure of this.figures) figure.step(dt);
+      this.raf = requestAnimationFrame(tick);
+    };
+    this.raf = requestAnimationFrame(tick);
+  }
+
+  private stopFigures(): void {
+    if (!this.raf) return;
+    cancelAnimationFrame(this.raf);
+    this.raf = 0;
   }
 
   /**
@@ -209,6 +245,7 @@ export class HudCardPicker {
 
   /** 立刻收起，不走动画。菜单里关掉开关走这条。 */
   hide(): void {
+    this.stopFigures();
     this.cancelClose();
     this.blurCards();
     this.root.hidden = true;
@@ -251,6 +288,7 @@ export class HudCardPicker {
     this.closing = setTimeout(() => {
       this.closing = 0;
       this.blurCards();
+      this.stopFigures();
       this.root.hidden = true;
       this.root.dataset.phase = '';
       currentItems.hide('cards');
@@ -359,16 +397,31 @@ ${entry.level} 级 → ${entry.level + 1} 级（伤害 +${gain}%，范围 +${rea
     card.type = 'button';
     card.className = 'hud-card';
 
+    /*
+     * 图那一格现在是一个**台子**：底下是技能演示（打到哪儿），图标压在上面。
+     *
+     * 两样都要：图标是这一招的**身份**（快捷栏、选人界面、商店里认的都是它），
+     * 而演示回答的是第一次看到它的人真正要问的那一件事。只留一样都会丢掉另一半。
+     */
+    const stage = document.createElement('div');
+    stage.className = 'hud-card-stage';
     const icon = document.createElement('img');
     icon.className = 'hud-card-icon';
     icon.alt = '';
     icon.draggable = false;
+    stage.appendChild(icon);
+
     const name = document.createElement('span');
     name.className = 'hud-text hud-text--pixel hud-card-name';
     const detail = document.createElement('span');
     detail.className = 'hud-text hud-text--pixel hud-card-detail';
 
-    card.append(icon, name, detail);
+    // 角标：新招写"NEW"，升级画一个向上的箭头。属性牌两样都没有。
+    const tag = document.createElement('span');
+    tag.className = 'hud-text hud-text--pixel hud-card-tag';
+    tag.hidden = true;
+
+    card.append(stage, name, detail, tag);
     card.addEventListener('click', () => this.choose(index));
     return card;
   }
@@ -377,6 +430,29 @@ ${entry.level} 级 → ${entry.level + 1} 级（伤害 +${gain}%，范围 +${rea
     card.hidden = !offer;
     if (!offer) return;
     (card.querySelector('.hud-card-icon') as HTMLImageElement).src = offer.icon;
+
+    /*
+     * 技能牌底下铺一层演示（见 skillDemo.ts），属性牌没有 —— "攻击力 +15%" 没有形状可言。
+     *
+     * 每次重建而不是缓存：一轮才三张牌，而同一格上一轮是什么招下一轮就不是了，
+     * 留着的话还得判一遍"还是不是同一招"。
+     */
+    const stage = card.querySelector('.hud-card-stage') as HTMLElement;
+    stage.querySelector('.skill-figure')?.remove();
+    stage.classList.toggle('hud-card-stage--figure', offer.skill !== undefined);
+    if (offer.skill && this.hooks) {
+      const figure = new SkillFigure(this.hooks.hero(), offer.skill);
+      stage.insertBefore(figure.canvas, stage.firstChild);
+      this.figures.push(figure);
+    }
+
+    // 角标。新招写 NEW，升级画箭头 —— 两者在牌面上其实很像，而它们是两件完全不同的事。
+    const tag = card.querySelector('.hud-card-tag') as HTMLElement;
+    const kind = offer.skill ? (offer.obtain ? 'new' : 'up') : '';
+    tag.hidden = kind === '';
+    tag.textContent = kind === 'new' ? 'NEW' : kind === 'up' ? '↑' : '';
+    tag.classList.toggle('hud-card-tag--new', kind === 'new');
+    tag.classList.toggle('hud-card-tag--up', kind === 'up');
     (card.querySelector('.hud-card-name') as HTMLElement).textContent = offer.name;
     // 说明里的换行是内容自己带的（技能牌是"招式说明 + 等级 +1"两行）。
     const detail = card.querySelector('.hud-card-detail') as HTMLElement;

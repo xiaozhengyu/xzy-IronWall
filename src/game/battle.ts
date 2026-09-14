@@ -1411,6 +1411,11 @@ export class Battle {
     return Number.isFinite(need) ? need : 1;
   }
 
+  /** 这一局在打的那个角色。三选一那边要拿它画牌面上的台子。 */
+  get heroDef(): HeroDef {
+    return this.hero;
+  }
+
   get heroId(): string {
     return this.hero.id;
   }
