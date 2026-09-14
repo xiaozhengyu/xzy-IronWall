@@ -76,7 +76,8 @@
 
 .setup-body {
   flex: 1;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 30fr) minmax(0, 44fr) minmax(0, 26fr);
   gap: 10px;
   min-height: 0;
   padding: 10px;
@@ -99,15 +100,15 @@
 }
 
 .setup-col.l {
-  width: 30%;
+  width: auto;
 }
 
 .setup-col.m {
-  width: 44%;
+  width: auto;
 }
 
 .setup-col.r {
-  width: 26%;
+  width: auto;
 }
 
 /* ---------------------------------------------------------------- 左：带谁去 */

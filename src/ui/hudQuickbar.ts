@@ -82,6 +82,8 @@ const ACTIVE_SKILL_PRESENTATION: Partial<Record<SkillId, { name: HudTextKey }>> 
   lunge: { name: 'skillLunge' },
   aegis: { name: 'skillAegis' },
   dharma: { name: 'skillDharma' },
+  mend: { name: 'skillMend' },
+  berserk: { name: 'skillBerserk' },
   // 疾走固定占最后那一格（Shift）。一双靴子，和别的招那几张符箓一眼就分得开 —— 它本来也
   // 不是一招，是走位。
   sprint: { name: 'skillSprint' },

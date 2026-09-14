@@ -420,6 +420,7 @@ export class DamageNumbers {
   private readonly offY = new Float32Array(CAPACITY);
 
   private count = 0;
+  private followDelay = 0;
 
   /** 场上还飘着几个。 */
   get alive(): number {
@@ -428,6 +429,7 @@ export class DamageNumbers {
 
   clear(): void {
     this.count = 0;
+    this.followDelay = 0;
   }
 
   /**
@@ -452,7 +454,9 @@ export class DamageNumbers {
     const style = options.style ?? (crit ? 'crit' : 'damage');
     this.z[i] = options.z ?? (STYLE_INDEX[style] >= STYLE_INDEX.heal ? HEAD_Z + 6 : HEAD_Z);
     this.drift[i] = (Math.random() - 0.5) * 2 * DRIFT;
-    this.age[i] = 0;
+    // Schedule player events in order instead of displaying them on the same frame.
+    this.age[i] = options.follow ? -this.followDelay : 0;
+    if (options.follow) this.followDelay += 0.32;
     this.life[i] = FADE_IN + LIFE * (crit ? 1.25 : 1) * (0.9 + Math.random() * 0.2);
     this.value[i] = Math.max(0, Math.round(value));
     this.crit[i] = STYLE_INDEX[style];
@@ -460,15 +464,16 @@ export class DamageNumbers {
     this.sign[i] = sign < 0 ? 255 : sign;
     this.label[i] = options.label ?? null;
     this.follow[i] = options.follow ? 1 : 0;
-    // 跟随的那些错开一点点再出来：同一刻回血又回蓝，两个数字叠在一起就只看得见一个。
-    this.offX[i] = options.follow ? (Math.random() - 0.5) * 9 : 0;
-    this.offY[i] = options.follow ? (Math.random() - 0.5) * 5 : 0;
+    // 时间排队代替随机偏移，每条事件从同一个位置依次升起。
+    this.offX[i] = 0;
+    this.offY[i] = 0;
   }
 
   /**
    * @param anchorX/anchorY 玩家这一帧在哪儿。带 follow 的数字每帧重新挂到他身上。
    */
   update(dt: number, anchorX = 0, anchorY = 0): void {
+    this.followDelay = Math.max(0, this.followDelay - dt);
     for (let i = this.count - 1; i >= 0; i--) {
       this.age[i] += dt;
       if (this.age[i] >= this.life[i]) {
@@ -512,6 +517,7 @@ export class DamageNumbers {
 
     for (let i = 0; i < this.count; i++) {
       const age = this.age[i];
+      if (age < 0) continue;
       const life = this.life[i];
       const t = age / life;
       // 上飘从淡入结束才开始算 —— 淡入这一段人还在飞，数字定在原地浮出来。

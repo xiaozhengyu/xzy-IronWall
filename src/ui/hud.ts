@@ -423,12 +423,17 @@ export class Hud {
       }
       this.gemProgress.setValue(total - this.gemFloor, this.gemNext - this.gemFloor,
         total > this.lastCollectedGems && !popped);
-      if (this.cardsEnabled && popped) this.cardsPending = true;
+      if (this.cardsEnabled && popped && battle.player.alive) this.cardsPending = true;
       this.lastCollectedGems = total;
     }
     // 攻下的牌先记着，等手里那招放完再弹（见 Battle.sustaining）。这一句在收灵石那个
     // 分支**外面**：欠着的牌要等的是松手，而松手那一帧未必恰好又收到一颗灵石。
-    if (this.cardsPending && this.cardsEnabled && !battle.sustaining) {
+    // 死亡当帧可能仍收到灵石，或恰好结束持续施法；丢弃待选牌，让倒地和结算继续。
+    if (!battle.player.alive) {
+      this.cardsPending = false;
+      if (this.cards.open) this.cards.hide();
+    }
+    if (this.cardsPending && this.cardsEnabled && battle.player.alive && !battle.sustaining) {
       this.cardsPending = false;
       this.cards.show();
     }

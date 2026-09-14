@@ -13,6 +13,7 @@ import {
   SKY_BLADE_LENGTH, drawSkyBlade, heavenSplitBlade, skyArrowBlade,
 } from '../effects/skyBlade';
 import { PLAYER_RUN_SPEED } from '../game/battle';
+import { RUN_MULTIPLIER } from '../data/balance';
 import {
   BERSERK_HP_DRAIN, LIFESTEAL_PER_LEVEL, MEND_HP_PER_TICK, ORB_ORBIT_REACH, ORB_SPIN,
   SKILL_DAMAGE_PER_POWER,
@@ -72,6 +73,14 @@ export interface DemoStage {
   readonly reach: number;
   /** 画布尺寸，缓冲像素。穿云箭要知道屏幕顶在哪儿才飞得出去。 */
   readonly view: { readonly width: number; readonly height: number };
+  /**
+   * 人此刻站在**地面**坐标的哪一点。
+   *
+   * 人钉在画布正中不动，动的是脚下那块地（见 drawStageTile），所以这个数就是他走过的路。
+   * 弧、圈这些**落在地上就不动了**的东西按它下点：会跑的招（突进）冲出去之后，收招那一圈
+   * 该炸在他现在站的地方，不是他起跑的地方。
+   */
+  readonly here: Vec2;
   /** 脚下的地往后流 dist 个世界单位 —— 等于人往前走了这么远。人自己不挪窝。 */
   travel(dist: number): void;
 }
@@ -213,15 +222,27 @@ function ticked(age: number, dt: number): boolean {
   return Math.floor(age / REGEN_TICK) !== Math.floor((age - dt) / REGEN_TICK);
 }
 
-/*
- * 突进冲多快、冲多久。
+/**
+ * 突进在台子上冲多快。
  *
- * 速度**不是**技能表里那 8.2 倍奔跑速度。那个数配的是一整张地图：一下冲出去一百多个世界
- * 单位，而这块地半径只有九个多 —— 草丛得在 0.22 秒里卷十一圈，出来是一片频闪，不是冲刺。
- * 3.2 倍正好是步态本身的上限（见 animator 里那条夹子），腿和地这才是同一个速度。
+ * **不是**场上那个速度。场上一下冲一百多个世界单位、每秒四百九，而这里人是钉着的、动的是
+ * 脚下那块地：照搬的话草丛每秒卷十几圈，出来是一片频闪，读不出是在冲还是画面坏了。3.2 倍
+ * 奔跑速度正好是步态本身的上限（见 Character 的 MAX_GAIT_PACE），腿和地这才是同一个速度。
+ *
+ * 牌面至少跑 1.4 秒，让步态和地面流动都看得清；实战的速度、距离和时长不变。
  */
 const DASH_SPEED = PLAYER_RUN_SPEED * 3.2;
-const DASH_TIME = skillById('lunge').duration;
+
+/**
+ * 这一招真正冲出去多远，世界单位。和 Battle 的 castSkill 是同一条式子。
+ *
+ * 距离**不跟着 STAGE_SQUEEZE 缩**：那个数管的是"范围放不放得进画布"，而冲出去多远是靠地面
+ * 流动表达的，地是卷回来的，没有边。缩了只会把"一下跨过大半个屏幕"说成"往前挪了一步"。
+ */
+const dashDistance = (stage: DemoStage): number => {
+  const skill = skillById('lunge');
+  return stage.stats.moveSpeed * RUN_MULTIPLIER * skill.reach * skill.duration;
+};
 
 /** 金钟罩在台子上顶多久，以及最后多久开始急闪（场上那条 AEGIS_WARN 按台子的节奏缩过）。 */
 const AEGIS_HOLD = 1.5;
@@ -261,37 +282,22 @@ const DEMOS: Partial<Record<SkillId, SkillDemo>> = {
    * 时脚下炸开的那一圈。少了这两样，牌上演的其实还是破空。
    */
   lunge: {
-    loop: 1.9,
+    loop: 3.2,
     cast: CAST_AT,
-    begin(stage) {
-      const { actor } = stage;
-      const from = weaponImpactPoint(actor.pose, actor.def, 0, 0, actor.facing);
-      // 一道窄而急的前推弧，跟着人一起冲出去。长度按**真正冲出去的距离**给（场上也是这么
-      // 写的）—— 突进那一条 skill.reach 是"冲刺是奔跑的几倍"，不是距离。
-      stage.effects.spawn(from.x, from.y, actor.facing, {
-        span: 1.1,
-        from: 2,
-        to: DASH_SPEED * DASH_TIME * 0.62,
-        weight: STAGE_ARC_WEIGHT * 0.9,
-        life: 0.42,
-        overhead: true,
-        style: 'surge',
-        sparks: 0,
-        flash: STAGE_ARC_FLASH,
-        tint: rgb(255, 232, 190),
-      });
-    },
     update(stage, age, dt) {
       if (age < 0) return;
-      if (age < DASH_TIME) {
+      const dashTime = Math.max(1.4, dashDistance(stage) / DASH_SPEED);
+      if (age < dashTime) {
         // 腿和地喂的是同一个数：speed 进步态，travel 让地倒流。差开的话人是在冰上滑。
         stage.actor.speed = DASH_SPEED;
         stage.travel(DASH_SPEED * dt);
         return;
       }
       // 冲到头那一帧收招：原地一圈，把走廊两侧漏掉的人一起带走。
-      if (age - dt < DASH_TIME) {
-        stageRing(stage, 0, 0, stage.range * skillById('lunge').finishRing, 'ring', rgb(255, 214, 124));
+      // 炸在他**现在**站的地方（stage.here），不是起跑那一点 —— 中间隔着整整一段冲刺。
+      if (age - dt < dashTime) {
+        const { x, y } = stage.here;
+        stageRing(stage, x, y, stage.range * skillById('lunge').finishRing, 'ring', rgb(255, 214, 124));
       }
     },
   },
@@ -691,9 +697,24 @@ export class SkillStage implements DemoStage {
     this.floats.update(dt, 0, 0);
   }
 
+  /** 人此刻在地面坐标的哪一点 —— 人不动，走过的路全记在 scroll 上。 */
+  get here(): Vec2 {
+    return v2(this.scrollX, this.scrollY);
+  }
+
   /** 地、人、弧，再加这一招自己那一层。 */
   draw(shapes: ShapeBatch, at: Vec2, grain: number): void {
-    drawFigureStage(shapes, this.actor, at, grain, this.scrollX, this.scrollY, TILE_ZOOM, this.effects);
+    // 弧不进 drawFigureStage（最后那个参数给 null），自己画 —— 因为它要的镜头和人不一样。
+    drawFigureStage(shapes, this.actor, at, grain, this.scrollX, this.scrollY, TILE_ZOOM, null);
+    /*
+     * 弧画在**地面**坐标里：镜头跟着人走（scroll 就是他走过的路），所以弧一落地就留在原地，
+     * 人跑过去它就往后退。
+     *
+     * 上一版镜头传的是 (0, 0)，也就是弧钉在人身上：突进时人在"跑"、弧却贴着他一起走，读作
+     * 一道从他身上推出去往前飞的波 —— 那是破空。不会动的招（横扫、回旋……）scroll 一直是 0，
+     * 这两种画法对它们是同一回事。
+     */
+    this.effects.draw(shapes, this.scrollX, this.scrollY, at.x, at.y, grain);
     // 罩子、法相、飞剑、流星和人进同一个批次，所以谁压谁仍然由深度说了算。
     this.demo.draw?.(shapes, this, at, grain, this.age);
     // 飘字压在所有东西之上 —— 读数被谁挡住都等于没有（见 damageNumbers.ts 的 DEPTH_EDGE）。

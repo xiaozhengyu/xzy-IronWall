@@ -62,8 +62,6 @@ export const HUD_COOLDOWN_SKILLS: readonly CooldownEntryDefinition[] = [
   { id: 'wave', label: 'skillWave' },
   { id: 'heavenSplit', label: 'skillHeavenSplit' },
   { id: 'skyArrow', label: 'skillSkyArrow' },
-  { id: 'mend', label: 'skillMend' },
-  { id: 'berserk', label: 'skillBerserk' },
   // 护身技摆最后，一人一张，抽到之后就一直亮着。
   { id: 'ironBody', label: 'skillIronBody' },
   { id: 'bulwark', label: 'skillBulwark' },
