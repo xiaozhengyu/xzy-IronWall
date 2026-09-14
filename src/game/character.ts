@@ -101,6 +101,13 @@ const HIT_FREEZE = 0.07;
 const TUMBLE_TURNS_MIN = 1;
 const TUMBLE_TURNS_MAX = 2;
 
+/**
+ * 步态最多按步行速度的几倍来演。超过就夹住 —— 见 advance 里那段。
+ *
+ * 3.2 是按"跑步之下不受影响、突进被夹住"挑的：跑步是 1.875 倍，而突进接近步行速度的十五倍。
+ */
+const MAX_GAIT_PACE = 3.2;
+
 /** 轨迹线：留几个点、隔多久取一个。8 × 0.045 秒盖住约 0.36 秒，够画出弧线的形状。 */
 const TRAIL_POINTS = 8;
 const TRAIL_STEP = 0.045;
@@ -636,13 +643,28 @@ export class Character {
     }
 
     if (animate) {
+      /*
+       * 喂给步态的速度要夹一下，**不是**真实速度。
+       *
+       * 步态那一套公式（步幅、起伏、横摆、相位推进）是按 10~70 这一档速度写的，而突进接近
+       * 600。两样一起崩：起伏的幅度是 `0.3 + 速度 × 0.022`，到 600 就是十三个单位 —— 比马
+       * 本身还高；相位每帧推进半个循环，正好踩在采样极限上，四条腿每帧反着跳。那 0.22 秒
+       * 里马不是在冲，是在抽，长条的身子完全读不出指着哪儿 —— 而人在同一档只是"腿有点花"，
+       * 所以这个毛病是骑兵先暴露出来的。
+       *
+       * 夹在步行速度的 3.2 倍：跑步（1.875 倍）以下一切照旧，只有突进这一档会被夹住。夹完
+       * 仍然比跑步更快更大步，读作"冲出去"，只是不再散架。
+       *
+       * 夹的只有步态。位移、判定、特效继承的速度全走真实值 —— 人确实是以那个速度飞出去的。
+       */
+      const gaitSpeed = Math.min(this.speed, this.walkSpeed * MAX_GAIT_PACE);
       // 正着走还是倒着走，先定下来：人和马要用同一个答案。moveAngle 是空的（除了玩家，
       // 所有人都是）时差值就是 0，永远正着走。
       this.animator.syncStepDirection(dt, this.moveAngle === null ? 0 : this.moveAngle - this.facing);
       // 马先走一步：骑手的胯是坐在鞍上的，鞍的位置这一帧得先算出来。
       const horse = this.ensureMount();
-      if (horse) this.horseAnimator?.update(dt, this.speed, horse, this.animator.backward);
-      this.animator.update(dt, this.speed, this.walkSpeed, this.def, attackT, this.pose, horse);
+      if (horse) this.horseAnimator?.update(dt, gaitSpeed, horse, this.animator.backward);
+      this.animator.update(dt, gaitSpeed, this.walkSpeed, this.def, attackT, this.pose, horse);
     }
     return landed;
   }
