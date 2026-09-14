@@ -1,0 +1,50 @@
+/*
+ * 六项基础属性的六边形。见 statHex.ts。
+ *
+ * 整块不吃点击：它是一张示意图，不是一个控件。
+ */
+.stat-hex {
+  display: block;
+  width: 100%;
+  max-width: 150px;
+  height: auto;
+  pointer-events: none;
+  overflow: visible;
+}
+
+/* 底图那三圈：只是一把尺，不能抢过数据那一块。 */
+.stat-hex-ring {
+  fill: none;
+  stroke: #262d3b;
+  stroke-width: 1;
+}
+
+.stat-hex-ring--outer {
+  stroke: #39435a;
+}
+
+.stat-hex-spoke {
+  stroke: #262d3b;
+  stroke-width: 1;
+}
+
+/*
+ * 数据那一块用米金：这一屏里米金一直是"你的东西"（主按钮、角色名、金币）。
+ * 填充压得很淡，轮廓才是要读的那条线 —— 填太实会把底图的三圈盖掉，而那三圈是唯一的刻度。
+ */
+.stat-hex-shape {
+  fill: rgba(216, 201, 164, 0.22);
+  stroke: #e8dcc0;
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+}
+
+.stat-hex-dot {
+  fill: #f0e6d2;
+}
+
+.stat-hex-label {
+  fill: #7f8ba3;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}

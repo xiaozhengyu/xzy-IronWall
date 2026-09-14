@@ -38,6 +38,7 @@ export const HUD_TEXT_ZH_CN: HudMessages = {
   skillSprint: '疾走',
   skillIronBody: '铁布衫',
   skillBulwark: '磐石',
-  skillKeenEdge: '锋锐',
-  skillSwiftStrike: '疾锋',
+  skillMend: '回春',
+  skillBerserk: '狂暴',
+  skillBloodthirst: '饮血',
 };

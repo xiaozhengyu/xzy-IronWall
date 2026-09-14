@@ -4,6 +4,7 @@ import { IRON_BODY_GLOW, PALETTE_HERO, brightenPalette } from '../characters/pal
 import type { CharacterPalette } from '../characters/palette';
 import { HUMAN_PACE } from '../game/battle';
 import { ImpactEffects, weaponImpactPoint } from '../effects/impact';
+import { DamageNumbers } from '../effects/damageNumbers';
 import { RigSpec } from '../characters/rig';
 import { drawAegisDome } from '../effects/aegisDome';
 import { drawDharmaAspect } from '../effects/dharmaAspect';
@@ -12,7 +13,12 @@ import {
   SKY_BLADE_LENGTH, drawSkyBlade, heavenSplitBlade, skyArrowBlade,
 } from '../effects/skyBlade';
 import { PLAYER_RUN_SPEED } from '../game/battle';
-import { ORB_ORBIT_REACH, ORB_SPIN } from '../data/balance';
+import {
+  BERSERK_HP_DRAIN, LIFESTEAL_PER_LEVEL, MEND_HP_PER_TICK, ORB_ORBIT_REACH, ORB_SPIN,
+  SKILL_DAMAGE_PER_POWER,
+} from '../data/balance';
+import { REGEN_TICK } from '../data/pickups';
+import type { UnitStats } from '../data/types';
 import { v2, type Vec2 } from '../core/math';
 import { rgb, rgba, type Rgba } from '../render/color';
 import { Projection } from '../render/projection';
@@ -48,6 +54,13 @@ import { skillById, type SkillId } from '../game/skills';
 export interface DemoStage {
   readonly actor: Character;
   readonly effects: ImpactEffects;
+  /**
+   * 头顶那串飘字。回春、狂暴、饮血在场上**只有这一层画面**（属性和血量都是看不见的），
+   * 所以牌上也只演这一层 —— 走的是 DamageNumbers，和战场上那串是同一套字模、同一套颜色。
+   */
+  readonly floats: DamageNumbers;
+  /** 这个角色一级时的属性。飘字上那几个数是从它算出来的，不是编的。 */
+  readonly stats: UnitStats;
   /**
    * 这个人的攻击距离在台子上折算成多少，世界单位。
    *
@@ -172,6 +185,34 @@ function stageRing(
   });
 }
 
+/**
+ * 头顶飘一个数。跟着人走，从头顶再抬一截。
+ *
+ * 抬多少和场上不一样（那边是 PLAYER_FLOAT_Z = 34）。那个数是为了从满地的伤害数字里**抬出去**
+ * 挑的，而台子上一个别人都没有，照搬只会让这一串顶在画布最上沿 —— 而数字是**边升边淡**的，
+ * 起点就贴着顶边的话，后半程整个在画布外，玩家看到的是"冒出来就没了"。
+ *
+ * 18 差不多是头顶（人高 18.3），再加上那一段升程正好收在框里。
+ */
+const FLOAT_Z = 18;
+
+
+function floatGain(
+  stage: DemoStage,
+  value: number,
+  style: 'heal' | 'mana' | 'buff',
+  sign: 'plus' | 'minus' | 'times',
+): void {
+  if (value < 1) return;
+  stage.floats.spawn(0, 0, value, { style, sign, label: 'HP', follow: true, z: FLOAT_Z });
+}
+
+/** 每隔 REGEN_TICK 一跳。回春和狂暴共用 —— 场上它们本来就走同一条 advanceRegens。 */
+function ticked(age: number, dt: number): boolean {
+  if (age < 0) return false;
+  return Math.floor(age / REGEN_TICK) !== Math.floor((age - dt) / REGEN_TICK);
+}
+
 /*
  * 突进冲多快、冲多久。
  *
@@ -286,6 +327,68 @@ const DEMOS: Partial<Record<SkillId, SkillDemo>> = {
         1,
         age,
       );
+    },
+  },
+
+  /**
+   * 回春：站着，头顶每秒飘一个 +HP。
+   *
+   * 这一招在场上**只有这一层画面** —— 它不碰任何人，全部内容是一条推进 advanceRegens 的
+   * 持续回血（battle.ts 的 castSkill）。所以牌上也只演这一层：给它配个圈或者一层光，那是
+   * 在牌面上许一个按下去之后等不到的东西。
+   *
+   * 一轮只演三跳，不是整整十秒：节奏（每秒一口）读一遍就够了，而"十秒"那个数牌面上写着。
+   */
+  mend: {
+    loop: CAST_AT + REGEN_TICK * 3 + 0.5,
+    cast: CAST_AT,
+    update(stage, age, dt) {
+      if (ticked(age, dt)) floatGain(stage, stage.stats.maxHp * MEND_HP_PER_TICK, 'heal', 'plus');
+    },
+  },
+
+  /**
+   * 狂暴：一边挥，一边掉血。
+   *
+   * 掉血那一串和回春是同一条路（负的 regen），所以牌上也是同一串字、同一个节奏，只是符号
+   * 反过来 —— 那正是这一招要说的一半：它和回春按下去长得像，收到的却是相反的东西。
+   *
+   * 另一半（攻击 +30%、防御 −40%）在场上是看不见的，牌面那行小字说得比任何画面都清楚。
+   * 人在挥，是因为这一招买来的就是"接着打"：站着掉血只演了代价，没演它买到了什么。
+   */
+  berserk: {
+    loop: CAST_AT + REGEN_TICK * 3 + 0.5,
+    cast: CAST_AT,
+    update(stage, age, dt) {
+      if (ticked(age, dt)) {
+        floatGain(stage, stage.stats.maxHp * BERSERK_HP_DRAIN, 'heal', 'minus');
+        stage.actor.swing(0);
+      }
+    },
+  },
+
+  /**
+   * 饮血：打中就回血。
+   *
+   * 三张护身技里唯一一张要**动手**才生效的：铁布衫是一直亮着的光、磐石是一直在转的流星，
+   * 而它得先打出去。所以牌上是"挥一下，头顶冒一个 +HP"，一次一次来 —— 那就是它在场上的
+   * 样子（drainLife 攒够一秒飘一个）。
+   *
+   * 数是**砍中一个人**回多少：一级技能档的一下（攻击力 × SKILL_DAMAGE_PER_POWER）乘
+   * LIFESTEAL_PER_LEVEL。小得可怜，那也是真的 —— 这一招的价值在人堆里一刀砍中几十个（场上
+   * 那串是攒满一秒飘一个，见 drainLife），不在一刀回多少。牌上只有一个人，就只演一个人的量。
+   */
+  bloodthirst: {
+    loop: 1.8,
+    cast: CAST_AT,
+    begin(stage) {
+      stage.actor.swing(0);
+      spawnStageSkill(stage.effects, stage.actor, 'fan', stage.range * 1.2);
+    },
+    update(stage, age, dt) {
+      if (age >= 0.18 && age - dt < 0.18) {
+        floatGain(stage, stage.stats.attack * SKILL_DAMAGE_PER_POWER * LIFESTEAL_PER_LEVEL, 'heal', 'plus');
+      }
     },
   },
 
@@ -474,8 +577,9 @@ const DEMOS: Partial<Record<SkillId, SkillDemo>> = {
     },
   },
 
-  // 锋锐和疾锋在这张表上是**故意空着**的：它们在场上一个画面都没有，全部内容是一包属性。
-  // 补一段演示只能是编的 —— 而牌上编出来的那一下，玩家按下去之后是等不到的。
+  // 表上现在一条不缺：十四招各有各的演法。留着这条是为了下一次 ——
+  // **在场上一个画面都没有的招，这里就该空着**，走 IDLE 站着。补一段只能是编的，而牌上
+  // 编出来的那一下，玩家按下去之后是等不到的。（上一版兜底给一道扇面，护身技牌上于是横扫。）
 };
 
 /** 站着不动。没有画面的那两个护身技走这一条。 */
@@ -494,6 +598,8 @@ export const skillDemo = (id: SkillId): SkillDemo => DEMOS[id] ?? IDLE;
 export class SkillStage implements DemoStage {
   readonly actor: Character;
   readonly effects = new ImpactEffects();
+  readonly floats = new DamageNumbers();
+  readonly stats: UnitStats;
   readonly range: number;
   readonly reach: number;
   readonly view: { readonly width: number; readonly height: number };
@@ -508,20 +614,22 @@ export class SkillStage implements DemoStage {
   private age = 0;
 
   /**
-   * @param attackRange 这个角色**场上**的攻击距离（HeroDef.base.attackRange）。
+   * @param stats 这个角色**一级时**的属性（HeroDef.base）。
    *
-   *                    传真的那个数，不是一个牌面专用的常数：武将 34、骑士 16，同一招在两人
-   *                    手里本来就不一样大，而那正是玩家该从牌上读到的东西。台子只把它整体
-   *                    压过一道（STAGE_SQUEEZE），比例关系一条都不改。
+   *              传真的那一份，不是一套牌面专用的常数：攻击距离武将 34、骑士 16，同一招在
+   *              两人手里本来就不一样大，而那正是玩家该从牌上读到的东西（台子只把它整体压
+   *              过一道 STAGE_SQUEEZE，比例关系一条都不改）；回春、狂暴、饮血头顶飘的那几个
+   *              数也从这里算，所以牌上写的是他真会回多少、掉多少。
    */
   constructor(
     def: UnitDef,
     skill: SkillId,
     view: { width: number; height: number },
-    attackRange: number,
+    stats: UnitStats,
   ) {
     this.view = view;
-    this.range = attackRange * STAGE_SQUEEZE;
+    this.stats = stats;
+    this.range = stats.attackRange * STAGE_SQUEEZE;
     this.reach = this.range * skillById(skill).reach;
     this.actor = new Character(def, PALETTE_HERO, HUMAN_PACE);
     this.basePalette = this.actor.palette;
@@ -556,8 +664,10 @@ export class SkillStage implements DemoStage {
     this.clock += dt;
     if (this.clock >= demo.loop) {
       this.clock -= demo.loop;
-      // 上一轮的弧在这里清干净：周期本来就把收尾那一段算进去了，还挂着的都是漏出周期的。
+      // 上一轮的弧和飘字在这里清干净：周期本来就把收尾那一段算进去了，还挂着的都是漏出
+      // 周期的。飘字尤其要清 —— 它活得比弧久，不清的话下一轮的数会叠在上一轮的上面。
       this.effects.clear();
+      this.floats.clear();
     }
     const age = this.clock - demo.cast;
     this.age = age;
@@ -577,6 +687,8 @@ export class SkillStage implements DemoStage {
 
     this.actor.update(dt, true);
     this.effects.update(dt);
+    // 锚点给 (0, 0)：台子的局部世界原点就是人站的那一点，而 follow 的那几个数挂在他身上。
+    this.floats.update(dt, 0, 0);
   }
 
   /** 地、人、弧，再加这一招自己那一层。 */
@@ -584,5 +696,7 @@ export class SkillStage implements DemoStage {
     drawFigureStage(shapes, this.actor, at, grain, this.scrollX, this.scrollY, TILE_ZOOM, this.effects);
     // 罩子、法相、飞剑、流星和人进同一个批次，所以谁压谁仍然由深度说了算。
     this.demo.draw?.(shapes, this, at, grain, this.age);
+    // 飘字压在所有东西之上 —— 读数被谁挡住都等于没有（见 damageNumbers.ts 的 DEPTH_EDGE）。
+    this.floats.draw(shapes, 0, 0, at.x, at.y, grain);
   }
 }

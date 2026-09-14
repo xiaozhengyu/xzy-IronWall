@@ -6,12 +6,18 @@ import { clamp, turnToward } from '../core/math';
 import { DamageNumbers, type DamageNumberLabel } from '../effects/damageNumbers';
 import {
   CRIT_CHANCE_BASIC,
-  CRIT_CHANCE_SKILL,
+  CRIT_SKILL_MULTIPLIER,
   CRIT_MULTIPLIER,
   DAMAGE_VARIANCE,
   MIN_DAMAGE,
   MAX_LEVEL,
   BLAST_PER_ENEMY,
+  LIFESTEAL_PER_LEVEL,
+  BERSERK_ATTACK,
+  BERSERK_DEFENSE,
+  BERSERK_HP_DRAIN,
+  MEND_HP_PER_TICK,
+  SIGNATURE_DAMAGE_BONUS,
   SKILL_MAX_LEVEL,
   debrisReach,
   launchForce,
@@ -794,14 +800,20 @@ interface Reservation extends EnemyMover {
  * power 一个字段管两件事（画面上溅多少碎片、伤害翻几倍）是有意的：看着更狠的那一下本来就
  * 该更疼，拆成两个字段迟早会调出"画面很炸但不疼"的招。见 SKILL_DAMAGE_PER_POWER。
  */
-function rollDamage(attack: number, defense: number, power: number): { value: number; crit: boolean } {
+function rollDamage(
+  attack: number,
+  defense: number,
+  power: number,
+  /** 出手这一方的暴击率。技能命中算双倍 —— 以前那两个全局常量就是 0.09 和它的两倍。 */
+  crit = CRIT_CHANCE_BASIC,
+): { value: number; crit: boolean } {
   const skill = power >= 2;
-  const crit = Math.random() < (skill ? CRIT_CHANCE_SKILL : CRIT_CHANCE_BASIC);
+  const struck = Math.random() < Math.min(1, crit * (skill ? CRIT_SKILL_MULTIPLIER : 1));
   const scaled = damageAfterDefense(attack, defense) * SKILL_DAMAGE_PER_POWER ** Math.max(0, power - 1);
   // 完全固定的伤害数字看久了像是假的，所以每一下都掷一次小浮动。
   const jitter = 1 + (Math.random() * 2 - 1) * DAMAGE_VARIANCE;
-  const value = scaled * jitter * (crit ? CRIT_MULTIPLIER : 1);
-  return { value: Math.max(MIN_DAMAGE, Math.round(value)), crit };
+  const value = scaled * jitter * (struck ? CRIT_MULTIPLIER : 1);
+  return { value: Math.max(MIN_DAMAGE, Math.round(value)), crit: struck };
 }
 
 export class Battle {
@@ -1117,6 +1129,8 @@ export class Battle {
    * 和头顶那个数字同一个时机、同一个节奏：两边说的本来就是同一件事，分开跑会错开成两件。
    */
   private hurtPulse = 0;
+  /** 饮血这一秒回了多少血。和掉血扣蓝同一个节奏飘字。 */
+  private drainedHp = 0;
   /** 同理，这一秒里挨了多少伤害。 */
   private tookHp = 0;
   private floatSince = 0;
@@ -1348,8 +1362,12 @@ export class Battle {
     this.floatSince = 0;
     const hp = Math.round(this.tookHp);
     const mp = Math.round(this.spentMp);
+    const drained = Math.round(this.drainedHp);
     this.tookHp = 0;
     this.spentMp = 0;
+    this.drainedHp = 0;
+    // 饮血回的血走 heal 那一档加号，和喝药同一个形状 —— 对玩家来说它们本来就是同一件事。
+    if (drained >= 1) this.floatGain(drained, 'heal', 'plus', 'HP');
     /*
      * 和吃药那两串用**同一档颜色**，只是符号相反：回血是血+120，掉血就是血-120。
      *
@@ -1688,6 +1706,17 @@ export class Battle {
           const before = this.player.hp;
           this.player.hp = Math.min(this.player.maxHp, this.player.hp + this.player.maxHp * r.hp);
           this.floatGain(this.player.hp - before, 'heal', 'plus', 'HP');
+        } else if (r.hp < 0) {
+          /*
+           * 负的那一支：狂暴的持续掉血。
+           *
+           * 走同一条路而不是另开一套：它要的就是"每秒扣一口、头顶飘个数"，和回血是同一件事
+           * 的两个方向。**掉不死人，最低留一点** —— 被自己的增益技耐死读不出是一个决定的后果，
+           * 只读得出"这个技能坑我"。风险还在（卡在一点就是一下就没），但最后那一下总是别人打的。
+           */
+          const before = this.player.hp;
+          this.player.hp = Math.max(1, this.player.hp + this.player.maxHp * r.hp);
+          this.tookHp += before - this.player.hp;
         }
         if (r.mp > 0) {
           const before = this.currentMp;
@@ -2001,6 +2030,7 @@ export class Battle {
     this.deaths = 0;
     this.damageTaken = 0;
     this.hurtPulse = 0;
+    this.drainedHp = 0;
     this.earnedExp = 0;
     this.defeated = false;
     this.outcome = 'none';
@@ -3024,8 +3054,24 @@ export class Battle {
     return this.damagePlayer(actor.stats.attack, actor.x, actor.y);
   }
 
+  /**
+   * 饮血回血。没戴饮血就什么都不做。
+   *
+   * 回的量攒起来交给头顶那串飘字（advancePlayerFloats），和掉血扣蓝同一个节奏 ——
+   * 一刀砍中五十个人就飘五十个回血数字的话，这一层反馈就变成了噪声。
+   */
+  private drainLife(damage: number): void {
+    const guard = this.skillLoadout.guardSkill;
+    if (guard !== 'bloodthirst' || !this.player.alive) return;
+    const rate = LIFESTEAL_PER_LEVEL * this.skillLoadout.level(guard);
+    const healed = Math.min(this.player.maxHp - this.player.hp, damage * rate);
+    if (healed <= 0) return;
+    this.player.hp += healed;
+    this.drainedHp += healed;
+  }
+
   private damagePlayer(attack: number, fromX: number, fromY: number): boolean {
-    const roll = rollDamage(attack, this.player.stats.defense, 1);
+    const roll = rollDamage(attack, this.player.stats.defense, 1, CRIT_CHANCE_BASIC);
     /*
      * 挨打也飘字，但是**攒满一秒飘一个**。
      *
@@ -3064,7 +3110,7 @@ export class Battle {
     launch: { force?: number; freeze?: number } = {},
   ): void {
     if (!e.alive) return;
-    const roll = rollDamage(this.player.stats.attack * scale, e.stats.defense, power);
+    const roll = rollDamage(this.player.stats.attack * scale, e.stats.defense, power, this.player.stats.crit);
     /*
      * 掀得多远跟着这一招练到几级走。
      *
@@ -3086,6 +3132,14 @@ export class Battle {
       dx /= len;
       dy /= len;
     }
+
+    /*
+     * 饮血：打出去的伤害按比例回到自己身上。
+     *
+     * 挂在这里而不是击杀那一步：按击杀给的话，打一个满血首领两分钟一点血都回不到，
+     * 而那正是最需要它的时候。按伤害给，它的回复量自动跟着"我正在打得多狠"走。
+     */
+    this.drainLife(roll.value);
 
     // dx/dy 就是这个人被掀飞的去向 —— 数字拿它往反方向让开，把飞行轨迹留给画面。
     // 首领那一串单独一档（金色、字大一截）。末波一刀下去几十个数字同时飘，长得一样就淡掉了。
@@ -3152,7 +3206,14 @@ export class Battle {
     // 距离这一条顺带把**画面**也拉大了：下面所有冲击弧、环、扭曲的尺寸都是从 reach 算的，
     // 所以满级的横扫真的扫出一个更大的扇面，不用另外给特效加一个等级分支。
     const reach = player.stats.attackRange * skill.reach * this.skillLoadout.reachScale(skill.id);
-    const scale = this.skillLoadout.damageScale(skill.id);
+    /*
+     * 角色自带的那一招比别的招高一成（见 SIGNATURE_DAMAGE_BONUS）。
+     *
+     * 它是一局里唯一不用抽、一直在挥的那一招，也是四个角色真正的分岔点。它要是到后期反而
+     * 输给随便抽到的一张牌，最优解就变成了"不管选谁，都靠主动技输出"。
+     */
+    const signature = skill.category === 'attack' ? 1 + SIGNATURE_DAMAGE_BONUS : 1;
+    const scale = this.skillLoadout.damageScale(skill.id) * signature;
     // 放招的时候顺手把身边的篝火砸了。挂在这里而不是每一条结算路径上：所有招式都从这儿发出去，
     // 而篝火不会跑，"你在它旁边放了一招"就是全部条件。
     this.breakCampfires(player.x, player.y, reach);
@@ -3391,6 +3452,43 @@ export class Battle {
           power: skill.power,
           scale,
         };
+        return;
+      }
+
+      case 'mend': {
+        /*
+         * 回春：推一条持续回血进去，和慢回那种丹走同一条路（advanceRegens）。
+         *
+         * 不另开一套状态：它要的就是"每秒回一口、头顶飘个数"，而那整套已经在那儿了 ——
+         * 再写一遍只会得到两个节奏不一样的回血。
+         *
+         * 回多少：每秒一成上限，再乘伤害倍率。那个倍率本来就只由等级决定，把它当回血量用，
+         * 这一招就和别的招走同一条升级曲线，不用单给它一张表。
+         */
+        this.regens.push({
+          hp: MEND_HP_PER_TICK * scale,
+          mp: 0,
+          left: skill.duration,
+          since: 0,
+        });
+        return;
+      }
+
+      case 'berserk': {
+        /*
+         * 狂暴：一条限时加成（和符走同一条路）加一条负的回血。
+         *
+         * 两条都用现成的机制：属性走 timedBonuses（到期自己重算），掉血走 regens（一秒一跳、
+         * 头顶飘个数）。另开一套"狂暴状态"只会得到两个自己走自己节奏的计时器，而它们本该同时结束。
+         *
+         * 输出那一项乘伤害倍率，掉血和降防不乘 —— 升级该把这一招变得更值，而不是更危险。
+         */
+        this.timedBonuses.push({
+          bonus: { attack: BERSERK_ATTACK * scale, defense: BERSERK_DEFENSE },
+          left: skill.duration,
+        });
+        this.regens.push({ hp: -BERSERK_HP_DRAIN, mp: 0, left: skill.duration, since: 0 });
+        this.applyPlayerStats();
         return;
       }
 

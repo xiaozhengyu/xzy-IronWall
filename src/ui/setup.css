@@ -737,6 +737,27 @@
   line-height: 1.2;
 }
 
+/*
+ * 六边形和那排数字并排。图不压缩（flex 默认会压），数字那一块吃剩下的宽度。
+ * 窄到放不下时数字那一块自己换行，图还是图 —— 它被压扁之后就不是一个能比的形状了。
+ */
+.setup-stat-box {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.setup-stat-box .stat-hex {
+  flex: 0 0 auto;
+  width: 132px;
+}
+
+.setup-stat-box .setup-stats {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .setup-veil {
   position: absolute;
   inset: 0;

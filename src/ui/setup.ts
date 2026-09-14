@@ -6,6 +6,7 @@ import { ARCHETYPE_LABEL } from '../data/heroes';
 import type { WeatherKind } from '../world/weather';
 import { createHudIcon } from './hudIcons';
 import { createSkillIcon } from './skillIcons';
+import { StatHex, type StatAxis } from './statHex';
 import { HudText } from './text/hudText';
 
 /**
@@ -229,6 +230,8 @@ export class SetupScreen {
 
   /** 进入战场时盖住整屏的那一层。 */
   private readonly entryVeil = el('div', 'setup-veil');
+  /** 六项基础属性的六边形。见 statHex.ts。 */
+  private readonly statHex = new StatHex();
   private readonly entryLines = el('div', 'setup-veil-box');
 
   /** 头像画一次就存着 —— 每次重建列表都去 extract 一遍是白扔。 */
@@ -405,13 +408,41 @@ export class SetupScreen {
 
     const statRow = el('div', 'setup-stats');
     one(statRow, '生命', `${Math.round(stats.maxHp)}`);
-    one(statRow, '攻击', `${Math.round(stats.attack)}`);
+    one(statRow, '进攻', `${Math.round(stats.attack)}`);
     one(statRow, '防御', `${Math.round(stats.defense)}`);
     one(statRow, '速度', `${Math.round(stats.moveSpeed)}`);
+    one(statRow, '敏捷', `${stats.attackSpeed.toFixed(2)}x`);
+    one(statRow, '暴击', `${Math.round(stats.crit * 100)}%`);
     one(statRow, '范围', `${Math.round(stats.attackRange)}`);
-    one(statRow, '频率', `${stats.attackSpeed.toFixed(2)}x`);
     one(statRow, '拾取', `${Math.round(stats.pickupRange)}`);
-    this.heroTags.appendChild(statRow);
+
+    /*
+     * 六边形和那排数字并排，不是二选一。
+     *
+     * 两者回答的不是同一个问题：数字回答"我有多少血"，图形回答"这个人和那个人差在哪儿"。
+     * 选人界面上后一个问题更要紧，所以图在左、数在右。
+     *
+     * 归一化的分母是**四个角色各自在自己等级上**的值，不是同一级的值 —— 玩家看的就是
+     * "我现在这几个人里谁更硬"，而不是一个把等级抑掉的理论值。
+     */
+    const all = this.bridge.heroes.map((h) => this.bridge.progress.stats(h));
+    const axis = (label: string, read: (s: typeof stats) => number): StatAxis => ({
+      label,
+      value: read(stats),
+      max: Math.max(...all.map(read)),
+    });
+    this.statHex.draw([
+      axis('生命', (s) => s.maxHp),
+      axis('进攻', (s) => s.attack),
+      axis('敏捷', (s) => s.attackSpeed),
+      axis('暴击', (s) => s.crit),
+      axis('速度', (s) => s.moveSpeed),
+      axis('防御', (s) => s.defense),
+    ]);
+    const statBox = el('div', 'setup-stat-box');
+    statBox.appendChild(this.statHex.root);
+    statBox.appendChild(statRow);
+    this.heroTags.appendChild(statBox);
   }
 
   // ---------------------------------------------------------------- 中栏：去哪儿

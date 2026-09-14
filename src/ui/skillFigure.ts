@@ -125,7 +125,7 @@ export class SkillFigure {
       unitAppearance(hero.appearance),
       skill,
       { width: FIGURE_WIDTH, height: FIGURE_HEIGHT },
-      hero.base.attackRange,
+      hero.base,
     );
   }
 

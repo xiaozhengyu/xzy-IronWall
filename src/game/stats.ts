@@ -107,6 +107,8 @@ export function resolveEnemyStats(
     // 速度是唯一一个有硬上限的：整套走位设计建立在"走路甩不掉、冲刺能甩掉"上，敌人一旦追过
     // 玩家的冲刺，冲刺这张脱身牌就废了。见 balance.ts 的 MAX_ENEMY_SPEED。
     moveSpeed: Math.min(MAX_ENEMY_SPEED, base.moveSpeed * waveSpeed * modifier.enemySpeed),
+    // 不跟波次长：敌人暴击只是给玩家的飘字加一点起伏，让它随波次涨是把一个看不见的难度旋钮写进去。
+    crit: base.crit,
     attackRange: base.attackRange,
     attackArc: base.attackArc,
     attackSpeed: base.attackSpeed * waveAttackSpeed,

@@ -29,8 +29,9 @@ export type SkillId =
   | 'sprint'
   | 'ironBody'
   | 'bulwark'
-  | 'keenEdge'
-  | 'swiftStrike';
+  | 'mend'
+  | 'berserk'
+  | 'bloodthirst';
 
 /**
  * 技能放进哪一种槽。类别只规定“能装备几个、由谁触发”，kind 继续规定具体怎么结算。
@@ -67,6 +68,10 @@ export type SkillKind =
   | 'instant' | 'wave' | 'lunge' | 'aura' | 'dharma' | 'heavenSplit' | 'skyArrow'
   /** 按住才生效的状态技，松开就停。目前只有疾走。 */
   | 'sustained'
+  /** 沿着时间回血，不碰任何人。目前只有回春。 */
+  | 'mend'
+  /** 一段有代价的增益：持续掉血、防御变弱、输出变高。目前只有狂暴。 */
+  | 'berserk'
   | 'passive';
 
 export interface SkillDef {
@@ -269,6 +274,58 @@ export const Skills: SkillDef[] = [
     finishRing: 0.95,
   },
   {
+    /*
+     * 回春。四个主动技里唯一一个不打人的。
+     *
+     * 为什么是**持续回**而不是当场回满：当场回满的版本把它变成了一张"死之前按一下"的免死金牌 ——
+     * 玩家的最优打法会变成残血往人堆里钻，而那恰好把走位这件事抵消了。摊开十秒之后它是一个
+     * **提前**的决定：得在还撑得住的时候按下去，按晚了就来不及了。
+     *
+     * reach 给 0：它不碰任何人，也就没有"作用距离"。升级改的是回多少（伤害倍率那一条顺手
+     * 当回血量用，见 battle.ts 的 castSkill）和冷却。
+     */
+    id: 'mend',
+    name: '回春',
+    note: '十秒内持续回血',
+    category: 'active',
+    kind: 'mend',
+    reach: 0,
+    arc: null,
+    duration: 10,
+    power: 0,
+    cooldown: 14,
+    mpCost: 30,
+    mpDrain: 0,
+    finishRing: 0,
+  },
+  {
+    /*
+     * 狂暴。唯一一个**有代价**的主动技。
+     *
+     * 别的招都只问"蓝够不够、冷却好没好"，按下去只有好处。狂暴问的是另一件事：
+     * **你现在撑得住吗。** 同样一个键，开局按下去是找死，手里有饮血或者一身血的时候按下去
+     * 是白赚 —— 一张牌的价值跟着整局的构筑走，而不是一个固定的数。
+     *
+     * 三件事一起发生，缺一件它就不成立：输出高了、防御低了、血一直在掉。只有前两件的话
+     * 它只是"换一种数字"，加上第三件它才有一个能读出来的截止时间。
+     *
+     * reach 给 0：和回春一样，它不碰任何人。
+     */
+    id: 'berserk',
+    name: '狂暴',
+    note: '八秒内输出大涨，代价是持续掉血、防御变弱',
+    category: 'active',
+    kind: 'berserk',
+    reach: 0,
+    arc: null,
+    duration: 8,
+    power: 0,
+    cooldown: 18,
+    mpCost: 28,
+    mpDrain: 0,
+    finishRing: 0,
+  },
+  {
     id: 'aegis',
     name: '金钟罩',
     note: '罩子跟着人走，碰到就飞',
@@ -447,24 +504,19 @@ export const Skills: SkillDef[] = [
     finishRing: 0,
   },
   {
-    id: 'keenEdge',
-    name: '锋锐',
-    note: '永久生效，攻击力与攻击范围提高',
-    category: 'guard',
-    kind: 'passive',
-    reach: 0,
-    arc: null,
-    duration: 0,
-    power: 0,
-    cooldown: 0,
-    mpCost: 0,
-    mpDrain: 0,
-    finishRing: 0,
-  },
-  {
-    id: 'swiftStrike',
-    name: '疾锋',
-    note: '永久生效，攻击频率与移动速度提高',
+    /*
+     * 饮血。三张护身技里唯一一张**不是属性包**的。
+     *
+     * 原来有四张，而锋锐和疾锋只是铁布衫换了几个数字 —— 同一个形状摆三遍，玩家抽到哪一张
+     * 都是"一包看不见的加成"，区别只在说明文字里。换成饮血之后三张各是一种活法：
+     * 铁布衫硬、磐石硬且带输出（绕身的磐石）、饮血不硬但打得越狠回得越多。
+     *
+     * 它没有属性包（不在 passives.ts 里），效果写在结算那一步：每造成一点伤害回一点血。
+     * 所以它在人堆里最值钱，而那正是玩家最容易死的地方。
+     */
+    id: 'bloodthirst',
+    name: '饮血',
+    note: '永久生效，造成伤害按比例回血',
     category: 'guard',
     kind: 'passive',
     reach: 0,
