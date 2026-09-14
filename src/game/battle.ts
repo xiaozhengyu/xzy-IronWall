@@ -838,6 +838,8 @@ export class Battle {
 
   kills = 0;
   deaths = 0;
+  /** 这一局砍掉几个首领。和总击杀分开记：它才是"打到哪了"的度量。 */
+  bossKills = 0;
   /**
    * 这一局一共挺了多少伤害。结算画面上写一行。
    *
@@ -1951,6 +1953,7 @@ export class Battle {
     // 锁着的那个人属于上一局。
     this.aimTarget = null;
     this.kills = 0;
+    this.bossKills = 0;
     this.deaths = 0;
     this.damageTaken = 0;
     this.hurtPulse = 0;
@@ -3066,6 +3069,7 @@ export class Battle {
     this.kills++;
     this.gainExp(e.expValue);
     const isBoss = e.boss;
+    if (isBoss) this.bossKills++;
     /*
      * 掉什么：小兵只掉灵石和金币，**药和符一件不掉**；首领保底掉一件。
      *

@@ -33,6 +33,7 @@ import { Hud } from './ui/hud';
 import { Menu } from './ui/menu';
 import { SetupScreen, type MapPin } from './ui/setup';
 import { curtain } from './ui/curtain';
+import { HistoryScreen } from './ui/history';
 import { SummaryScreen, type SummaryStats } from './ui/summary';
 import './style.css';
 
@@ -638,6 +639,26 @@ function settleRun(): void {
   profile.addCoins(battle.collectedCoins);
   const result = profile.addExp(battle.heroId, battle.earnedExp);
   if (result.levels > 0) lastLevelUp = result.level;
+  /*
+   * 顺手记一笔战绩（选人界面右上那个"历史"读它）。
+   *
+   * 和上面两行分开调：那两条是"带得走的东西"，这一条是"发生过的事"。以后商店改金币不该
+   * 动到战绩，而重算战绩也不该发钱。
+   */
+  const wave = battle.waveStatus;
+  profile.recordRun(battle.heroId, {
+    map: setup.currentMap.name,
+    won: battle.outcome === 'won',
+    kills: battle.kills,
+    bosses: battle.bossKills,
+    damageTaken: Math.round(battle.damageTaken),
+    time: battle.runTime,
+    coins: battle.collectedCoins,
+    gems: battle.collectedGems,
+    wave: wave.wave,
+    waves: wave.waves,
+    at: Date.now(),
+  });
 }
 
 /** 这一局升到了几级。结算画面上要写一句，没升级就是 0。 */
@@ -1268,6 +1289,20 @@ function enterMap(hero: HeroDef, map: GameMapDef, weather: WeatherKind): void {
 }
 
 /**
+ * 战绩。从选人界面右上那个按钮进去，按返回回去。
+ *
+ * 建在 setup 之前：那边的 onHistory 要引用它，而它自己只读存档，不依赖任何别的界面。
+ */
+const history = new HistoryScreen({
+  heroes: () => Heroes.map((hero) => ({
+    id: hero.id,
+    name: hero.name,
+    record: profile.record(hero.id),
+  })),
+  onClose: () => history.hide(),
+});
+
+/**
  * 结算画面。三个按钮各自对应流程上的一条边，界面自己不知道有"状态"这回事。
  *
  * 建在 setup 之前 —— 它的 show 要读 setup.currentHero/currentMap（结算上要写清是谁在哪儿
@@ -1354,6 +1389,7 @@ const setup = new SetupScreen(
      * 在 game/profile.ts 上已经是现成的了。
      */
     onShop: () => setup.notice('商店还没有开张。金币先攒着 —— 它是这一局打完唯一带得走的东西。'),
+    onHistory: (heroId) => history.show(heroId),
   },
   menu.text,
 );

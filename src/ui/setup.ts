@@ -84,6 +84,8 @@ export interface SetupBridge {
    * 提示，是因为商店接上之后这一行就是它唯一的入口，界面这一侧不用再改。
    */
   onShop(): void;
+  /** 点了战绩。带上当前选中的角色 —— 打开就停在他身上，少一次点击。 */
+  onHistory(heroId: string): void;
 }
 
 /** 备战界面要从存档里读的东西。 */
@@ -210,6 +212,8 @@ export class SetupScreen {
    */
   private readonly purse = el('span', 'setup-purse');
   private readonly shopButton = el('button', 'setup-shop', '商店');
+  /** 商店右边那一个。摆在这儿而不是角色栏里：它记的是**所有**角色的事。 */
+  private readonly historyButton = el('button', 'setup-shop', '战绩');
   /** 顶栏底下那行会自己消失的提示。 */
   private readonly noticeBox = el('div', 'setup-notice');
   private noticeTimer = 0;
@@ -565,6 +569,9 @@ export class SetupScreen {
     this.shopButton.type = 'button';
     this.shopButton.addEventListener('click', () => this.bridge.onShop());
     purseBox.appendChild(this.shopButton);
+    this.historyButton.type = 'button';
+    this.historyButton.addEventListener('click', () => this.bridge.onHistory(this.currentHero.id));
+    purseBox.appendChild(this.historyButton);
     top.appendChild(purseBox);
     this.root.appendChild(top);
     this.noticeBox.hidden = true;

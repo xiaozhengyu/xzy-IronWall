@@ -30,10 +30,55 @@ export interface HeroProgress {
   exp: number;
 }
 
+/**
+ * 一局打完留下来的战绩。
+ *
+ * **只记总数和最近一局，不记每一局。** 一份存档要活很久，按局追加的话它会一直长，
+ * 而玩家在这一屏上要问的只有两件事："我上一局打得怎么样"和"我拿这个人打得怎么样"。
+ * 一张按局的流水帐回答不了第二件，而总数两件都回答得了。
+ */
+export interface HeroRecord {
+  /** 打了几局。中途自己退出的也算 —— 那也是一局。 */
+  runs: number;
+  /** 赢了几局（清完所有首领）。 */
+  wins: number;
+  kills: number;
+  /** 砍掉的首领数。 */
+  bosses: number;
+  /** 挺了多少伤害（减免之后真正掉的血）。 */
+  damageTaken: number;
+  /** 打了多久，秒。 */
+  time: number;
+  coins: number;
+  gems: number;
+  /** 最远打到第几波。 */
+  bestWave: number;
+  /** 最近那一局。没打过就是 null。 */
+  last: RunRecord | null;
+}
+
+/** 一局的战绩。结算那一屏上写的那几个数，原样存一份。 */
+export interface RunRecord {
+  map: string;
+  won: boolean;
+  kills: number;
+  bosses: number;
+  damageTaken: number;
+  time: number;
+  coins: number;
+  gems: number;
+  wave: number;
+  waves: number;
+  /** 打完的时间戳，毫秒。界面上写成"几天前"。 */
+  at: number;
+}
+
 export interface ProfileData {
   version: number;
   coins: number;
   heroes: Record<string, HeroProgress>;
+  /** 每个角色的战绩。老存档里没有，读的时候补一份空的。 */
+  records: Record<string, HeroRecord>;
   /** 上次选的角色和地图，回到备战界面时停在原处。 */
   lastHero: string;
   lastMap: string;
@@ -49,13 +94,25 @@ function freshProgress(): HeroProgress {
   return { level: 1, exp: 0 };
 }
 
+function freshRecord(): HeroRecord {
+  return {
+    runs: 0, wins: 0, kills: 0, bosses: 0, damageTaken: 0,
+    time: 0, coins: 0, gems: 0, bestWave: 0, last: null,
+  };
+}
+
 function freshProfile(): ProfileData {
   const heroes: Record<string, HeroProgress> = {};
-  for (const hero of Heroes) heroes[hero.id] = freshProgress();
+  const records: Record<string, HeroRecord> = {};
+  for (const hero of Heroes) {
+    heroes[hero.id] = freshProgress();
+    records[hero.id] = freshRecord();
+  }
   return {
     version: 1,
     coins: 0,
     heroes,
+    records,
     lastHero: Heroes[0].id,
     lastMap: 'proving',
   };
@@ -88,8 +145,12 @@ export class Profile {
       if (parsed.version !== 1) return new Profile();
       const profile = new Profile({ ...freshProfile(), ...parsed } as ProfileData);
       // 存档是上一版写的时候，新加的角色在里面没有记录。补齐而不是整份作废。
+      // 存档是上一版写的时候，新加的角色在里面没有记录。补齐而不是整份作废。
+      // 战绩那一块是后加的，旧存档里整个不存在 —— 同样补一份空的，不当作版本不匹配。
+      profile.data.records ??= {};
       for (const hero of Heroes) {
         if (!profile.data.heroes[hero.id]) profile.data.heroes[hero.id] = freshProgress();
+        if (!profile.data.records[hero.id]) profile.data.records[hero.id] = freshRecord();
       }
       return profile;
     } catch {
@@ -164,6 +225,37 @@ export class Profile {
     if (entry.level >= MAX_LEVEL) entry.exp = 0;
     this.save();
     return { levels, level: entry.level };
+  }
+
+  /** 这个角色的战绩。没打过也给一份空的，界面那边不用写分支。 */
+  record(heroId: string): HeroRecord {
+    let entry = this.data.records[heroId];
+    if (!entry) {
+      entry = freshRecord();
+      this.data.records[heroId] = entry;
+    }
+    return entry;
+  }
+
+  /**
+   * 一局打完，记一笔。
+   *
+   * 和 addCoins/addExp 分开调：那两条是"带得走的东西"，这一条是"发生过的事"。同一个
+   * settleRun 里前后脚调，但它们回答的不是同一个问题，以后商店改金币也不该动到战绩。
+   */
+  recordRun(heroId: string, run: RunRecord): void {
+    const entry = this.record(heroId);
+    entry.runs++;
+    if (run.won) entry.wins++;
+    entry.kills += run.kills;
+    entry.bosses += run.bosses;
+    entry.damageTaken += run.damageTaken;
+    entry.time += run.time;
+    entry.coins += run.coins;
+    entry.gems += run.gems;
+    entry.bestWave = Math.max(entry.bestWave, run.wave);
+    entry.last = run;
+    this.save();
   }
 
   get lastHero(): string {
