@@ -2643,25 +2643,39 @@ export class Battle {
       return;
     }
     /*
-     * 突进和疾走期间**完全不转**，朝向就停在进入这两个状态那一刻的样子。
+     * 突进期间朝向定死，停在起手那一刻的样子。
      *
-     * 这两段是同一件事：人在**位移**，不在打。位移的时候还让身体跟着最近的敌人转，在一个
-     * 每帧都可能换目标的人堆里就是原地打转 —— 而这两招恰恰都是用来从人堆里出来的。
-     *
-     * 突进还多一条：它的判定是这一帧走过的那条线段（见 advanceSkills），方向在起手那一刻
-     * 就定死了，中途转身会让判定和人真正走过的路对不上。
-     *
-     * 用 sprinting 而不是 sprintEngaged：站着按住 Shift 不算跑（见 advanceSprint），那时候
-     * 人该照常转过去看着敌人。
+     * 它只有零点二几秒，而且判定是这一帧走过的那条线段（见 advanceSkills）—— 方向在起手
+     * 那一刻就定下了，中途转身会让判定和人真正走过的路对不上。何况它多半是用来脱身的：
+     * 扑出去的同时眼睛还盯着刚才那个人，正是这一下该有的样子。
      */
-    if (this.lunge || this.sprinting || !player.alive) return;
+    if (this.lunge || !player.alive) return;
 
-    const target = this.pickAimTarget();
-    this.aimTarget = target;
     let want: number;
-    if (target) want = Math.atan2(target.y - player.y, target.x - player.x);
-    else if (player.moveAngle !== null) want = player.moveAngle;
-    else return;
+    if (this.sprinting) {
+      /*
+       * 疾走期间**不锁敌，朝着自己跑的方向**。
+       *
+       * 跑是"离开这儿"，不是"打那个人"。让身体在跑的时候还跟着最近的敌人转，在一个每帧都
+       * 可能换目标的人堆里就是原地打转 —— 而疾走恰恰是用来从人堆里出来的。
+       *
+       * 朝着跑的方向，也就是玩家用鼠标跑时的光标方向（按住左键就是朝光标走，见 readInput），
+       * 用 WASD 跑时就是键盘那个方向。两条路给的是同一个答案：他正在去的地方。
+       *
+       * 这条规矩场上本来就有 —— 附近没敌人时人也是看着自己要去的地方（下面那一支）。
+       *
+       * 用 sprinting 而不是 sprintEngaged：站着按住 Shift 不算跑（见 advanceSprint），那时候
+       * 人该照常转过去看着敌人。而 sprinting 为真就一定在走，所以 moveAngle 不会是空的。
+       */
+      if (player.moveAngle === null) return;
+      want = player.moveAngle;
+    } else {
+      const target = this.pickAimTarget();
+      this.aimTarget = target;
+      if (target) want = Math.atan2(target.y - player.y, target.x - player.x);
+      else if (player.moveAngle !== null) want = player.moveAngle;
+      else return;
+    }
     // 还差多少度决定这一帧转多快，见 AIM_TURN_EASE。
     const gap = Math.abs(Math.atan2(Math.sin(want - player.facing), Math.cos(want - player.facing)));
     const rate = clamp(gap * AIM_TURN_EASE, AIM_TURN_MIN, AIM_TURN_MAX);
