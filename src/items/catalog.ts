@@ -23,6 +23,3 @@ export const ITEM_SHEET = '/items.png';
  * 图鉴和以后的掉落都按各自的宽高摆，不会拉伸。
  */
 export const ItemCatalog: ItemDef[] = [];
-
-export const itemById = (id: string): ItemDef | undefined =>
-  ItemCatalog.find((d) => d.id === id);

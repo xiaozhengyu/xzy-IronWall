@@ -249,23 +249,6 @@ export class SkillLoadout {
     if (skill.category === 'attack') return this.setEquipped(id, true);
     return this.setEquipped(id, !this.isEquipped(id));
   }
-
-  /** 把主动技能放到指定键位；同一技能换槽时会先从旧槽移走。 */
-  assignActive(slot: ActiveSkillSlot, id: SkillId | null): boolean {
-    if (slot < 0 || slot >= this.activeSkillSlots.length) return false;
-    // 疾走不占槽，也就没法往槽里放。
-    if (id === SPRINT_SKILL) return false;
-    if (id === null) {
-      this.activeSkillSlots[slot] = null;
-      return true;
-    }
-    if (skillById(id).category !== 'active') return false;
-    const old = this.activeSkillSlots.indexOf(id);
-    if (old >= 0) this.activeSkillSlots[old] = null;
-    this.activeSkillSlots[slot] = id;
-    return true;
-  }
-
   cycleAttack(): void {
     const attacks = skillsInCategory('attack');
     const current = attacks.findIndex((skill) => skill.id === this.attackSkill);

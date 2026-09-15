@@ -225,8 +225,6 @@ export class SetupScreen {
   /** 商店右边那一个。摆在这儿而不是角色栏里：它记的是**所有**角色的事。 */
   private readonly historyButton = el('button', 'setup-shop', '战绩');
   /** 顶栏底下那行会自己消失的提示。 */
-  private readonly noticeBox = el('div', 'setup-notice');
-  private noticeTimer = 0;
 
   /** 进入战场时盖住整屏的那一层。 */
   private readonly entryVeil = el('div', 'setup-veil');
@@ -287,30 +285,8 @@ export class SetupScreen {
   hide(): void {
     this.root.hidden = true;
     this.root.dataset.phase = '';
-    this.clearNotice();
   }
 
-  /**
-   * 顶栏底下飘一行字，几秒后自己消失。
-   *
-   * 不用 alert：那会把整个页面冻住，而且在一个全屏的游戏界面里弹一个系统对话框读起来像是
-   * 出错了。目前只有"商店还没开张"用它。
-   */
-  notice(text: string): void {
-    this.noticeBox.textContent = text;
-    this.noticeBox.hidden = false;
-    this.clearNotice();
-    this.noticeTimer = setTimeout(() => {
-      this.noticeTimer = 0;
-      this.noticeBox.hidden = true;
-    }, 3200) as unknown as number;
-  }
-
-  private clearNotice(): void {
-    if (!this.noticeTimer) return;
-    clearTimeout(this.noticeTimer);
-    this.noticeTimer = 0;
-  }
 
   // ---------------------------------------------------------------- 左栏：带谁去
 
@@ -647,8 +623,6 @@ export class SetupScreen {
     purseBox.appendChild(this.historyButton);
     top.appendChild(purseBox);
     this.root.appendChild(top);
-    this.noticeBox.hidden = true;
-    this.root.appendChild(this.noticeBox);
 
     const body = el('div', 'setup-body');
 

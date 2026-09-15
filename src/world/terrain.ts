@@ -577,14 +577,6 @@ export class Terrain {
     return out;
   }
 
-  /** 把一个点拉回场内。 */
-  clampToField(x: number, y: number, inset = 0): { x: number; y: number } {
-    return {
-      x: clamp(x, inset, this.width - inset),
-      y: clamp(y, inset, this.height - inset),
-    };
-  }
-
   // ---------------------------------------------------------------- 烘焙地面
 
   /**

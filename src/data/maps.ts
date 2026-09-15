@@ -311,7 +311,3 @@ export const GameMaps: GameMapDef[] = [
   redSandSteppe,
   whiteRidgeSnowfield,
 ];
-
-export function mapById(id: string): GameMapDef {
-  return GameMaps.find((map) => map.id === id) ?? GameMaps[0];
-}

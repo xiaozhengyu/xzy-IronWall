@@ -112,11 +112,6 @@ export class Minimap {
     this.innerZoom = clamp(Number.isFinite(value) ? value : 1, MIN_ZOOM, MAX_ZOOM);
   }
 
-  /** 按倍率缩放内部视野。factor > 1 放大，factor < 1 缩小。 */
-  zoomBy(factor: number): void {
-    if (factor > 0) this.zoom = this.innerZoom * factor;
-  }
-
   draw(field: Field, battle: Battle, camera: Camera): void {
     if (this.terrainField !== field) this.bakeTerrain(field);
 

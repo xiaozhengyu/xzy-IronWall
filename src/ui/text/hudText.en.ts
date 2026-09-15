@@ -13,7 +13,6 @@ export const HUD_TEXT_EN: HudMessages = {
   nextWaveCountdown: 'NEXT WAVE IN {time}',
   waveProgress: '{completed} / {total} WAVES CLEARED',
   pauseHint: 'PRESS ESC TO PAUSE',
-  settings: 'SETTINGS',
   language: 'LANGUAGE',
   currencyInfo: 'CURRENCY',
   gold: 'GOLD',

@@ -200,6 +200,3 @@ export const brightenPalette = (palette: CharacterPalette, amount: number, glow:
   }
   return brightened as CharacterPalette;
 };
-
-export const paletteForFaction = (faction: number): CharacterPalette =>
-  faction === 0 ? PALETTE_BLUE : PALETTE_RED;

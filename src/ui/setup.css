@@ -852,14 +852,3 @@
 }
 
 /* 顶栏底下那行会自己消失的提示。压在三栏之上，不参与布局，所以它出现和消失都不会推动别的。 */
-.setup-notice {
-  position: absolute;
-  top: 46px;
-  right: 20px;
-  z-index: 4;
-  padding: 6px 12px;
-  color: #e8dcc0;
-  font-size: 12px;
-  background: rgba(11, 13, 18, 0.94);
-  border: 1px solid #3a4254;
-}

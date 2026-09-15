@@ -291,11 +291,6 @@ export class Hud {
     this.minimapDock.style.width = size;
   }
 
-  /** 1 显示整张地图；数值越大越靠近玩家。实际值会限制在 1..8。 */
-  setMinimapZoom(zoom: number): void {
-    this.minimap.zoom = zoom;
-  }
-
   /**
    * 备战界面期间收起来。
    *

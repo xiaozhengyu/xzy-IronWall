@@ -21,7 +21,6 @@ export interface HudMessages {
   waveProgress: string;
   /** 左上角那行淡字：告诉玩家 ESC 能暂停。按钮没了，这是唯一还说这件事的地方。 */
   pauseHint: string;
-  settings: string;
   language: string;
   currencyInfo: string;
   gold: string;

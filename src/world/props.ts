@@ -226,5 +226,3 @@ function campfire(
 
 /** 营火在夜里能照多远。留给以后做昼夜时用。 */
 export const FIRE_LIGHT_RADIUS = FIRE_HEIGHT * 1.7;
-
-export const PropSpec = { fireHeight: FIRE_HEIGHT };

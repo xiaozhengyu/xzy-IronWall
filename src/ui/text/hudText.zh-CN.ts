@@ -13,7 +13,6 @@ export const HUD_TEXT_ZH_CN: HudMessages = {
   nextWaveCountdown: '下一波倒计时 {time}',
   waveProgress: '已打完 {completed} / {total} 波',
   pauseHint: '按 ESC 暂停',
-  settings: '设置',
   language: '语言',
   currencyInfo: '货币信息',
   gold: '金币',

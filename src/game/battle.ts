@@ -1255,10 +1255,6 @@ export class Battle {
     return this.itemSlots[slot] ?? null;
   }
 
-  itemCount(id: string): number {
-    return this.itemSlots.find((entry) => entry?.id === id)?.count ?? 0;
-  }
-
   /**
    * 这一件现在收不收得下。
    *

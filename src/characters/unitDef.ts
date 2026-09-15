@@ -160,7 +160,6 @@ export const hammerLength = (def: UnitDef): number => 6.4 * def.reach;
  */
 export const HAMMER_HEAD_RADIUS = 2.05;
 
-export const isTwoHanded = (def: UnitDef): boolean => def.weapon === 'spear' || def.weapon === 'halberd' || def.weapon === 'bow';
 
 // ---------------------------------------------------------------- 预设
 

@@ -12,7 +12,6 @@ export const rgb = (r: number, g: number, b: number): Rgba => ({ r, g, b, a: 255
 export const rgba = (r: number, g: number, b: number, a: number): Rgba => ({ r, g, b, a });
 
 /** Pixi 的 fill 取 0xRRGGBB，alpha 单独给。 */
-export const toHex = (c: Rgba): number => (c.r << 16) | (c.g << 8) | c.b;
 
 export const lerpColor = (a: Rgba, b: Rgba, t: number): Rgba => ({
   r: Math.round(lerp(a.r, b.r, t)),

@@ -549,7 +549,6 @@ export const SKILL_HIT_MARGIN = 1.15;
  */
 export const WAVE_NEAR_HALF_WIDTH = 16;
 
-export const skillAt = (index: number): SkillDef => Skills[Math.max(0, Math.min(Skills.length - 1, index))];
 
 export const skillById = (id: SkillId): SkillDef => {
   const skill = Skills.find((entry) => entry.id === id);
