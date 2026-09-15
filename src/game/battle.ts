@@ -816,6 +816,19 @@ function rollDamage(
   return { value: Math.max(MIN_DAMAGE, Math.round(value)), crit: struck };
 }
 
+/**
+ * 战斗层只认这些语义，不认文件、AudioContext 或声部。浏览器入口把它们翻译成真正的音效。
+ * count 让队列即使在极端割草场面触顶，也能把同类事件压进一条记录而不无限长。
+ */
+export type BattleSoundEventId = 'hit' | 'critical' | 'pickup' | 'level-up' | 'boss-enter';
+
+export interface BattleSoundEvent {
+  id: BattleSoundEventId;
+  count: number;
+}
+
+const MAX_SOUND_EVENTS = 256;
+
 export class Battle {
   readonly player: Character;
   readonly enemies: Character[] = [];
@@ -832,6 +845,8 @@ export class Battle {
   readonly damageNumbers = new DamageNumbers();
   /** 地图上的掉落物。数值结算尚未接入，目前只负责生成、落地和吸附。 */
   readonly collectibles = new Collectibles();
+  /** 纯数据音效队列。只准由 main 抽干；Battle 永远不接触浏览器音频 API。 */
+  private readonly soundEvents: BattleSoundEvent[] = [];
   /** 当前一局实际拾取的宝石数，HUD 用于循环进度；暂不参与升级或奖励。 */
   collectedGems = 0;
   collectedCoins = 0;
@@ -848,6 +863,24 @@ export class Battle {
 
   /** 绑好的那一份，免得每帧现造一个闭包。 */
   private readonly acceptsPickup = (id: string): boolean => this.acceptsItem(id);
+
+  /**
+   * 取走这一帧积下来的声音语义。返回新数组，Battle 不再持有它，main 可以就地合并。
+   */
+  drainSoundEvents(): BattleSoundEvent[] {
+    return this.soundEvents.splice(0);
+  }
+
+  private emitSound(id: BattleSoundEventId, count = 1): void {
+    if (count <= 0) return;
+    if (this.soundEvents.length < MAX_SOUND_EVENTS) {
+      this.soundEvents.push({ id, count });
+      return;
+    }
+    // 离线 bench 不会有 main 来抽队列。触顶后只合并同类，内存仍有硬上限。
+    const same = this.soundEvents.find((event) => event.id === id);
+    if (same) same.count += count;
+  }
 
   kills = 0;
   deaths = 0;
@@ -1558,6 +1591,7 @@ export class Battle {
     const before = this.player.maxHp;
     this.applyPlayerStats();
     if (this.player.maxHp > before) this.player.hp += this.player.maxHp - before;
+    this.emitSound('level-up', this.heroLevel - leveledFrom);
     /*
      * 头顶飘一串金字：LV+1。
      *
@@ -2079,6 +2113,7 @@ export class Battle {
     this.warp.clear();
     this.damageNumbers.clear();
     this.collectibles.clear();
+    this.soundEvents.length = 0;
     this.collectedGems = 0;
     this.collectedCoins = 0;
     this.player.death = -1;
@@ -2585,9 +2620,11 @@ export class Battle {
     this.pickupTarget.pickupRange = player.stats.pickupRange;
     this.pickupTarget.accepts = this.acceptsPickup;
     this.collectibles.update(dt, this.pickupTarget);
-    this.collectedGems += this.collectibles.collected.gem;
-    this.collectedCoins += this.collectibles.collected.coin;
+    const collected = this.collectibles.collected;
+    this.collectedGems += collected.gem;
+    this.collectedCoins += collected.coin;
     for (const id of this.collectibles.collectedPickups) this.takeItem(id);
+    this.emitSound('pickup', collected.gem + collected.coin + collected.pickup);
     this.advanceTimedBonuses(dt);
     this.advanceRegens(dt);
     this.advancePlayerFloats(dt);
@@ -3161,6 +3198,7 @@ export class Battle {
       dirX: dx,
       dirY: dy,
     });
+    this.emitSound(roll.crit ? 'critical' : 'hit');
 
     // 没死就只闪一下白光（takeHit 里做的），不溅碎片也不掉东西。碎片是"这个人碎了"的信号，
     // 挨一下还站着的人溅出甲片会让玩家以为他已经死了。
@@ -4431,6 +4469,7 @@ export class Battle {
     const due = this.waves.takeBossDue();
     if (due > 0) {
       for (let i = 0; i < due; i++) this.spawn(view, resolveKind(BOSS_KIND));
+      this.emitSound('boss-enter', due);
       /*
        * 截止线**只给最后那一批**。
        *

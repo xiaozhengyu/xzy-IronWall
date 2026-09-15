@@ -2,16 +2,51 @@ import hudClickUrl from '../../assets/audio/hud_click.ogg';
 import { audioContext } from './mixer';
 
 /**
+ * 文件夹内文件名随意；每次构建由 Vite 收集全部 ogg/wav/mp3，同一文件夹内随机挑一件。
+ * glob 必须写成字面量，不能抽成接收目录名的函数，否则 Vite 无法在构建期找到素材。
+ */
+const footGrassUrls = Object.values(import.meta.glob(
+  '../../assets/audio/foot_grass/*.{ogg,wav,mp3}',
+  { eager: true, query: '?url', import: 'default' },
+)) as string[];
+const battleHitUrls = Object.values(import.meta.glob(
+  '../../assets/audio/battle_hit/*.{ogg,wav,mp3}',
+  { eager: true, query: '?url', import: 'default' },
+)) as string[];
+const battleCriticalUrls = Object.values(import.meta.glob(
+  '../../assets/audio/battle_critical/*.{ogg,wav,mp3}',
+  { eager: true, query: '?url', import: 'default' },
+)) as string[];
+const pickupUrls = Object.values(import.meta.glob(
+  '../../assets/audio/pickup/*.{ogg,wav,mp3}',
+  { eager: true, query: '?url', import: 'default' },
+)) as string[];
+const levelUpUrls = Object.values(import.meta.glob(
+  '../../assets/audio/level_up/*.{ogg,wav,mp3}',
+  { eager: true, query: '?url', import: 'default' },
+)) as string[];
+const bossEnterUrls = Object.values(import.meta.glob(
+  '../../assets/audio/boss_enter/*.{ogg,wav,mp3}',
+  { eager: true, query: '?url', import: 'default' },
+)) as string[];
+
+/**
  * 音效表：id → 文件。
  *
  * **这个文件只能被浏览器那一侧引到。** 和 items/pickupIcons.ts 分开的理由一模一样：
  * `.ogg` 一进来，esbuild 打 node 包时就没有 loader 了，`npm run bench` 和 tools/ 下那几个
  * 离线脚本会当场挂掉。战斗那一侧以后要发声，往队列里推 id 就行，不要从这里 import。
  *
- * 素材来自 Kenney.nl，CC0，可商用、不需要署名。
+ * hud-click 来自 Kenney.nl（CC0）；其余素材按 assets/audio/README.md 的目录投放。
  */
 const SOUND_URLS = {
-  'hud-click': hudClickUrl,
+  'hud-click': [hudClickUrl],
+  'foot-grass': footGrassUrls,
+  'battle-hit': battleHitUrls,
+  'battle-critical': battleCriticalUrls,
+  pickup: pickupUrls,
+  'level-up': levelUpUrls,
+  'boss-enter': bossEnterUrls,
 } as const;
 
 export type SoundId = keyof typeof SOUND_URLS;
@@ -33,12 +68,23 @@ interface SoundSpec {
 
 const SPECS: Record<SoundId, SoundSpec> = {
   'hud-click': { gap: 0.04, jitter: 0 },
+  // 触地本来就按步态一脚一次；这道短闸只挡低帧率相位跳变或重置造成的贴脸双响。
+  'foot-grass': { gap: 0.09, jitter: 0.035 },
+  'battle-hit': { gap: 0.035, jitter: 0.045 },
+  'battle-critical': { gap: 0.08, jitter: 0.025 },
+  pickup: { gap: 0.045, jitter: 0.035 },
+  'level-up': { gap: 0.5, jitter: 0 },
+  'boss-enter': { gap: 1, jitter: 0.015 },
 };
 
 export const specOf = (id: SoundId): SoundSpec => SPECS[id];
 
-const buffers = new Map<SoundId, AudioBuffer>();
-const leadIn = new Map<SoundId, number>();
+interface LoadedSample {
+  buffer: AudioBuffer;
+  leadIn: number;
+}
+
+const samples = new Map<SoundId, LoadedSample[]>();
 
 /** 低于这个幅度就当成静音。-50dB 左右，编码器留下的底噪都在这条线以下。 */
 const SILENCE = 0.003;
@@ -86,19 +132,25 @@ export async function loadSounds(): Promise<void> {
   const ctx = audioContext();
   if (!ctx) return;
   await Promise.all((Object.keys(SOUND_URLS) as SoundId[]).map(async (id) => {
-    try {
-      const response = await fetch(SOUND_URLS[id]);
-      if (!response.ok) return;
-      const buffer = await ctx.decodeAudioData(await response.arrayBuffer());
-      buffers.set(id, buffer);
-      leadIn.set(id, measureLeadIn(buffer));
-    } catch {
-      // 这一件没有就没有。
-    }
+    const loaded = await Promise.all(SOUND_URLS[id].map(async (url): Promise<LoadedSample | null> => {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) return null;
+        const buffer = await ctx.decodeAudioData(await response.arrayBuffer());
+        return { buffer, leadIn: measureLeadIn(buffer) };
+      } catch {
+        // 这一件没有就没有。同一个 id 的别的变体仍然可以正常用。
+        return null;
+      }
+    }));
+    const ready = loaded.filter((sample): sample is LoadedSample => sample !== null);
+    if (ready.length > 0) samples.set(id, ready);
   }));
 }
 
-export const bufferOf = (id: SoundId): AudioBuffer | null => buffers.get(id) ?? null;
-
-/** 播的时候从第几秒开始，跳掉前面那段空白。见 measureLeadIn。 */
-export const leadInOf = (id: SoundId): number => leadIn.get(id) ?? 0;
+/** 从一个逻辑音效的变体里随机拿一件；buffer 和它自己的前导静音必须绑在一起返回。 */
+export function sampleOf(id: SoundId): LoadedSample | null {
+  const variants = samples.get(id);
+  if (!variants || variants.length === 0) return null;
+  return variants[Math.floor(Math.random() * variants.length)];
+}

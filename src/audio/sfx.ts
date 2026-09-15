@@ -1,4 +1,4 @@
-import { bufferOf, leadInOf, specOf, type SoundId } from './bank';
+import { sampleOf, specOf, type SoundId } from './bank';
 import { audioContext, sfxDestination } from './mixer';
 
 /**
@@ -31,9 +31,9 @@ export interface PlayOptions {
 export function play(id: SoundId, options: PlayOptions = {}): void {
   const ctx = audioContext();
   const out = sfxDestination();
-  const buffer = bufferOf(id);
+  const sample = sampleOf(id);
   // 没解锁、没加载上、或者压根没有 AudioContext —— 一律静默不响。没声音不是错。
-  if (!ctx || !out || !buffer || ctx.state !== 'running') return;
+  if (!ctx || !out || !sample || ctx.state !== 'running') return;
   if (voices >= MAX_VOICES) return;
 
   const spec = specOf(id);
@@ -43,7 +43,7 @@ export function play(id: SoundId, options: PlayOptions = {}): void {
   lastPlayed.set(id, now);
 
   const source = ctx.createBufferSource();
-  source.buffer = buffer;
+  source.buffer = sample.buffer;
   if (spec.jitter > 0) {
     source.playbackRate.value = 1 + (Math.random() * 2 - 1) * spec.jitter;
   }
@@ -62,5 +62,5 @@ export function play(id: SoundId, options: PlayOptions = {}): void {
   source.onended = () => { voices--; };
   // 第二个参数是**从采样的第几秒开始放**，用它跳掉素材前面那段空白 —— 那一段是实打实的
   // 延迟，按钮按下去到听见响中间就隔着它。见 bank.ts 的 measureLeadIn。
-  source.start(0, leadInOf(id));
+  source.start(0, sample.leadIn);
 }

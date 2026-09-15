@@ -1,14 +1,22 @@
 import { Application } from 'pixi.js';
 import { RigSpec } from './characters/rig';
 import { PALETTE_HERO } from './characters/palette';
-import { Battle, HUMAN_PACE, PLAYER_RUN_SPEED, PLAYER_SPEED, PlayerPresets, playerPresetDisplayName } from './game/battle';
+import {
+  Battle,
+  HUMAN_PACE,
+  PLAYER_RUN_SPEED,
+  PLAYER_SPEED,
+  PlayerPresets,
+  playerPresetDisplayName,
+  type BattleSoundEventId,
+} from './game/battle';
 import { Character } from './game/character';
 import { ImpactEffects } from './effects/impact';
 import { skillById } from './game/skills';
 import { GameMaps, type GameMapDef } from './data/maps';
 import { Heroes } from './data/heroes';
 import type { HeroDef } from './data/types';
-import { SKILL_MAX_LEVEL, expToNextLevel } from './data/balance';
+import { BLAST_PER_ENEMY, SKILL_MAX_LEVEL, expToNextLevel } from './data/balance';
 import { unitAppearance } from './characters/unitDef';
 import { Profile } from './game/profile';
 import { gemsPerCard, resolveHeroStats } from './game/stats';
@@ -16,8 +24,9 @@ import { Skills } from './game/skills';
 import { ACTIVE_SKILL_CODES, SPRINT_SKILL, type ActiveSkillSlot } from './game/skillLoadout';
 import { Field } from './game/field';
 import { ItemCatalog } from './items/catalog';
-import { loadSounds } from './audio/bank';
+import { loadSounds, type SoundId } from './audio/bank';
 import { setSfxEnabled, unlock as unlockAudio } from './audio/mixer';
+import { play } from './audio/sfx';
 import { installUiClickSound } from './audio/uiClick';
 import { ItemSheet } from './items/renderer';
 import { loadPickupTextures, pickupIcon } from './items/pickupIcons';
@@ -461,6 +470,33 @@ function onKeyPressed(code: string): void {
 let lastFps = 0;
 
 /**
+ * 战斗语义到素材的唯一接线处。素材文件夹可以为空；文件一旦放进去，下次构建就直接生效，
+ * Battle 和 node bench 都不用动。
+ */
+const BATTLE_SOUND_IDS: Record<BattleSoundEventId, SoundId> = {
+  hit: 'battle-hit',
+  critical: 'battle-critical',
+  pickup: 'pickup',
+  'level-up': 'level-up',
+  'boss-enter': 'boss-enter',
+};
+
+/** 一帧只给同一个语义放一次；人越多越响，但仍受 sfx 的每 id 间隔和 24 声部总闸约束。 */
+function flushSoundEvents(): void {
+  const grass = field.footsteps.drainGrassContacts();
+  if (grass > 0) play('foot-grass', { gain: Math.min(1, 0.72 + grass * 0.08) });
+
+  const merged = new Map<BattleSoundEventId, number>();
+  for (const event of battle.drainSoundEvents()) {
+    merged.set(event.id, (merged.get(event.id) ?? 0) + event.count);
+  }
+  for (const [eventId, count] of merged) {
+    const soundId = BATTLE_SOUND_IDS[eventId];
+    play(soundId, { gain: Math.min(1, count * BLAST_PER_ENEMY) });
+  }
+}
+
+/**
  * 一帧三步：layout 把缓冲和镜头对齐到当前的窗口与颗粒度，battle.update 推进世界，
  * scene.draw 画出来。
  *
@@ -486,6 +522,7 @@ app.ticker.add((ticker) => {
   // 后台、断点、掉帧都会，夹一下省得人一口气瞬移出去。
   const dt = Math.min(ticker.deltaMS / 1000, 1 / 20);
   battle.update(dt, readInput(), viewOf());
+  flushSoundEvents();
   hud.update(dt);
   draw();
   // 倒地动画放完那一帧才判负（见 Battle 里 RESPAWN_DELAY 那一段），所以这里已经画过了 ——
