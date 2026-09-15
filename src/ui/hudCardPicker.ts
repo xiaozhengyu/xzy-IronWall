@@ -145,7 +145,7 @@ export class HudCardPicker {
 
   private hooks: HudCardHooks | null = null;
 
-  private readonly frame = new HudFrame({ skin: 'frame1', className: 'hud-card-panel' });
+  private readonly frame = new HudFrame({ className: 'hud-card-panel' });
   private readonly row = document.createElement('div');
   /** 牌底下那一行"我现在有什么"。 */
   private readonly cards: HTMLButtonElement[] = [];

@@ -1,9 +1,6 @@
 import './hudFrame.css';
 
-export type HudFrameSkin = 'frame1';
-
 export interface HudFrameOptions {
-  skin?: HudFrameSkin;
   className?: string;
   label?: string;
   width?: string;
@@ -21,13 +18,8 @@ export class HudFrame {
     this.root.className = ['hud-frame', options.className].filter(Boolean).join(' ');
     this.content.className = 'hud-frame-content';
     this.root.appendChild(this.content);
-    this.setSkin(options.skin ?? 'frame1');
     if (options.label) this.root.setAttribute('aria-label', options.label);
     if (options.width || options.height) this.setSize(options.width, options.height);
-  }
-
-  setSkin(skin: HudFrameSkin): void {
-    this.root.dataset.frameSkin = skin;
   }
 
   setSize(width?: string, height?: string): void {

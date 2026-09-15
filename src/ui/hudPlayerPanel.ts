@@ -95,7 +95,6 @@ export class HudPlayerPanel {
     this.text = text;
     this.name = options.name ?? null;
     this.frame = new HudFrame({
-      skin: 'frame1',
       className: options.className,
       label: text.value('playerInfo'),
     });

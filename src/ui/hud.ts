@@ -19,9 +19,9 @@ import { HurtFlash } from './hurtFlash';
 import { SPRINT_SKILL } from '../game/skillLoadout';
 import { cardCost } from '../data/balance';
 import { ITEM_SLOT_COUNT } from '../data/pickups';
-export { createHudButton, type HudButtonOptions, type HudButtonSkin } from './hudButton';
+export { createHudButton, type HudButtonOptions } from './hudButton';
 export { HudProgressBar, type HudProgressBarOptions } from './hudProgressBar';
-export { HudFrame, type HudFrameOptions, type HudFrameSkin } from './hudFrame';
+export { HudFrame, type HudFrameOptions } from './hudFrame';
 export { createHudIcon, HUD_ICON_URLS, type HudIconName } from './hudIcons';
 export { HudWavePanel, type HudWavePanelOptions } from './hudWavePanel';
 export { HudPlayerPanel, type HudPlayerPanelOptions } from './hudPlayerPanel';
@@ -162,13 +162,11 @@ export class Hud {
     const pauseButton = createHudButton({
       label: this.text.value('pause'),
       icon: 'pause',
-      skin: 'button4',
       className: 'hud-minimap-button',
     });
     const settingsButton = createHudButton({
       label: this.text.value('settings'),
       icon: 'settings',
-      skin: 'button4',
       className: 'hud-minimap-button',
     });
     pauseButton.addEventListener('click', () => options.requestPause?.());
@@ -254,7 +252,6 @@ export class Hud {
 
   private createCurrencyFrame(): HudFrame {
     const frame = new HudFrame({
-      skin: 'frame1',
       className: 'hud-currency-info',
       label: this.text.value('currencyInfo'),
     });

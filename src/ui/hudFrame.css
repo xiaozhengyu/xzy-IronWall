@@ -12,7 +12,7 @@
 }
 
 .hud-frame {
-  --hud-frame-image: url('../../assets/hud/frame/frame-base1.png');
+  --hud-frame-image: url('../../assets/hud/frame/panel-frame.png');
   --hud-frame-slice: 112;
 }
 

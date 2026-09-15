@@ -41,7 +41,6 @@ export class HudWavePanel {
   constructor(text: HudText, options: HudWavePanelOptions = {}) {
     this.text = text;
     this.frame = new HudFrame({
-      skin: 'frame1',
       className: options.className,
       label: text.value('wavePanel'),
     });
