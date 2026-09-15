@@ -1,7 +1,14 @@
+/**
+  * 支持的语言。
+  *
+  * 放在这个文件而不是 hudText.ts，因为存档（game/profile.ts）要存玩家选的语言，而
+  * hudText.ts 第一行就 import 了一张 css —— 那会把一张样式表拖进纯数据那一侧，连带
+  * 把离线跑数的那几个脚本弄坏（esbuild 打 node 包时没有 css 的 loader）。这个文件只有类型。
+  */
+export type HudLocale = 'zh-CN' | 'en';
+
 export interface HudMessages {
   gameTitle: string;
-  playerInfo: string;
-  playerName: string;
   playerLevel: string;
   health: string;
   mana: string;
@@ -12,8 +19,10 @@ export interface HudMessages {
   finalStandTitle: string;
   nextWaveCountdown: string;
   waveProgress: string;
-  pause: string;
+  /** 左上角那行淡字：告诉玩家 ESC 能暂停。按钮没了，这是唯一还说这件事的地方。 */
+  pauseHint: string;
   settings: string;
+  language: string;
   currencyInfo: string;
   gold: string;
   energy: string;

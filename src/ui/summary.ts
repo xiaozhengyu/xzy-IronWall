@@ -1,6 +1,7 @@
 import './summary.css';
 import { createHudIcon } from './hudIcons';
 import { HudText } from './text/hudText';
+import type { HudLocale } from './text/hudText.types';
 import { currentItems } from './currentItems';
 import { Confetti } from './confetti';
 import type { ItemStripEntry } from './itemStrip';
@@ -16,8 +17,8 @@ import type { ItemStripEntry } from './itemStrip';
  * 做成一块而不是两块，理由和 Menu 把加载条和暂停合在一起是同一条：两者要显示的东西
  * 一模一样，差别只在标题和底下那排按钮。拆开会得到两份一样的布局，改一处就得改两遍。
  *
- * 和暂停面板的分工：那一块是**调试菜单**（帧率、图元、波次跳转、天气开关），只由 HUD 上的
- * 系统按钮打开；这一块是**玩家看的流程页**，由 ESC 和游戏结束打开。两者都会把世界冻住，
+ * 和暂停面板的分工：那一块是**调试菜单**（帧率、图元、波次跳转、天气开关），只由
+ * F1 打开；这一块是**玩家看的流程页**，由 ESC 和游戏结束打开。两者都会把世界冻住，
  * 但它们回答的不是同一个问题。
  */
 
@@ -69,6 +70,8 @@ export interface SummaryHooks {
   onEnd(): void;
   /** 确认，回到选人画面（只有最终结算有）。 */
   onConfirm(): void;
+  /** 设置那一行改了语言。存档由调用方去写 —— 这一屏不认识 Profile。 */
+  onLocaleChange?(locale: HudLocale): void;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -113,6 +116,9 @@ export class SummaryScreen {
   private readonly resumeButton = el('button', 'summary-btn main', '继续游戏');
   private readonly endButton = el('button', 'summary-btn', '结束游戏');
   private readonly confirmButton = el('button', 'summary-btn main', '确认');
+  /** 底下那一行设置。语言在这儿，以后音效和音乐也进这一行。 */
+  private readonly settings = el('div', 'summary-settings');
+  private localeButtons: HTMLButtonElement[] = [];
   /** “结束游戏”按过一下了、正等第二下。见 armEnd()。 */
   private endArmed = false;
   /** 赢了那一屏的礼花。输了不放 —— 见 confetti.ts。 */
@@ -292,6 +298,46 @@ export class SummaryScreen {
     this.endButton.addEventListener('blur', () => this.disarmEnd());
     this.confirmButton.addEventListener('click', () => this.hooks.onConfirm());
     card.appendChild(this.actions);
+    card.appendChild(this.buildSettings());
+  }
+
+  /**
+   * 按钮行下面那一排设置。
+   *
+   * 为什么落在这一屏上：ESC 是玩家在一局之内唯一会停下来的地方，而设置本来就该在"停下来"
+   * 的时候改。为它另开一块面板要多按一下、多写一套进出场，而这一行现在只有一个开关。
+   *
+   * 语言按钮直接写各自语言里的写法（中文 / EN），不跟着当前语言翻译 —— 一个英文玩家在满屏
+   * 中文里要找的就是"EN"这两个字母，把它翻成中文等于把出口藏起来。
+   */
+  private buildSettings(): HTMLElement {
+    const label = el('span', 'summary-settings-label');
+    this.text.bindText(label, 'language');
+    const group = el('div', 'summary-settings-group');
+    const locales: Array<[HudLocale, string]> = [['zh-CN', '中文'], ['en', 'EN']];
+    for (const [locale, caption] of locales) {
+      const button = el('button', 'summary-chip', caption);
+      button.dataset.locale = locale;
+      button.addEventListener('click', () => {
+        this.text.setLocale(locale);
+        this.markLocale();
+        this.hooks.onLocaleChange?.(locale);
+      });
+      group.appendChild(button);
+    }
+    const row = el('div', 'summary-settings-row');
+    row.append(label, group);
+    this.settings.appendChild(row);
+    this.localeButtons = [...group.children] as HTMLButtonElement[];
+    this.markLocale();
+    return this.settings;
+  }
+
+  /** 当前这一档高亮。语言是从 HudText 问的，所以外面换了语言这里也跟得上。 */
+  private markLocale(): void {
+    for (const button of this.localeButtons) {
+      button.classList.toggle('on', button.dataset.locale === this.text.current);
+    }
   }
 
   /** 拿焦点、换字、换成主色。宽高和位置不动（见 summary.css 里的 .armed）。 */

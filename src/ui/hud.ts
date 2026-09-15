@@ -7,7 +7,6 @@ import { Minimap } from './minimap';
 import { HudProgressBar } from './hudProgressBar';
 import { HudCardPicker } from './hudCardPicker';
 import { HudFrame } from './hudFrame';
-import { createHudButton } from './hudButton';
 import { createHudIcon } from './hudIcons';
 import { startCursorBreathing } from './cursorImage';
 import { HudWavePanel } from './hudWavePanel';
@@ -19,7 +18,6 @@ import { HurtFlash } from './hurtFlash';
 import { SPRINT_SKILL } from '../game/skillLoadout';
 import { cardCost } from '../data/balance';
 import { ITEM_SLOT_COUNT } from '../data/pickups';
-export { createHudButton, type HudButtonOptions } from './hudButton';
 export { HudProgressBar, type HudProgressBarOptions } from './hudProgressBar';
 export { HudFrame, type HudFrameOptions } from './hudFrame';
 export { createHudIcon, HUD_ICON_URLS, type HudIconName } from './hudIcons';
@@ -67,15 +65,6 @@ export interface HudOptions {
   gemProgressHeight?: string;
   gemsPerCycle?: number;
   gemProgressSideOverhang?: number;
-  /** 暂停按钮：弹临时结算画面（继续 / 结束），和 ESC 是同一件事。 */
-  requestPause?: () => void;
-  /**
-   * 系统按钮：打开调试菜单。
-   *
-   * 它是调试菜单**唯一**的入口 —— ESC 和窗口失焦都走上面那条流程的路。分开之后，玩家
-   * 按 ESC 永远只会看到结算画面，不会一头撞进一屏帧率和图元数里。
-   */
-  requestSystemMenu?: () => void;
   locale?: HudLocale;
 }
 
@@ -108,6 +97,8 @@ export class Hud {
   private readonly vitals = document.createElement('div');
   private readonly progression = document.createElement('div');
   private readonly minimapDock = document.createElement('div');
+  /** 左上角那行淡字。见 build 里那段说明。 */
+  private readonly pauseHint = document.createElement('div');
   private readonly minimapElement = document.createElement('div');
   private readonly currencyValues = new Map<'gold' | 'energy', HTMLSpanElement>();
   private readonly quickbarResizeObserver: ResizeObserver;
@@ -139,7 +130,6 @@ export class Hud {
     // 血、蓝、等级、经验全部由 draw 每帧喂真值，所以初值给 0：面板自带的那套占位数
     // （22 级、268/300 血、82/120 蓝）会在第一帧之前闪一下，那一下说的是假话。
     this.playerInfo = new HudPlayerPanel(this.text, {
-      className: 'hud-player-info',
       level: 1,
       health: 0,
       maxHealth: 1,
@@ -156,25 +146,23 @@ export class Hud {
     this.playerInfo.mountSections(this.vitals, this.progression);
     this.currencyInfo.content.appendChild(this.progression);
 
-    this.minimapDock.className = 'hud-minimap-dock';
-    const minimapControls = document.createElement('div');
-    minimapControls.className = 'hud-minimap-controls';
-    const pauseButton = createHudButton({
-      label: this.text.value('pause'),
-      icon: 'pause',
-      className: 'hud-minimap-button',
-    });
-    const settingsButton = createHudButton({
-      label: this.text.value('settings'),
-      icon: 'settings',
-      className: 'hud-minimap-button',
-    });
-    pauseButton.addEventListener('click', () => options.requestPause?.());
-    settingsButton.addEventListener('click', () => options.requestSystemMenu?.());
-    this.text.bindAttribute(pauseButton, 'aria-label', 'pause');
-    this.text.bindAttribute(settingsButton, 'aria-label', 'settings');
-    minimapControls.append(pauseButton, settingsButton);
+    /*
+     * 左上角那行淡字：按 ESC 暂停。
+     *
+     * 它接替的是刚被拿掉的那两个按钮。按钮本来就没人按 —— 打起来的时候没人会把鼠标挪到
+     * 屏幕角上去点一个 42 像素的图标，而它们一直占着小地图上方那一条。但"能暂停"这件事
+     * 还是得有个地方说，否则新玩家只能靠猜。
+     *
+     * 做成水印而不是按钮，因为它要说的话只有第一局有用：读过一次就再也不需要了，而一个
+     * 按钮会永远占着那块地方。淡到几乎看不见，正好是"找的时候找得到、不找的时候不碍事"。
+     * aria-hidden：它是给眼睛看的提示，读屏走的是各自控件上的 aria-label。
+     */
+    this.pauseHint.className = 'hud-pause-hint';
+    this.pauseHint.setAttribute('aria-hidden', 'true');
+    this.text.bindText(this.pauseHint, 'pauseHint');
+    this.root.appendChild(this.pauseHint);
 
+    this.minimapDock.className = 'hud-minimap-dock';
     this.minimapElement.className = 'hud-minimap';
     this.setMinimapSize(options.minimapSize ?? MINIMAP_SETTINGS.size);
     this.minimap = new Minimap(options.minimapZoom ?? MINIMAP_SETTINGS.zoom);
@@ -190,7 +178,7 @@ export class Hud {
     this.minimapLayer.appendChild(this.minimap.canvas);
 
     this.minimapElement.append(frame, this.minimapLayer);
-    this.minimapDock.append(minimapControls, this.minimapElement, this.currencyInfo.root);
+    this.minimapDock.append(this.minimapElement, this.currencyInfo.root);
     this.root.appendChild(this.minimapDock);
     const cycle = options.gemsPerCycle ?? GEM_PROGRESS_SETTINGS.gemsPerCycle;
     this.gemsPerCycle = Number.isFinite(cycle) ? Math.max(1, Math.floor(cycle)) : GEM_PROGRESS_SETTINGS.gemsPerCycle;

@@ -1,5 +1,4 @@
-.hud-frame,
-.hud-button {
+.hud-frame {
   --hud-frame-border: 26px;
   --hud-frame-fill-inset: 1px;
   --hud-frame-content-inset: 12px;
@@ -16,8 +15,7 @@
   --hud-frame-slice: 112;
 }
 
-.hud-frame::before,
-.hud-button::before {
+.hud-frame::before {
   content: '';
   position: absolute;
   inset: var(--hud-frame-fill-inset);
@@ -27,8 +25,7 @@
   pointer-events: none;
 }
 
-.hud-frame::after,
-.hud-button::after {
+.hud-frame::after {
   content: '';
   position: absolute;
   inset: 0;

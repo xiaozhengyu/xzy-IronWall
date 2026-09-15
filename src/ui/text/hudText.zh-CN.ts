@@ -2,8 +2,6 @@ import type { HudMessages } from './hudText.types';
 
 export const HUD_TEXT_ZH_CN: HudMessages = {
   gameTitle: '铁壁',
-  playerInfo: '玩家信息',
-  playerName: '玩家名称',
   playerLevel: '等级 {level}',
   health: '生命值 {value} / {maximum}',
   mana: '法力值 {value} / {maximum}',
@@ -14,8 +12,9 @@ export const HUD_TEXT_ZH_CN: HudMessages = {
   finalStandTitle: '倒 计 时',
   nextWaveCountdown: '下一波倒计时 {time}',
   waveProgress: '已打完 {completed} / {total} 波',
-  pause: '暂停',
+  pauseHint: '按 ESC 暂停',
   settings: '设置',
+  language: '语言',
   currencyInfo: '货币信息',
   gold: '金币',
   energy: '灵石',

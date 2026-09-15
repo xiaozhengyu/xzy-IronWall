@@ -307,3 +307,62 @@
 }
 
 /* 药和符那一行。样式在 itemStrip.css，这里只管它和上面那块战况隔开多远。 */
+
+/*
+ * 按钮行下面那一排设置。
+ *
+ * 和上面那两个按钮**刻意不是一个量级**：小、暗、贴着卡片底边。那两个按钮是这一屏的出口，
+ * 这一行是随手能改的东西，读起来就不该一样重。上面那条细线把两者分开。
+ */
+.summary-settings {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #262d3d;
+}
+
+.summary-settings-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.summary-settings-label {
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  color: #7c879d;
+}
+
+.summary-settings-group {
+  display: flex;
+  gap: 6px;
+}
+
+.summary-chip {
+  min-width: 52px;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: #8d98ad;
+  background: #161b27;
+  border: 1px solid #2c3444;
+  cursor: inherit;
+}
+
+.summary-chip:hover {
+  color: #cdd6e6;
+  border-color: #46516c;
+}
+
+/* 焦点环和那两个大按钮同一个理由去掉，见上面 .summary-btn:focus。 */
+.summary-chip:focus,
+.summary-chip:focus-visible {
+  outline: none;
+}
+
+.summary-chip.on {
+  color: #0f1218;
+  background: #b9a87f;
+  border-color: #cdbd93;
+}

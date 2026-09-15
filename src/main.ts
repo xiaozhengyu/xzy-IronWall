@@ -62,9 +62,9 @@ import './style.css';
  *   setup     —— 备战：选角色 → 选地图。烘完就直接进这里，没有单独的标题页。
  *   entering  —— 按下开始之后那一小段：界面盖着"正在进入"，底下在换角色、清场、铺人。
  *   playing   —— 世界在跑。
- *   interlude —— ESC 或者 HUD 上的暂停按钮：临时结算画面，出口是"继续游戏"或"结束游戏"。
+ *   interlude —— ESC：临时结算画面，出口是"继续游戏"或"结束游戏"。
  *   result    —— 这一局结束了（主动结束或者被打倒）：最终结算，出口只有"确认"，回 setup。
- *   paused    —— 调试菜单。**只由 HUD 上的系统按钮打开**，和 ESC 无关。
+ *   paused    —— 调试菜单。**只由 F1 打开**，和 ESC 无关。
  *
  * setup → entering → playing → interlude → result → setup 就是那个圈。
  *
@@ -213,10 +213,9 @@ await app.init({
 });
 gameViewport.appendChild(app.canvas);
 const hud = new Hud(gameViewport, {
-  // 暂停按钮和 ESC 是同一件事：临时结算。
-  requestPause: () => openInterlude(),
-  // 系统按钮是调试菜单**唯一**的入口。
-  requestSystemMenu: () => openDebugMenu(),
+  // 上次选的语言。HUD 这一份 HudText 是全局唯一的一份 —— 结算屏上那排语言按钮换的就是它，
+  // 所以换完 HUD 当场跟着变，不用再往下传一遍。
+  locale: profile.locale,
 });
 
 const scene = new Scene(app.renderer, camera);
@@ -310,9 +309,11 @@ const controls = new Controls(app.canvas as HTMLCanvasElement, camera, {
   // 备战界面盖在画布上，点它不该把游戏"继续"起来 —— 那时候还没选完地图。
   // 最终结算（result）也不认：那一局已经结束了，只能按"确认"回选人。
   canActivate: () => state === 'playing' || state === 'paused' || state === 'interlude',
+  // F1：调试菜单。按钮拿掉之后这是它唯一的入口。
+  onDebugMenu: () => openDebugMenu(),
   onEscape: () => {
     // ESC 只管流程这一条线：打仗时弹临时结算，结算画面上按第二下等于"继续游戏"。
-    // 调试菜单开着的时候它什么也不做 —— 那块面板是系统按钮开的，就该由它自己的按钮关。
+    // 调试菜单开着的时候它什么也不做 —— 那块面板是 F1 开的，就该由它自己的按钮关。
     if (state === 'playing') openInterlude();
     else if (state === 'interlude') controls.resume();
   },
@@ -321,7 +322,7 @@ const controls = new Controls(app.canvas as HTMLCanvasElement, camera, {
 /**
  * 下一次"掉出游戏"该弹哪一块面板。
  *
- * 只有系统按钮会把它改成 'debug'，而且用完立刻弹回 —— 失去焦点、ESC、暂停按钮全部落在
+ * 只有 F1 会把它改成 'debug'，而且用完立刻弹回 —— 失去焦点和 ESC 全部落在
  * 流程那条路上。用一个一次性的目标而不是给 Controls.pause 加参数，是因为掉出游戏的路不止
  * 一条（还有 blur 和 visibilitychange，它们在 Controls 内部），而它们都该走默认那一条。
  */
@@ -669,14 +670,14 @@ let lastLevelUp = 0;
 /** 结算那一屏退出去要多久。和 summary.ts 里那条对齐。 */
 const SUMMARY_EXIT_MS = 200;
 
-/** ESC 或者 HUD 上的暂停按钮：把世界停住，弹临时结算。 */
+/** ESC：把世界停住，弹临时结算。 */
 function openInterlude(): void {
   if (state !== 'playing') return;
   pauseTarget = 'interlude';
   controls.pause();
 }
 
-/** HUD 上的系统按钮：调试菜单。这是它唯一的入口。 */
+/** F1：调试菜单。这是它唯一的入口。 */
 function openDebugMenu(): void {
   if (state !== 'playing') return;
   pauseTarget = 'debug';
@@ -1361,7 +1362,9 @@ const summary = new SummaryScreen({
     quitToSetup();
   },
   onConfirm: () => quitToSetup(),
-});
+  // 语言存进档，下次打开还是这一档。
+  onLocaleChange: (locale) => profile.setLocale(locale),
+}, hud.text);
 
 const setup = new SetupScreen(
   {

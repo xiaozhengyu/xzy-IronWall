@@ -1,9 +1,7 @@
 import './hudText.css';
 import { HUD_TEXT_EN } from './hudText.en';
-import type { HudMessages, HudTextKey, HudTextParams } from './hudText.types';
+import type { HudLocale, HudMessages, HudTextKey, HudTextParams } from './hudText.types';
 import { HUD_TEXT_ZH_CN } from './hudText.zh-CN';
-
-export type HudLocale = 'zh-CN' | 'en';
 
 const BUNDLES: Record<HudLocale, HudMessages> = {
   'zh-CN': HUD_TEXT_ZH_CN,
@@ -25,6 +23,11 @@ export class HudText {
 
   constructor(locale: HudLocale = 'zh-CN') {
     this.locale = locale;
+  }
+
+  /** 当前是哪一档。界面上那一排语言按钮要靠它决定哪个高亮。 */
+  get current(): HudLocale {
+    return this.locale;
   }
 
   setLocale(locale: HudLocale): void {
@@ -63,4 +66,4 @@ export class HudText {
   }
 }
 
-export type { HudTextKey, HudTextParams } from './hudText.types';
+export type { HudLocale, HudTextKey, HudTextParams } from './hudText.types';

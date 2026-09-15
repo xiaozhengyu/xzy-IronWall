@@ -29,33 +29,40 @@
   user-select: none;
 }
 
+/**
+ * 左上角那行淡字：按 ESC 暂停。
+ *
+ * 和右上角的小地图上下对齐（同一个 1.6%），左右各自贴着自己那一边 —— 它读起来才像画框的
+ * 一部分，而不是浮在战场上的一句话。
+ *
+ * opacity 0.28 是刻意压到"不找就看不见"的：这句话只有第一局有用，此后每一局它都只是噪音。
+ * pointer-events: none —— 它盖在战场上，鼠标必须能穿过去，否则左上角那一小块点不动人。
+ */
+.hud-pause-hint {
+  position: absolute;
+  top: var(--hud-minimap-top);
+  left: var(--hud-minimap-right);
+  opacity: 0.28;
+  color: #ece7da;
+  font-family: Consolas, 'Courier New', 'Microsoft YaHei UI', 'Microsoft YaHei', monospace;
+  font-size: calc(15px * var(--hud-font-scale, 1));
+  font-weight: 700;
+  font-synthesis: none;
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.85);
+  text-rendering: optimizeSpeed;
+  -webkit-font-smoothing: none;
+  pointer-events: none;
+  user-select: none;
+}
+
 .hud-minimap-dock {
   position: absolute;
   top: var(--hud-minimap-top);
   right: var(--hud-minimap-right);
 }
 
-.hud-minimap-controls {
-  display: flex;
-  justify-content: flex-end;
-  box-sizing: border-box;
-  height: 48px;
-  gap: 5px;
-  padding-right: 3px;
-}
-
-.hud-minimap-button {
-  width: 42px;
-  min-width: 42px;
-  height: 42px;
-  min-height: 42px;
-  padding: 8px;
-}
-
-.hud-minimap-button .hud-button-icon {
-  width: 23px;
-  height: 23px;
-}
 
 .hud-minimap {
   position: relative;

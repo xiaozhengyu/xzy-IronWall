@@ -2,8 +2,6 @@ import type { HudMessages } from './hudText.types';
 
 export const HUD_TEXT_EN: HudMessages = {
   gameTitle: 'IronWall',
-  playerInfo: 'PLAYER INFO',
-  playerName: 'PLAYER NAME',
   playerLevel: 'Lv. {level}',
   health: 'HEALTH {value} / {maximum}',
   mana: 'MANA {value} / {maximum}',
@@ -14,8 +12,9 @@ export const HUD_TEXT_EN: HudMessages = {
   finalStandTitle: 'COUNTDOWN',
   nextWaveCountdown: 'NEXT WAVE IN {time}',
   waveProgress: '{completed} / {total} WAVES CLEARED',
-  pause: 'PAUSE',
+  pauseHint: 'PRESS ESC TO PAUSE',
   settings: 'SETTINGS',
+  language: 'LANGUAGE',
   currencyInfo: 'CURRENCY',
   gold: 'GOLD',
   energy: 'SPIRIT STONES',

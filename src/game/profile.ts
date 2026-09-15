@@ -16,6 +16,7 @@ import { MAX_LEVEL, expToNextLevel } from '../data/balance';
 import { MASTERY_MAX, ROOT_MAX_RANK, Roots, SUPPLY_MAX } from '../data/shop';
 import type { StatBonus } from '../data/types';
 import { Heroes } from '../data/heroes';
+import type { HudLocale } from '../ui/text/hudText.types';
 
 const STORAGE_KEY = 'ironwall.profile.v1';
 
@@ -75,6 +76,11 @@ export interface RunRecord {
   at: number;
 }
 
+/** 存档里那一份设置。以后加音效、音乐开关就往这里加字段。 */
+export interface ProfileSettings {
+  locale: HudLocale;
+}
+
 export interface ProfileData {
   version: number;
   coins: number;
@@ -91,6 +97,13 @@ export interface ProfileData {
   mastery: Partial<Record<string, number>>;
   /** 屯着的补给，进图那一刻发到快捷栏。 */
   supplies: Partial<Record<string, number>>;
+  /**
+   * 设置。全账号一份，和角色无关。
+   *
+   * 单独一个对象而不是几个平铺的字段：以后要加的音效、音乐开关是同一类东西，加在这里面
+   * 只动一行，而 load 那边的补默认值也只补这一个对象。
+   */
+  settings: ProfileSettings;
   /** 上次选的角色和地图，回到备战界面时停在原处。 */
   lastHero: string;
   lastMap: string;
@@ -113,6 +126,10 @@ function freshRecord(): HeroRecord {
   };
 }
 
+function freshSettings(): ProfileSettings {
+  return { locale: 'zh-CN' };
+}
+
 function freshProfile(): ProfileData {
   const heroes: Record<string, HeroProgress> = {};
   const records: Record<string, HeroRecord> = {};
@@ -128,6 +145,7 @@ function freshProfile(): ProfileData {
     roots: {},
     mastery: {},
     supplies: {},
+    settings: freshSettings(),
     lastHero: Heroes[0].id,
     lastMap: 'proving',
   };
@@ -167,6 +185,8 @@ export class Profile {
       profile.data.roots ??= {};
       profile.data.mastery ??= {};
       profile.data.supplies ??= {};
+      // 设置也是后加的。整份补默认，再把旧存档里已有的字段盖回去。
+      profile.data.settings = { ...freshSettings(), ...(parsed.settings ?? {}) };
       for (const hero of Heroes) {
         if (!profile.data.heroes[hero.id]) profile.data.heroes[hero.id] = freshProgress();
         if (!profile.data.records[hero.id]) profile.data.records[hero.id] = freshRecord();
@@ -345,6 +365,16 @@ export class Profile {
     this.data.supplies = {};
     if (out.length > 0) this.save();
     return out;
+  }
+
+  get locale(): HudLocale {
+    return this.data.settings.locale;
+  }
+
+  setLocale(locale: HudLocale): void {
+    if (this.data.settings.locale === locale) return;
+    this.data.settings.locale = locale;
+    this.save();
   }
 
   get lastHero(): string {

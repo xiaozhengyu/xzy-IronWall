@@ -1,20 +1,9 @@
-import avatarFrameUrl from '../../assets/hud/role/avatar-frame.png';
 import experienceFrameUrl from '../../assets/hud/role/experience-bar-frame.png';
 import statusBarFrameUrl from '../../assets/hud/role/status-bar-frame.png';
-import { drawCharacterUpperBody } from '../characters/renderer';
-import type { Character } from '../game/character';
-import { v2 } from '../core/math';
-import type { Rgba } from '../render/color';
-import { Projection } from '../render/projection';
-import { Projector } from '../render/projector';
-import { ShapeBatch, type PrimitiveSink } from '../render/shapeBatch';
-import { HudFrame } from './hudFrame';
 import type { HudText } from './text/hudText';
 import './hudPlayerPanel.css';
 
 export interface HudPlayerPanelOptions {
-  className?: string;
-  name?: string;
   level?: number;
   health?: number;
   maxHealth?: number;
@@ -29,60 +18,25 @@ type PlayerBar = {
   value: HTMLSpanElement;
 };
 
-class PortraitSink implements PrimitiveSink {
-  private readonly context: CanvasRenderingContext2D;
-
-  constructor(context: CanvasRenderingContext2D) {
-    this.context = context;
-  }
-
-  quad(
-    x0: number, y0: number,
-    x1: number, y1: number,
-    x2: number, y2: number,
-    x3: number, y3: number,
-    color: Rgba,
-  ): void {
-    const context = this.context;
-    context.beginPath();
-    context.moveTo(x0, y0);
-    context.lineTo(x1, y1);
-    context.lineTo(x2, y2);
-    context.lineTo(x3, y3);
-    context.closePath();
-    context.fillStyle = this.color(color);
-    context.fill();
-  }
-
-  ellipse(cx: number, cy: number, rx: number, ry: number, rotation: number, color: Rgba): void {
-    const context = this.context;
-    context.beginPath();
-    context.ellipse(cx, cy, rx, ry, rotation, 0, Math.PI * 2);
-    context.fillStyle = this.color(color);
-    context.fill();
-  }
-
-  private color(color: Rgba): string {
-    return `rgba(${color.r}, ${color.g}, ${color.b}, ${color.a / 255})`;
-  }
-}
-
-/** 纯显示的人物信息面板；数值接入可通过公开的 set 方法完成。 */
+/**
+ * 血条、蓝条、等级、经验这几个数值视图的所有者。
+ *
+ * **它自己不是一块面板** —— 没有外框，也没有一个属于它的容器。正式 HUD 把这五个视图分放在
+ * 两个地方（战斗栏和资源栏，见 mountSections），所以这个类存在的意义只剩"谁来建、谁来刷"。
+ *
+ * 原来它是一块完整的面板：一个九宫格外框，左边一张人物半身像，右边名字和等级。那一整套
+ * 从来没进过画面 —— 它的 root 一次都没有被 append 过，setAvatar 也没有任何人调；每一局里
+ * 建出来的是一块外框、一张空画布和一张盖在空画布上的头像框贴图，然后原地等着被垃圾回收。
+ * 真正在画面上的只有被 mountSections 搬走的那五个视图。所以那一套连同 avatar-frame.png
+ * 一起删了，留下的就是这个名字有点名不副实的类。
+ */
 export class HudPlayerPanel {
-  readonly frame: HudFrame;
-  readonly root: HTMLElement;
-
   private readonly text: HudText;
-  private readonly nameElement = document.createElement('span');
   private readonly levelElement = document.createElement('span');
   private readonly experienceValue = document.createElement('span');
   private readonly experienceBar = document.createElement('div');
-  private readonly avatarCanvas = document.createElement('canvas');
-  private readonly avatarShapes = new ShapeBatch();
-  private readonly avatarSink: PortraitSink;
   private readonly healthBar: PlayerBar;
   private readonly manaBar: PlayerBar;
-  private name: string | null;
   private level = 1;
   private health = 0;
   private maxHealth = 1;
@@ -93,63 +47,31 @@ export class HudPlayerPanel {
 
   constructor(text: HudText, options: HudPlayerPanelOptions = {}) {
     this.text = text;
-    this.name = options.name ?? null;
-    this.frame = new HudFrame({
-      className: options.className,
-      label: text.value('playerInfo'),
-    });
-    this.root = this.frame.root;
-    this.frame.content.classList.add('hud-player-panel-content');
-    text.bindAttribute(this.root, 'aria-label', 'playerInfo');
-
-    const avatar = document.createElement('div');
-    avatar.className = 'hud-player-avatar';
-    this.avatarCanvas.className = 'hud-player-avatar-canvas';
-    this.avatarCanvas.width = 144;
-    this.avatarCanvas.height = 128;
-    this.avatarCanvas.setAttribute('aria-hidden', 'true');
-    const avatarContext = this.avatarCanvas.getContext('2d');
-    if (!avatarContext) throw new Error('2D canvas is required for the HUD player portrait');
-    avatarContext.imageSmoothingEnabled = false;
-    this.avatarSink = new PortraitSink(avatarContext);
-    avatar.append(this.avatarCanvas, this.createFrameImage(avatarFrameUrl, 'hud-player-avatar-frame'));
-
-    const header = document.createElement('div');
-    header.className = 'hud-player-header';
-    this.nameElement.className = 'hud-text hud-text--pixel hud-player-name';
-    this.levelElement.className = 'hud-text hud-text--pixel hud-text--gold hud-player-level';
-    header.append(this.nameElement, this.levelElement);
 
     this.healthBar = this.createStatusBar('health');
     this.manaBar = this.createStatusBar('mana');
+    this.levelElement.className = 'hud-text hud-text--pixel hud-text--gold hud-player-level';
 
-    const experienceBar = this.experienceBar;
-    experienceBar.className = 'hud-player-experience-bar';
+    this.experienceBar.className = 'hud-player-experience-bar';
     const experienceClip = document.createElement('div');
     experienceClip.className = 'hud-player-experience-clip';
     const experienceFill = document.createElement('span');
     experienceFill.className = 'hud-player-experience-fill';
     experienceClip.append(experienceFill);
-    experienceBar.append(experienceClip,
+    this.experienceBar.append(experienceClip,
       this.createFrameImage(experienceFrameUrl, 'hud-player-experience-frame'));
 
     this.experienceValue.className = 'hud-text hud-text--pixel hud-player-experience-value';
-    this.frame.content.append(avatar, header, this.healthBar.root, this.manaBar.root,
-      experienceBar, this.experienceValue);
 
-    this.setLevel(options.level ?? 22);
-    this.setHealth(options.health ?? 268, options.maxHealth ?? 300);
-    this.setMana(options.mana ?? 82, options.maxMana ?? 120);
-    this.setExperience(options.experience ?? 2845, options.maxExperience ?? 4500);
+    // 这几个视图先无主地挂在这儿，由 mountSections 分发到战斗栏和资源栏。面板自己不再有
+    // 容器 —— 它现在只是这五个视图的所有者，见类头上那段说明。
+    this.setLevel(options.level ?? 1);
+    this.setHealth(options.health ?? 0, options.maxHealth ?? 1);
+    this.setMana(options.mana ?? 0, options.maxMana ?? 1);
+    this.setExperience(options.experience ?? 0, options.maxExperience ?? 1);
     this.refreshText();
     text.onChange(() => this.refreshText());
   }
-
-  setName(name?: string): void {
-    this.name = name?.trim() || null;
-    this.refreshText();
-  }
-
   /** 正式 HUD 将同一套数值视图分放在战斗栏和资源栏，更新接口保持一致。 */
   mountSections(vitals: HTMLElement, progression: HTMLElement): void {
     vitals.append(this.healthBar.root, this.manaBar.root);
@@ -160,21 +82,6 @@ export class HudPlayerPanel {
   setLevel(level: number): void {
     this.level = this.normalizeCount(level, 1);
     this.refreshText();
-  }
-
-  setAvatar(character: Character): void {
-    const context = this.avatarCanvas.getContext('2d');
-    if (!context) return;
-    context.clearRect(0, 0, this.avatarCanvas.width, this.avatarCanvas.height);
-    this.avatarShapes.clear();
-    const projector = new Projector(
-      v2(this.avatarCanvas.width * 0.5, this.avatarCanvas.height * 1.02),
-      Math.PI * 0.5,
-      Projection.groundSquash,
-      7.2,
-    );
-    drawCharacterUpperBody(this.avatarShapes, character.pose, projector, character.palette, character.def);
-    this.avatarShapes.flushToMesh(this.avatarSink, this.avatarCanvas.width, this.avatarCanvas.height);
   }
 
   /**
@@ -240,7 +147,6 @@ export class HudPlayerPanel {
   }
 
   private refreshText(): void {
-    this.nameElement.textContent = this.name ?? this.text.value('playerName');
     this.levelElement.textContent = this.text.value('playerLevel', { level: this.level });
     this.refreshBar(this.healthBar, this.health, this.maxHealth, 'health');
     this.refreshBar(this.manaBar, this.mana, this.maxMana, 'mana');

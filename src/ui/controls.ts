@@ -8,11 +8,19 @@ export interface ControlHooks {
   /**
    * 按下了 ESC。
    *
-   * 它**不再**等于"暂停"。ESC 归游戏流程管（弹临时结算画面，见 ui/summary.ts），而调试
-   * 菜单只由 HUD 上的系统按钮打开 —— 两件事从这里就分开，Controls 自己不再替谁做决定。
-   * 长按不重复触发。
+   * 它**不再**等于"暂停"。ESC 归游戏流程管（弹临时结算画面，见 ui/summary.ts），调试
+   * 菜单走 F1 —— 两件事从这里就分开，Controls 自己不再替谁做决定。长按不重复触发。
    */
   onEscape(): void;
+  /**
+   * 按下了 F1：调试菜单。
+   *
+   * 原来这是 HUD 右上角那个系统按钮。按钮拿掉了 —— 激烈打起来的时候没人会把鼠标挪到
+   * 屏幕角上点两个 42 像素的图标，而它们一直占着小地图上方那一条。
+   *
+   * 和 ESC 一样长按不重复。F1 在浏览器里默认开帮助页，所以这一条**必须** preventDefault。
+   */
+  onDebugMenu(): void;
 }
 
 /**
@@ -112,6 +120,12 @@ export class Controls {
       if (event.code === 'Escape') {
         event.preventDefault();
         if (!event.repeat) hooks.onEscape();
+        return;
+      }
+      if (event.code === 'F1') {
+        // 不拦的话浏览器会开一个帮助页，游戏当场失焦 —— 那等于按一下 F1 就掉出游戏。
+        event.preventDefault();
+        if (!event.repeat) hooks.onDebugMenu();
         return;
       }
       if (!this.keys.has(event.code)) hooks.onKey(event.code);
