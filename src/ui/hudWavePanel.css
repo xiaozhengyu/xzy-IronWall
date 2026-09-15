@@ -25,43 +25,25 @@
 }
 
 /*
- * 决战那一段，波号这一行写的是"倒计时"。跟着下面那个数一起变红，但**不跟着闪** ——
- * 一个牌子和一个还在走的数一起闪，玩家读的是那个数，牌子只会把它扰乱。
+ * 决战那一段，波号这一行写的是"倒计时"，并且**只有这一行变红**。
+ *
+ * 下面那个数一直是金的：它整局都在走，玩家的眼神已经习惯了那一块颜色，让它在最紧张的
+ * 三分钟里换个样子，等于把唯一一个认得出的东西挪走。要拽回注意力，换上面那一行就够了。
  */
 .hud-wave-title--urgent {
   color: #ff5a44;
   text-shadow: 0 0 calc(6px * var(--hud-font-scale, 1)) rgba(255, 60, 40, 0.5);
 }
 
+/* 金色写在这里，不走通用类：原来这一档是 hud-text--gold 给的，而那个通用类在打包顺序里
+   会和组件自己的颜色抢，已经收掉了。倒计时整局都是这一个颜色。 */
 .hud-wave-timer {
-  color: #ddc68b;
+  color: #ffc431;
+  text-shadow: 0 2px 0 #5c2e00, 1px 0 0 #000, -1px 0 0 #000;
   font-size: 17px;
   line-height: 23px;
   letter-spacing: 0;
   text-align: center;
-}
-
-/*
- * 最后那三分钟：同一个位置换成红字，还跳。
- *
- * 金色那一档是"下一波什么时候来"，整局都在走，玩家早就不看了。最后这一条说的是另一件事 ——
- * 赢还是输就在这三分钟里，所以它得把眼神拽回来一次。
- */
-.hud-wave-timer--urgent {
-  color: #ff5a44;
-  text-shadow: 0 0 calc(6px * var(--hud-font-scale, 1)) rgba(255, 60, 40, 0.55);
-  animation: hud-wave-urgent 1s steps(2, end) infinite;
-}
-
-@keyframes hud-wave-urgent {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.55; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .hud-wave-timer--urgent {
-    animation: none;
-  }
 }
 
 .hud-wave-track {

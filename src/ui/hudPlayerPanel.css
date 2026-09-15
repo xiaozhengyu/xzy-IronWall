@@ -9,8 +9,12 @@
   pointer-events: none;
 }
 
+/* 金色和那圈褐边是从 hud-text--gold 搬下来的（那个类已经收掉，见 text/hudText.css）。
+   等级牌嵌在灵石条里时颜色另有一档，由 hud.css 的 .hud-resource-progression 那条接手。 */
 .hud-player-level {
   flex: none;
+  color: #ffc431;
+  text-shadow: 0 2px 0 #5c2e00, 1px 0 0 #000, -1px 0 0 #000;
   font-size: calc(13px * var(--hud-font-scale, 1));
   white-space: nowrap;
 }

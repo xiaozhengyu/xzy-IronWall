@@ -53,7 +53,7 @@ export class HudWavePanel {
     this.title.className = 'hud-text hud-text--pixel hud-wave-title';
     header.append(this.title);
 
-    this.timer.className = 'hud-text hud-text--pixel hud-text--gold hud-wave-timer';
+    this.timer.className = 'hud-text hud-text--pixel hud-wave-timer';
     this.waveTrack.className = 'hud-wave-track';
     this.waveTrack.setAttribute('role', 'img');
     this.frame.content.append(header, this.timer, this.waveTrack);
@@ -72,16 +72,15 @@ export class HudWavePanel {
   }
 
   /**
-   * 改成"清完首领还剩多久"那一档：字变红，**上面那行也不再写波号**。
+   * 改成"清完首领还剩多久"那一档：**上面那行变红，也不再写波号**，下面那个数不动。
    *
-   * 同一个位置换一个颜色，而不是另开一行：这两个倒数不会同时存在（最后一波之后就没有"下一波"
-   * 了），而玩家看时间的眼神已经习惯了往那儿扔。
+   * 同一个位置换内容，而不是另开一行：这两个倒数不会同时存在（最后一波之后就没有"下一波"
+   * 了），而玩家看时间的眼神已经习惯了往那儿扔 —— 所以那个数的样子恰恰不能变。
    *
-   * 波号也跟着换掉：走到这一步，"第几波"已经不是一个还在动的数了 —— 它永远是最后那一波。
+   * 波号跟着换掉：走到这一步，"第几波"已经不是一个还在动的数了 —— 它永远是最后那一波。
    * 把那一行腾出来写"倒计时"，整个面板就只说一件事：还剩多久。
    */
   setUrgent(on: boolean): void {
-    this.timer.classList.toggle('hud-wave-timer--urgent', on);
     if (on === this.urgent) return;
     this.urgent = on;
     this.title.classList.toggle('hud-wave-title--urgent', on);

@@ -420,6 +420,8 @@ ${entry.level} 级 → ${entry.level + 1} 级（伤害 +${gain}%，范围 +${rea
     const tag = document.createElement('span');
     tag.className = 'hud-text hud-text--pixel hud-card-tag';
     tag.hidden = true;
+    // 牌下面那行说明已经写了"等级 +1"，角标只是把它挑到轮廓上，读屏不必再念一遍。
+    tag.setAttribute('aria-hidden', 'true');
 
     card.append(stage, name, detail, tag);
     card.addEventListener('click', () => this.choose(index));
@@ -450,7 +452,8 @@ ${entry.level} 级 → ${entry.level + 1} 级（伤害 +${gain}%，范围 +${rea
     const tag = card.querySelector('.hud-card-tag') as HTMLElement;
     const kind = offer.skill ? (offer.obtain ? 'new' : 'up') : '';
     tag.hidden = kind === '';
-    tag.textContent = kind === 'new' ? 'NEW' : kind === 'up' ? '↑' : '';
+    // 升级那一版是空的：箭头由 CSS 切出来（见 hudCardPicker.css 的 --up::before）。
+    tag.textContent = kind === 'new' ? 'NEW' : '';
     tag.classList.toggle('hud-card-tag--new', kind === 'new');
     tag.classList.toggle('hud-card-tag--up', kind === 'up');
     (card.querySelector('.hud-card-name') as HTMLElement).textContent = offer.name;

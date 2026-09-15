@@ -50,7 +50,7 @@ export class HudPlayerPanel {
 
     this.healthBar = this.createStatusBar('health');
     this.manaBar = this.createStatusBar('mana');
-    this.levelElement.className = 'hud-text hud-text--pixel hud-text--gold hud-player-level';
+    this.levelElement.className = 'hud-text hud-text--pixel hud-player-level';
 
     this.experienceBar.className = 'hud-player-experience-bar';
     const experienceClip = document.createElement('div');

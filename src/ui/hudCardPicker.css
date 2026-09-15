@@ -144,19 +144,27 @@
 /*
  * 角标。压在牌的右上角，跨在边框上 —— 牌面里面已经排满了，而这一个要的是
  * "扫一眼三张牌就知道哪一张是新的"，它得在轮廓上。
+ *
+ * 两块牌子都是**浅底深字**，和 HUD 其余地方正好反过来：.hud-text 那条硬黑描边是给
+ * 深底浅字用的，落在这种小牌子上只会糊，所以显式关掉（兜底那条的特异性是 0，
+ * 见 text/hudText.css，组件写什么就是什么）。
  */
 .hud-card-tag {
   position: absolute;
-  top: -10px;
-  right: -8px;
-  min-width: 22px;
-  padding: 2px 7px;
-  border-radius: 10px;
-  font-size: calc(10px * var(--hud-font-scale, 1));
-  line-height: 1.3;
-  letter-spacing: 0.08em;
+  top: -12px;
+  right: -10px;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  min-width: 34px;
+  height: 26px;
+  padding: 0 9px;
+  border: 2px solid rgba(12, 10, 6, 0.85);
+  border-radius: 13px;
+  font-size: calc(13px * var(--hud-font-scale, 1));
+  line-height: 1;
+  letter-spacing: 0.1em;
   text-align: center;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
 }
 
 .hud-card-tag[hidden] {
@@ -165,17 +173,37 @@
 
 /* 新招：青。这一局里青一直是"没见过的东西"（灵石、进度条）。 */
 .hud-card-tag--new {
-  color: #05202a;
+  color: #04222d;
   background: #8bfaff;
-  box-shadow: 0 0 10px rgba(139, 250, 255, 0.45);
+  text-shadow: none;
+  box-shadow: 0 0 12px rgba(139, 250, 255, 0.6), 0 2px 4px rgba(0, 0, 0, 0.6);
 }
 
-/* 升级：金。和牌框、牌名同一套颜色 —— 它说的是"手上那一招又好了一点"。 */
+/*
+ * 升级：金。和牌框、牌名同一套颜色 —— 它说的是"手上那一招又好了一点"。
+ *
+ * 箭头是画出来的，不是打出来的：↑ 这个字形在系统等宽字体里又细又小，落在
+ * 26 像素的牌子里几乎看不出是个箭头（中文回退字体还会把它排成全角，挤歪整块）。
+ * clip-path 切出来的是实心块，多大都是同一个形状。
+ */
 .hud-card-tag--up {
-  color: #2a1d05;
+  width: 28px;
+  min-width: 0;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
   background: #f4ce72;
-  font-size: calc(12px * var(--hud-font-scale, 1));
-  box-shadow: 0 0 10px rgba(244, 206, 114, 0.45);
+  text-shadow: none;
+  box-shadow: 0 0 12px rgba(244, 206, 114, 0.6), 0 2px 4px rgba(0, 0, 0, 0.6);
+}
+
+.hud-card-tag--up::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  background: #2a1d05;
+  /* 上尖下杆：尖占上半，杆从腰线往下，两边各留三成。 */
+  clip-path: polygon(50% 0, 100% 48%, 72% 48%, 72% 100%, 28% 100%, 28% 48%, 0 48%);
 }
 
 .hud-card-name {

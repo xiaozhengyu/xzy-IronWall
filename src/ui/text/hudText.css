@@ -1,4 +1,16 @@
-.hud-text {
+/**
+ * HUD 文字的**兜底**色和描边：没人管的字长这样。
+ *
+ * :where() 把这一条的特异性压成 0，这不是写法讲究，是它必须让位：这个类和组件自己的
+ * 配色规则（.hud-card-detail、.hud-quick-slot-name……）都是单类，谁赢只看打包后谁排在
+ * 后面 —— 而这个文件按模块图排在几乎所有组件后面，于是十处组件配色被这一条默默盖掉，
+ * 一整屏字都退回同一个米白。压成 0 之后顺序不再说话：任何组件规则都盖得住它，而没有
+ * 组件规则的地方仍然是这个颜色。
+ *
+ * 同一个道理，这里不再放第二个配色类（原来有个 --gold）：通用配色类和组件配色是同一个
+ * 量级，谁赢只看打包顺序，哪一天顺序变了画面就跟着变 —— 颜色写在组件自己身上。
+ */
+:where(.hud-text) {
   color: #ece7da;
   text-shadow: 0 2px 0 #000, 1px 0 0 rgba(0, 0, 0, 0.9);
 }
@@ -13,9 +25,4 @@
   font-synthesis: none;
   text-rendering: optimizeSpeed;
   -webkit-font-smoothing: none;
-}
-
-.hud-text--gold {
-  color: #ffc431;
-  text-shadow: 0 2px 0 #5c2e00, 1px 0 0 #000, -1px 0 0 #000;
 }
