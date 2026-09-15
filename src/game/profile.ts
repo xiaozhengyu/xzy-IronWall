@@ -79,6 +79,8 @@ export interface RunRecord {
 /** 存档里那一份设置。以后加音效、音乐开关就往这里加字段。 */
 export interface ProfileSettings {
   locale: HudLocale;
+  /** 音效开关。音乐那条以后加在这儿。 */
+  sfx: boolean;
 }
 
 export interface ProfileData {
@@ -127,7 +129,7 @@ function freshRecord(): HeroRecord {
 }
 
 function freshSettings(): ProfileSettings {
-  return { locale: 'zh-CN' };
+  return { locale: 'zh-CN', sfx: true };
 }
 
 function freshProfile(): ProfileData {
@@ -374,6 +376,16 @@ export class Profile {
   setLocale(locale: HudLocale): void {
     if (this.data.settings.locale === locale) return;
     this.data.settings.locale = locale;
+    this.save();
+  }
+
+  get sfxEnabled(): boolean {
+    return this.data.settings.sfx;
+  }
+
+  setSfxEnabled(on: boolean): void {
+    if (this.data.settings.sfx === on) return;
+    this.data.settings.sfx = on;
     this.save();
   }
 

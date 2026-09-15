@@ -16,6 +16,9 @@ import { Skills } from './game/skills';
 import { ACTIVE_SKILL_CODES, SPRINT_SKILL, type ActiveSkillSlot } from './game/skillLoadout';
 import { Field } from './game/field';
 import { ItemCatalog } from './items/catalog';
+import { loadSounds } from './audio/bank';
+import { setSfxEnabled, unlock as unlockAudio } from './audio/mixer';
+import { installUiClickSound } from './audio/uiClick';
 import { ItemSheet } from './items/renderer';
 import { loadPickupTextures, pickupIcon } from './items/pickupIcons';
 import { ITEM_SLOT_COUNT, pickupById } from './data/pickups';
@@ -185,8 +188,11 @@ const TERRAIN_WEIGHT = 2;
 const FIELD_WEIGHT = 2;
 /** 物品精灵表：一次取图，比烘地面快得多，占一格就够。 */
 const SHEET_WEIGHT = 1;
+/** 音效：几个 KB 的小文件，和精灵表一档。 */
+const AUDIO_WEIGHT = 1;
 const BOOT_WORK =
-  RENDERER_WEIGHT + TERRAIN_WEIGHT + Field.BAKE_SLICES + SHEET_WEIGHT + FIELD_WEIGHT;
+  RENDERER_WEIGHT + TERRAIN_WEIGHT + Field.BAKE_SLICES + SHEET_WEIGHT + AUDIO_WEIGHT
+  + FIELD_WEIGHT;
 let bootDone = 0;
 
 /**
@@ -281,6 +287,20 @@ await itemSheet.load();
 // 取图得走 Assets.load，Pixi 的 Texture.from 只认缓存里的 id，不是加载器。
 await loadPickupTextures();
 bootDone += SHEET_WEIGHT;
+
+await boot('加载音效');
+/*
+ * 解锁挂在这儿，但真正解开是在玩家第一次按下鼠标的时候（见 mixer.unlock）。
+ * 正常玩下来，备战界面那个"开始游戏"就是那一下，所以进图之前一定已经解开了。
+ *
+ * 解码不需要 context 是 running 的，suspended 一样解得了，所以加载和解锁谁先谁后都行。
+ */
+unlockAudio();
+setSfxEnabled(profile.sfxEnabled);
+await loadSounds();
+// 界面上所有按钮的点击声。一个委托监听器管十八处按钮，见 audio/uiClick.ts。
+installUiClickSound();
+bootDone += AUDIO_WEIGHT;
 
 const battle = new Battle(field);
 const controls = new Controls(app.canvas as HTMLCanvasElement, camera, {
@@ -1364,7 +1384,15 @@ const summary = new SummaryScreen({
   onConfirm: () => quitToSetup(),
   // 语言存进档，下次打开还是这一档。
   onLocaleChange: (locale) => profile.setLocale(locale),
+  // 音效开关：当场生效（改总线音量），同时存进档。
+  onSfxChange: (on) => {
+    setSfxEnabled(on);
+    profile.setSfxEnabled(on);
+  },
 }, hud.text);
+// 存档里那一档先告诉结算屏，它那两个方块才知道哪个该亮。语言走的是共用的 HudText，
+// 不用再喂一次。
+summary.setSfxEnabled(profile.sfxEnabled);
 
 const setup = new SetupScreen(
   {

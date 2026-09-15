@@ -22,6 +22,9 @@ export interface HudMessages {
   /** 左上角那行淡字：告诉玩家 ESC 能暂停。按钮没了，这是唯一还说这件事的地方。 */
   pauseHint: string;
   language: string;
+  sound: string;
+  on: string;
+  off: string;
   currencyInfo: string;
   gold: string;
   energy: string;

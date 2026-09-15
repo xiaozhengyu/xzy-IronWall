@@ -72,6 +72,8 @@ export interface SummaryHooks {
   onConfirm(): void;
   /** 设置那一行改了语言。存档由调用方去写 —— 这一屏不认识 Profile。 */
   onLocaleChange?(locale: HudLocale): void;
+  /** 设置那一行开关了音效。同上，存档不归这一屏管。 */
+  onSfxChange?(on: boolean): void;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -119,6 +121,8 @@ export class SummaryScreen {
   /** 底下那一行设置。语言在这儿，以后音效和音乐也进这一行。 */
   private readonly settings = el('div', 'summary-settings');
   private localeButtons: HTMLButtonElement[] = [];
+  private sfxButtons: HTMLButtonElement[] = [];
+  private sfxOn = true;
   /** “结束游戏”按过一下了、正等第二下。见 armEnd()。 */
   private endArmed = false;
   /** 赢了那一屏的礼花。输了不放 —— 见 confetti.ts。 */
@@ -311,32 +315,71 @@ export class SummaryScreen {
    * 中文里要找的就是"EN"这两个字母，把它翻成中文等于把出口藏起来。
    */
   private buildSettings(): HTMLElement {
-    const label = el('span', 'summary-settings-label');
-    this.text.bindText(label, 'language');
-    const group = el('div', 'summary-settings-group');
-    const locales: Array<[HudLocale, string]> = [['zh-CN', '中文'], ['en', 'EN']];
-    for (const [locale, caption] of locales) {
-      const button = el('button', 'summary-chip', caption);
-      button.dataset.locale = locale;
-      button.addEventListener('click', () => {
-        this.text.setLocale(locale);
+    // 语言：按钮直接写各自语言里的写法，不跟着当前语言翻译。
+    this.localeButtons = this.chipRow('language',
+      [['zh-CN', '中文'], ['en', 'EN']],
+      (locale) => {
+        this.text.setLocale(locale as HudLocale);
         this.markLocale();
-        this.hooks.onLocaleChange?.(locale);
+        this.hooks.onLocaleChange?.(locale as HudLocale);
       });
-      group.appendChild(button);
-    }
-    const row = el('div', 'summary-settings-row');
-    row.append(label, group);
-    this.settings.appendChild(row);
-    this.localeButtons = [...group.children] as HTMLButtonElement[];
+
+    // 音效：开 / 关两档。这两个字要跟着语言翻，所以走 bindText。
+    this.sfxButtons = this.chipRow('sound', [['on', ''], ['off', '']], (value) => {
+      this.sfxOn = value === 'on';
+      this.markSfx();
+      this.hooks.onSfxChange?.(this.sfxOn);
+    }, ['on', 'off']);
+
     this.markLocale();
+    this.markSfx();
     return this.settings;
   }
 
+  /**
+   * 一行设置：左边一个标题，右边几个小方块。
+   *
+   * textKeys 传了就把每个方块的字也绑到文案表上（音效那行的"开/关"要跟着语言变），
+   * 不传就用写死的 caption（语言那行的"中文/EN"故意不翻）。
+   */
+  private chipRow(
+    labelKey: 'language' | 'sound',
+    values: Array<[string, string]>,
+    onPick: (value: string) => void,
+    textKeys?: Array<'on' | 'off'>,
+  ): HTMLButtonElement[] {
+    const label = el('span', 'summary-settings-label');
+    this.text.bindText(label, labelKey);
+    const group = el('div', 'summary-settings-group');
+    values.forEach(([value, caption], index) => {
+      const button = el('button', 'summary-chip', caption);
+      button.dataset.value = value;
+      const key = textKeys?.[index];
+      if (key) this.text.bindText(button, key);
+      button.addEventListener('click', () => onPick(value));
+      group.appendChild(button);
+    });
+    const row = el('div', 'summary-settings-row');
+    row.append(label, group);
+    this.settings.appendChild(row);
+    return [...group.children] as HTMLButtonElement[];
+  }
+
+  /** 外面（存档）先告诉这一屏音效当前是开是关。 */
+  setSfxEnabled(on: boolean): void {
+    this.sfxOn = on;
+    this.markSfx();
+  }
+
+  private markSfx(): void {
+    for (const button of this.sfxButtons) {
+      button.classList.toggle('on', button.dataset.value === (this.sfxOn ? 'on' : 'off'));
+    }
+  }
   /** 当前这一档高亮。语言是从 HudText 问的，所以外面换了语言这里也跟得上。 */
   private markLocale(): void {
     for (const button of this.localeButtons) {
-      button.classList.toggle('on', button.dataset.locale === this.text.current);
+      button.classList.toggle('on', button.dataset.value === this.text.current);
     }
   }
 
