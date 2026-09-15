@@ -1571,6 +1571,9 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
     // 这两串摆在前两串旁边就是为了看清“只差一个符号”这件事在这个尺寸下读不读得出来。
     numbers.spawn(20, -22, 432, { style: 'heal', sign: 'minus', label: 'HP', z: 0 });
     numbers.spawn(85, -22, 58, { style: 'mana', sign: 'minus', label: 'MP', z: 0 });
+    // 升级：全场最大的一档（2.2 倍）、金色。摆在亮甲色那半边上 —— 金字压在亮底上是它
+    // 唯一真正要扛的场面，压不住的话升级那一下就只剩一团晃眼的黄。
+    numbers.spawn(175, -22, 1, { style: 'level', sign: 'plus', label: 'LV', z: 0 });
     // 推到淡入刚结束：字模表要的是完全亮起来、还没开始上飘的那一帧。
     for (let k = 0; k < Math.round(0.13 / STEP); k++) numbers.update(STEP);
     numbers.draw(shapes, 0, 0, 0, baseline, GRAIN);

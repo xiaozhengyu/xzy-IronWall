@@ -152,6 +152,9 @@ const LETTER_ROWS: Record<string, readonly string[]> = {
   A: ['01110', '10001', '10001', '11111', '10001', '10001', '10001'],
   T: ['11111', '00100', '00100', '00100', '00100', '00100', '00100'],
   K: ['10001', '10010', '10100', '11000', '10100', '10010', '10001'],
+  // 升级那一串用的。和上面那几个同宽同高，笔画一样粗。
+  L: ['10000', '10000', '10000', '10000', '10000', '10000', '11111'],
+  V: ['10001', '10001', '10001', '10001', '01010', '01010', '00100'],
 };
 
 /**
@@ -162,6 +165,15 @@ const LETTER_ROWS: Record<string, readonly string[]> = {
  *
  * **13 是下限。** 11 像素下“蓝”和“速”已经糊成一团，试过。所以汉字牌子比旁边的数字高一截 ——
  * 这是点阵字的硬约束，不是排版失误。英文那一套（HP / MP / SPD / ATK）仍然是 5×7，和数字一般高。
+ *
+ * “等级”那两个是 15×13，比前四个再高一档，而且换了一种烘法。两件事是同一个原因：
+ * “级”的绞丝旁在 13 像素上必然糊成一坨 —— 它左边那三笔本身就要三列结构，右边还有一个
+ * “及”。而且**小号直接栅格化会把细笔画整条丢掉**（字形轮廓压根没盖住那一行的像素中心），
+ * 所以这两个字是先按 260 像素渲染、再面积平均缩到 15×13 再过阈值：细笔画在缩的时候留下
+ * 一个灰度，阈值那一步就还认得出它。前四个字当初是直接栅格的，没重烘 —— 它们本来就是干净的。
+ *
+ * 抬到 15 不影响别处：升级那一串本来就按 2.2 倍画（全场最大的一档），而排版是**底对齐**、
+ * 每个字自己报尺寸的，高一截只是这一串整体再高一点。
  */
 const CN_ROWS: Record<string, readonly string[]> = {
   '血': [
@@ -216,6 +228,36 @@ const CN_ROWS: Record<string, readonly string[]> = {
     '0000000110110',
     '0000001000001',
   ],
+  '等': [
+    '001100000100000',
+    '001111110111111',
+    '011011001000100',
+    '000000010000100',
+    '001111111111100',
+    '000000010000000',
+    '111111111111111',
+    '000000000011000',
+    '000000000011000',
+    '001111111111110',
+    '000010000010000',
+    '000011000010000',
+    '000000001110000',
+  ],
+  '级': [
+    '000100000000000',
+    '001100111111100',
+    '001000010001000',
+    '010011010001000',
+    '111110010001000',
+    '000100011001110',
+    '001000011000110',
+    '011110011100100',
+    '011000010101100',
+    '000010100011000',
+    '111101100011000',
+    '000011001100110',
+    '000000010000010',
+  ],
 };
 
 const GLYPHS: readonly Glyph[] = DIGIT_ROWS.map(bake);
@@ -239,20 +281,35 @@ export function setDamageNumberLanguage(next: DamageNumberLanguage): void {
   language = next;
 }
 
-/** 四个牌子各自的中文字。 */
-const CN_LABEL: Record<string, string> = { HP: '血', MP: '蓝', SPD: '速', ATK: '攻' };
+/**
+ * 每个牌子各自的中文字。没列在这儿的牌子中文模式下也走字母（见 labelGlyphsOf）。
+ *
+ * “等”和“级”是这里笔画最密的两个字，13 像素下已经贴着下限（“级”的绞丝旁几乎连成一片）。
+ * 之所以还是走 13：这四个牌子得一般高，为一个字单独抬一档会让那一串字比旁边的数字高出半截。
+ * 而升级这一串本来就按 2.2 倍画（全场最大的一档），放大之后这点密度是读得出来的。
+ */
+const CN_LABEL: Record<string, string> = { HP: '血', MP: '蓝', SPD: '速', ATK: '攻', LV: '等级' };
 
-/** 一个牌子拆成几个字模。中文一个字，英文两到三个字母。 */
+/**
+ * 一个牌子拆成几个字模。中文按字拆，英文按字母拆。
+ *
+ * 中文那一支拿不到字模时**回落到字母**，不是什么都不画。以前拿不到就返回空数组，
+ * 那意味着加一个新牌子而忘了烘字模时，中文下那一串字会**静静地消失** —— 数字还在，
+ * 牌子没了，而牌子正是它存在的理由。
+ */
 function labelGlyphsOf(label: string): Glyph[] {
   if (language === 'zh') {
-    const glyph = CN_GLYPHS.get(CN_LABEL[label] ?? '');
-    return glyph ? [glyph] : [];
+    const cn = CN_LABEL[label];
+    if (cn) {
+      const glyphs = [...cn].map((ch) => CN_GLYPHS.get(ch)).filter((g): g is Glyph => !!g);
+      if (glyphs.length > 0) return glyphs;
+    }
   }
   return [...label].map((ch) => LETTERS.get(ch)).filter((g): g is Glyph => !!g);
 }
 
 /** 可以挂在数字前面的牌子。只有这几个 —— 字模里只烘了拼得出它们的字母。 */
-export type DamageNumberLabel = 'HP' | 'MP' | 'SPD' | 'ATK';
+export type DamageNumberLabel = 'HP' | 'MP' | 'SPD' | 'ATK' | 'LV';
 
 /** 数字前面挂什么。0 = 什么都不挂（打人那些数字本来就不带符号）。 */
 export type DamageNumberSign = 'none' | 'plus' | 'times' | 'minus';
@@ -337,6 +394,15 @@ const BUFF_BOTTOM = rgb(226, 170, 255);
 const BOSS_TOP = rgb(255, 252, 222);
 const BOSS_BOTTOM = rgb(255, 156, 30);
 
+/**
+ * 升级那一档。比首领那一档更白更亮。
+ *
+ * 单开一档而不是借首领那个金色：两者同时在屏幕上的时候很多（砍首领正是最容易升级的时候），
+ * 同一个金色飘两种东西，那一下就白飘了。
+ */
+const LEVEL_TOP = rgb(255, 255, 246);
+const LEVEL_BOTTOM = rgb(255, 206, 74);
+
 const STYLE_COLORS = [
   [TOP, BOTTOM],
   [CRIT_TOP, CRIT_BOTTOM],
@@ -344,10 +410,11 @@ const STYLE_COLORS = [
   [MANA_TOP, MANA_BOTTOM],
   [BUFF_TOP, BUFF_BOTTOM],
   [BOSS_TOP, BOSS_BOTTOM],
+  [LEVEL_TOP, LEVEL_BOTTOM],
 ] as const;
 
 const STYLE_INDEX: Record<DamageNumberStyle, number> = {
-  damage: 0, crit: 1, heal: 2, mana: 3, buff: 4, boss: 5,
+  damage: 0, crit: 1, heal: 2, mana: 3, buff: 4, boss: 5, level: 6,
 };
 /** 描边色。和 PixelSurface 那圈合成描边同一个色温，数字才像和画面烘在一起。 */
 const EDGE = rgb(24, 18, 16);
@@ -369,7 +436,7 @@ const digits = new Int32Array(6);
  * 加进来是因为用药那一下也要飘一个数，而"回了三百八十四点血"和"打掉了三百八十四点血"读起来
  * 必须是两件事 —— 同一个橙色数字往头顶一飘，玩家第一反应是自己挨了一下。
  */
-export type DamageNumberStyle = 'damage' | 'crit' | 'heal' | 'mana' | 'buff' | 'boss';
+export type DamageNumberStyle = 'damage' | 'crit' | 'heal' | 'mana' | 'buff' | 'boss' | 'level';
 
 export interface DamageNumberOptions {
   crit?: boolean;
@@ -542,9 +609,10 @@ export class DamageNumbers {
        */
       const style = this.crit[i];
       const px = base * (
-        style === STYLE_INDEX.crit ? 2
-          : style === STYLE_INDEX.boss ? 1.8
-            : style >= STYLE_INDEX.heal ? 1.6 : 1);
+        style === STYLE_INDEX.level ? 2.2
+          : style === STYLE_INDEX.crit ? 2
+            : style === STYLE_INDEX.boss ? 1.8
+              : style >= STYLE_INDEX.heal ? 1.6 : 1);
 
       // 拆位。低位先出，画的时候倒着走。
       let v = this.value[i];

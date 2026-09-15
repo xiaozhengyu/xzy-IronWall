@@ -1548,6 +1548,7 @@ export class Battle {
     this.earnedExp += amount;
     if (this.heroLevel >= MAX_LEVEL) return;
     this.levelExp += amount;
+    const leveledFrom = this.heroLevel;
     let leveled = false;
     while (this.heroLevel < MAX_LEVEL) {
       const need = expToNextLevel(this.heroLevel);
@@ -1561,6 +1562,17 @@ export class Battle {
     const before = this.player.maxHp;
     this.applyPlayerStats();
     if (this.player.maxHp > before) this.player.hp += this.player.maxHp - before;
+    /*
+     * 头顶飘一串金字：LV+1。
+     *
+     * 升级以前一点提示都没有 —— 只有左下角经验条归零、面板上那个数字变了。而玩家的
+     * 眼睛一直在屏幕中间，两样都看不到。升级当场加属性、把涨出来的血补满 —— 发生了这么大
+     * 一件事，却没有任何一帧画面说过它。
+     *
+     * 连升几级也只飘一串，写升了几级：一次飘三个 "LV+1" 叠在头顶读不出来，而 "LV+3"
+     * 正好是玩家要知道的那件事。
+     */
+    this.floatGain(this.heroLevel - leveledFrom, 'level', 'plus', 'LV');
   }
 
   /**
@@ -1672,7 +1684,7 @@ export class Battle {
    */
   private floatGain(
     value: number,
-    style: 'heal' | 'mana' | 'buff',
+    style: 'heal' | 'mana' | 'buff' | 'level',
     sign: 'plus' | 'times' | 'minus',
     label: DamageNumberLabel,
   ): void {
