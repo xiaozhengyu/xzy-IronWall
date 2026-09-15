@@ -1,18 +1,20 @@
 .hud-frame {
-  --hud-frame-border: 26px;
   --hud-frame-fill-inset: 1px;
   --hud-frame-content-inset: 12px;
   /* 不透出战场动画，避免背景亮暗变化看起来像面板在闪。 */
   --hud-frame-face: linear-gradient(180deg, #1f201f, #080a0a);
 
+  /* 描边那三条线。金 - 暗 - 金，由外往里，各 1px。 */
+  --hud-frame-line: #c9a05a;
+  --hud-frame-line-dark: #2a2118;
+  --hud-frame-line-inner: #8a6c36;
+  /* 四角那个括角的臂长。只有角上加粗，四条边仍是细线。 */
+  --hud-frame-corner: 13px;
+  --hud-frame-corner-weight: 3px;
+
   position: relative;
   box-sizing: border-box;
   isolation: isolate;
-}
-
-.hud-frame {
-  --hud-frame-image: url('../../assets/hud/frame/panel-frame.png');
-  --hud-frame-slice: 112;
 }
 
 .hud-frame::before {
@@ -21,21 +23,50 @@
   inset: var(--hud-frame-fill-inset);
   z-index: -2;
   background: var(--hud-frame-face);
-  border-radius: calc(var(--hud-frame-border) * 0.72);
+  /*
+   * 直角，只留 2px 把边缘磨一下。
+   *
+   * 原来是 19px 的圆角，配的是贴图那圈略带弧度的花角。描边换成直角之后还留 19px，
+   * 四个角上深色面会从描边底下缩回去、露出后面的战场 —— 换掉贴图才会暴露的一处。
+   */
+  border-radius: 2px;
   pointer-events: none;
 }
 
+/*
+ * 面板描边。**纯 CSS，不用贴图。**
+ *
+ * 原来这里是 panel-frame.png 的九宫格。那张图是活的、也确实在画，但它被连缩两道：
+ * border-image-slice 112 压进 26px 的边框是 ×0.232，HUD 整层再 ×0.667，合起来 ×0.155 ——
+ * 原图 26px 的金线到屏幕上只剩 4px，112px 的花角只剩 17px。一张 1109×1066、89% 是透明的
+ * 雕花框，最后读出来就是一条描边。既然读出来是描边，就直接画一条描边。
+ *
+ * 三层 inset 阴影摞出金-暗-金三条 1px 的同心线：inset 的 spread 是从边往里填满的，
+ * 所以先画的那层会盖住后画的，1px/2px/3px 摞下来正好各露 1px。这是纯 CSS 画同心细线
+ * 唯一不用嵌套元素的办法。
+ *
+ * 四角的括角走 background 的八条渐变（每角一横一竖）。只有角上加粗，四条边保持细线 ——
+ * 这是那张图原本想给的读感，而它在 17px 上给不出来。
+ */
 .hud-frame::after {
   content: '';
   position: absolute;
   inset: 0;
   z-index: 2;
   box-sizing: border-box;
-  border: var(--hud-frame-border) solid transparent;
-  border-image-source: var(--hud-frame-image);
-  border-image-slice: var(--hud-frame-slice) fill;
-  border-image-width: var(--hud-frame-border);
-  border-image-repeat: stretch;
+  background:
+    linear-gradient(var(--hud-frame-line), var(--hud-frame-line)) left top / var(--hud-frame-corner) var(--hud-frame-corner-weight) no-repeat,
+    linear-gradient(var(--hud-frame-line), var(--hud-frame-line)) left top / var(--hud-frame-corner-weight) var(--hud-frame-corner) no-repeat,
+    linear-gradient(var(--hud-frame-line), var(--hud-frame-line)) right top / var(--hud-frame-corner) var(--hud-frame-corner-weight) no-repeat,
+    linear-gradient(var(--hud-frame-line), var(--hud-frame-line)) right top / var(--hud-frame-corner-weight) var(--hud-frame-corner) no-repeat,
+    linear-gradient(var(--hud-frame-line), var(--hud-frame-line)) left bottom / var(--hud-frame-corner) var(--hud-frame-corner-weight) no-repeat,
+    linear-gradient(var(--hud-frame-line), var(--hud-frame-line)) left bottom / var(--hud-frame-corner-weight) var(--hud-frame-corner) no-repeat,
+    linear-gradient(var(--hud-frame-line), var(--hud-frame-line)) right bottom / var(--hud-frame-corner) var(--hud-frame-corner-weight) no-repeat,
+    linear-gradient(var(--hud-frame-line), var(--hud-frame-line)) right bottom / var(--hud-frame-corner-weight) var(--hud-frame-corner) no-repeat;
+  box-shadow:
+    inset 0 0 0 1px var(--hud-frame-line),
+    inset 0 0 0 2px var(--hud-frame-line-dark),
+    inset 0 0 0 3px var(--hud-frame-line-inner);
   pointer-events: none;
 }
 
@@ -48,8 +79,4 @@
   padding: var(--hud-frame-content-inset);
 }
 
-/* 面板中心由 ::before 绘制，九宫格只绘制四边与四角。
- * 按钮的贴图中心参与皮肤表现，保留按钮原有的 fill。 */
-.hud-frame::after {
-  border-image-slice: var(--hud-frame-slice);
-}
+
