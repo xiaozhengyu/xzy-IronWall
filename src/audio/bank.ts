@@ -13,25 +13,43 @@ const battleHitUrls = Object.values(import.meta.glob(
   '../../assets/audio/battle_hit/*.{ogg,wav,mp3}',
   { eager: true, query: '?url', import: 'default' },
 )) as string[];
+const footstepUrls = Object.values(import.meta.glob(
+  '../../assets/audio/footstep/*.{ogg,wav,mp3}',
+  { eager: true, query: '?url', import: 'default' },
+)) as string[];
+const sceneSwitchUrls = Object.values(import.meta.glob(
+  '../../assets/audio/scene_switch/*.{ogg,wav,mp3}',
+  { eager: true, query: '?url', import: 'default' },
+)) as string[];
+const cardDealUrls = Object.values(import.meta.glob(
+  '../../assets/audio/card_deal/*.{ogg,wav,mp3}',
+  { eager: true, query: '?url', import: 'default' },
+)) as string[];
 
 /**
  * 音效表：id → 文件。
  *
- * **只有三个，这是收过一轮的结果。** 上一版摆了七个语义（脚步、暴击、拾取、升级、首领出场），
- * 每一个都得配素材、调响度、还要在割草场面里和别人抢那 24 个声部 —— 而一局里九成的声音就是
- * 「我在挥」和「我砍中了」这两下。割草游戏的听感是这两下的节奏，不是音效的种类数。别的语义
- * 以后真需要了再一个一个加回来，加的时候至少知道它是为了解决什么。
+ * **四个，是收过一轮之后再按需要加回来的。** 曾经摆过七个语义（暴击、拾取、升级、首领出场
+ * 那几个）全撤了：那些事画面上各有说法，再配一个音效只是在割草的噪音里多抢一个声部。留下和
+ * 加回来的都只有一条理由 —— **它是玩家唯一的反馈来源**：挥空时画面上什么都没有，砍中那一下
+ * 的手感全在声音里，而"我正在跑"这件事，脚下那点尘土也说不清楚。
+ *
+ * 脚步是撤掉之后又加回来的，加回来的时候和当初不一样：当初按地表分（只有草地响），现在只有
+ * 一套素材，踩水踩雪踩土都报；触发点也从头量过一遍，见 effects/footsteps.ts。
  *
  * **这个文件只能被浏览器那一侧引到。** 和 items/pickupIcons.ts 分开的理由一模一样：
  * `.ogg` 一进来，esbuild 打 node 包时就没有 loader 了，`npm run bench` 和 tools/ 下那几个
  * 离线脚本会当场挂掉。战斗那一侧要发声，往队列里推 id 就行，不要从这里 import。
  *
- * hud-click 来自 Kenney.nl（CC0）；两个战斗音效是 `npm run sfx` 算出来的，见 tools/sfx.ts。
+ * hud-click 来自 Kenney.nl（CC0）；其余三类是从 doc/ 下的录屏里裁的，见 assets/audio/README.md。
  */
 const SOUND_URLS = {
   'hud-click': [hudClickUrl],
   'attack-swing': attackSwingUrls,
   'battle-hit': battleHitUrls,
+  footstep: footstepUrls,
+  'scene-switch': sceneSwitchUrls,
+  'card-deal': cardDealUrls,
 } as const;
 
 export type SoundId = keyof typeof SOUND_URLS;
@@ -62,6 +80,38 @@ const SPECS: Record<SoundId, SoundSpec> = {
   // 这类贴脸双响。
   'attack-swing': { gap: 0.06, jitter: 0.035 },
   'battle-hit': { gap: 0.035, jitter: 0.025 },
+  /*
+   * 脚步的 gap **必须小于疾走时的两步间隔**，否则会把正常的步子闸掉。
+   *
+   * 量过：走路 4.47 步/秒（间隔 224ms），疾走 8.00 步/秒（间隔 125ms）。0.05 留了一倍
+   * 余量，同时仍然挡得住低帧率下相位跳变造成的贴脸双响。
+   *
+   * 素材本身也按这个数裁过，最长 130ms —— 比 125ms 长一点点是故意的，跑起来前一步的
+   * 尾巴压着后一步的头，那正是"连成一串跑步声"而不是"一下一下的独立响声"。
+   */
+  footstep: { gap: 0.05, jitter: 0.03 },
+  /*
+   * 换屏声。**jitter 是 0，和按钮同一个理由** —— 界面的声音要"一模一样"，每次不一样会
+   * 让人觉得界面不稳。何况它只有一条素材，抖音调只会把同一条露出马脚。
+   *
+   * gap 给到 0.3：它有 734ms 长，而界面上有几处是**一次动作连着两次换屏**（商店按返回：
+   * shop.hide 之后紧接着 setup.show）。不挡的话那两下会叠在一起，听着像破音。
+   */
+  'scene-switch': { gap: 0.3, jitter: 0 },
+  /*
+   * 三选一：弹出来一次，选完飞出去再一次，两次都是这一条。同样 jitter 0（界面音）。
+   *
+   * **gap 必须很小，这一条是被"选完也响"逼出来的。** 一度写的是 1 秒，理由是这条素材
+   * 有 1.7 秒长；但弹出和选完之间隔的是**玩家的反应时间** —— 按数字键的话三四百毫秒就
+   * 选完了，闸一秒会把收场那一声整个吃掉，而且是悄悄吃掉，听起来就像"有时候响有时候不响"。
+   *
+   * 0.12 秒只挡真正的同帧重入。两条路本来各自就有闸：show 开头 `if (this.open) return`，
+   * choose 开头 `if (!this.open || this.closing) return false`，所以这道闸只是兜底。
+   *
+   * 代价是玩家手快时两声会叠在一起（后一声压在前一声 1.7 秒的尾巴上）。这是想要的：
+   * 那本来就是同一叠牌甩开又收回。
+   */
+  'card-deal': { gap: 0.12, jitter: 0 },
 };
 
 export const specOf = (id: SoundId): SoundSpec => SPECS[id];

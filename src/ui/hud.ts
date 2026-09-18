@@ -123,6 +123,18 @@ export class Hud {
 
   constructor(host: HTMLElement, options: HudOptions = {}) {
     this.root.className = 'hud';
+    /*
+     * **出生就是藏着的。** HUD 是战斗界面，而它被构造的时候（main.ts 靠前那几行）离开局
+     * 还早得很 —— 后面还有生成地形、烘地面、加载贴图和音效那一长串。
+     *
+     * 默认可见的话，这一整段加载时间里它都挂在屏幕上：菜单那层蒙版只有 74% 不透明
+     * （.menu 的背景是 rgba(11,13,18,.74)，故意留透的 —— 暂停时要看得见后面的战场），
+     * 于是血条、小地图、技能格全都从加载条后面透出来。
+     *
+     * 以前是靠 main.ts 末尾补一句 setVisible(false) 收场的，但那句在所有 await 之后，
+     * 挡不住前面那几秒。藏在这里才是对的：谁要显示谁自己调 setVisible(true)。
+     */
+    this.root.hidden = true;
     this.root.style.width = `${HUD_DESIGN_WIDTH}px`;
     this.root.style.height = `${HUD_DESIGN_HEIGHT}px`;
     this.text = new HudText(options.locale ?? 'zh-CN');

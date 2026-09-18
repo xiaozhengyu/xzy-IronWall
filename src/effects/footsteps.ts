@@ -71,6 +71,13 @@ export class FootstepEffects {
 
   /** 每个单位上一帧的步态相位。跨越检测要用。 */
   private readonly phase = new WeakMap<Character, number>();
+  /**
+   * main 每帧取走的纯数据触地数。这里不能 import 浏览器音频层，离线验证也会走 Field。
+   *
+   * **只数焦点角色。** 场上几百个人都有真实步态，全报出来就是一片白噪音，玩家自己的落脚
+   * 反而听不见了 —— 而脚步声唯一的用处就是让玩家听见自己在跑。
+   */
+  private stepContacts = 0;
   private seed = 20260810;
 
   private rand(): number {
@@ -93,6 +100,20 @@ export class FootstepEffects {
     this.printAt.fill(0);
     this.rippleAt.fill(0);
     this.dropAt.fill(0);
+    this.stepContacts = 0;
+  }
+
+  /**
+   * 取走玩家这一帧的落脚次数。音频是否可用、播哪一条采样都由 main 决定。
+   *
+   * 触发时刻就是脚**踩实的那一刻**：相位跨过 0 是左脚、跨过 0.5 是右脚，而动画器里
+   * 相位的前半程恰好是支撑段（stepTarget 里 z=0 的那一半）。量过：触发瞬间那只脚的
+   * 离地高度是 0.000，且还在身前（y 为正），正是刚落地、还没往身后滑的那一帧。
+   */
+  drainStepContacts(): number {
+    const count = this.stepContacts;
+    this.stepContacts = 0;
+    return count;
   }
 
   update(
@@ -131,6 +152,10 @@ export class FootstepEffects {
     const cos = Math.cos(man.facing);
     const wx = man.x + localFoot.x * sin + localFoot.y * cos;
     const wy = man.y - localFoot.x * cos + localFoot.y * sin;
+
+    // 声音不分地面：只有一套脚步素材，踩水踩雪踩土都报。画面那边才分 —— 水面起波纹、
+    // 雪地留印子，各走各的分支。
+    if (focus) this.stepContacts++;
 
     const water = clamp(terrain.standingWater(wx, wy, weather), 0, 1);
     if (water > 0.14) {

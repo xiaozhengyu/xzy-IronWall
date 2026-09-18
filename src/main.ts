@@ -314,6 +314,24 @@ await loadSounds();
 installUiClickSound();
 bootDone += AUDIO_WEIGHT;
 
+/**
+ * 整屏换了一次。
+ *
+ * 商店、战绩、暂停、结算、开局、回选人 —— 界面上每一次"看到的东西整个换掉"都走这里。
+ * 收成一个函数而不是十来处各写一句 play：以后要换音色、要按进/出分两种声音、或者干脆想
+ * 把它和转场动画对齐，都只动这一处。
+ *
+ * **和按钮点击声不冲突，两者说的不是一件事。** 点击是"我按下去了"，在 pointerdown 那一刻
+ * 响；换屏是"画面真的换了"，在状态落地那一刻响，中间隔着的正是这次切换本身。真想让某个
+ * 按钮只剩换屏声，给它加 data-silent（audio/uiClick.ts 留好的口子）。
+ *
+ * 一次动作连着两次换屏（商店按返回：shop.hide 之后紧接着 setup.show）由 bank.ts 里那道
+ * 0.3 秒的 gap 合成一声，这里不用各自判断。
+ */
+function sceneChanged(): void {
+  play('scene-switch');
+}
+
 const battle = new Battle(field);
 const controls = new Controls(app.canvas as HTMLCanvasElement, camera, {
   onKey: (code) => onKeyPressed(code),
@@ -323,6 +341,7 @@ const controls = new Controls(app.canvas as HTMLCanvasElement, camera, {
         state = 'playing';
         menu.hide();
         summary.hide();
+        sceneChanged();
       }
       return;
     }
@@ -336,6 +355,7 @@ const controls = new Controls(app.canvas as HTMLCanvasElement, camera, {
       state = 'interlude';
       summary.show('interlude', summaryStats());
     }
+    sceneChanged();
     pauseTarget = 'interlude';
   },
   // 备战界面盖在画布上，点它不该把游戏"继续"起来 —— 那时候还没选完地图。
@@ -496,6 +516,22 @@ const SOUND_GAIN_PER_EXTRA = 0.045;
 
 /** 一帧只给同一个语义放一次；人越多越响，但仍受 sfx 的每 id 间隔和 24 声部总闸约束。 */
 function flushSoundEvents(): void {
+  /*
+   * 脚步不走战斗那条队列 —— 它是特效层从步态相位跨越读出来的，和"谁打中了谁"无关。
+   * 响度已经烘进素材里（-14dBFS），所以这里不再折算，一帧最多一声。
+   *
+   * **只有疾走才响，普通走路不响。** 割草游戏里玩家几乎一直在移动，走路也报的话，
+   * 这个声音就变成了整局不停的背景噪音 —— 一直在响的东西等于没在说话。只在疾走时响，
+   * 它才有话说：那是"我正在冲"这一件事，而冲刺恰恰是玩家主动按下去、想要有反馈的动作。
+   *
+   * 用 sprinting 而不是 sprintEngaged：站着按住 Shift 不算跑（见 battle.advanceSprint），
+   * 那时候脚根本没动，不该有脚步声。sprinting 为真就一定在走。
+   *
+   * drain 必须每帧都调，哪怕不放 —— 不然走路攒下的次数会在起跑那一下子全倒出来。
+   */
+  const stepped = field.footsteps.drainStepContacts() > 0;
+  if (stepped && battle.sprinting) play('footstep');
+
   const merged = new Map<BattleSoundEventId, number>();
   for (const event of battle.drainSoundEvents()) {
     merged.set(event.id, (merged.get(event.id) ?? 0) + event.count);
@@ -769,6 +805,7 @@ function endRun(): void {
   hud.cards.hide();
   showItems = false;
   summary.show('result', summaryStats());
+  sceneChanged();
   // 世界停在玩家倒下的那一帧，画面留着当结算的背景 —— 比盖一块纯色更能说明刚才发生了什么。
   draw();
 }
@@ -797,6 +834,7 @@ function returnToSetup(): void {
   showItems = false;
   state = 'setup';
   setup.show();
+  sceneChanged();
   curtain.lift();
 }
 
@@ -1308,6 +1346,7 @@ function applyMap(map: GameMapDef): void {
  */
 function enterMap(hero: HeroDef, map: GameMapDef, weather: WeatherKind): void {
   state = 'entering';
+  sceneChanged();
   requestAnimationFrame(() =>
     setTimeout(() => {
       settled = false;
@@ -1391,6 +1430,8 @@ const shop = new ShopScreen({
     shop.hide();
     // 买完根基之后那排属性和六边形都变了，重新搭一遍。
     setup.show();
+    // 这一下是两次换屏（关商店 + 重搭选人界面），但只该听见一声 —— 交给 gap 合。
+    sceneChanged();
   },
 });
 
@@ -1405,7 +1446,10 @@ const history = new HistoryScreen({
     name: hero.name,
     record: profile.record(hero.id),
   })),
-  onClose: () => history.hide(),
+  onClose: () => {
+    history.hide();
+    sceneChanged();
+  },
 });
 
 /**
@@ -1515,8 +1559,8 @@ const setup = new SetupScreen(
      * 和以后的属性表出，付钱走 profile.spendCoins，买到的技能走 profile.unlock。那三样
      * 在 game/profile.ts 上已经是现成的了。
      */
-    onShop: () => shop.show(),
-    onHistory: (heroId) => history.show(heroId),
+    onShop: () => { shop.show(); sceneChanged(); },
+    onHistory: (heroId) => { history.show(heroId); sceneChanged(); },
   },
   menu.text,
 );
@@ -1632,6 +1676,12 @@ hud.cards.connect({
    */
   onGoldCard: (amount) => profile.addCoins(amount),
   heldItems: () => heldItems(),
+  // 牌弹出来那一下。不走 sceneChanged：三选一是盖在战场上的一层，世界还在那儿（只是停了），
+  // 和"整屏换掉"不是一回事，声音也该是另一个 —— 那边是一道风，这边是一叠牌甩开。
+  onShow: () => play('card-deal'),
+  // 选完飞出去那一下，用同一条：一叠牌甩开和收回本来就是同一个动静，收场再配一个新音色，
+  // 听起来会像是又发生了一件别的事。
+  onDismiss: () => play('card-deal'),
 });
 
 hud.setVisible(false);

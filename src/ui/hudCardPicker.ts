@@ -131,6 +131,27 @@ export interface HudCardHooks {
   /** 玩家选了那张金币牌。金币是跨局的家底，直接进存档。 */
   onGoldCard(amount: number): void;
   /**
+   * 牌刚弹出来。目前只用来发一声音效。
+   *
+   * 走钩子而不是在这里直接 `play`：ui/ 这一层至今没有一个文件引过 audio/，而 audio/bank.ts
+   * 里那条规矩是"只能被浏览器那一侧引到" —— `.ogg` 一旦进了 node 侧的依赖图，esbuild 打
+   * `npm run bench` 和 tools/ 那几个离线脚本时就没有 loader 了，当场挂掉。现在这个文件不在
+   * 那张图里，直接引也不会炸；但把这条边连上，就等着哪天有人从 preview.ts 顺藤摸过来。
+   *
+   * 和战斗层推语义队列、由 main 翻译成音效是同一个套路：界面只说"发生了什么"。
+   */
+  onShow?(): void;
+  /**
+   * 选完了，牌正在飞出去。
+   *
+   * 在出场动画**起点**发，不是等 200ms 动画跑完 —— 声音要和看见的东西同时开始，
+   * 和 onShow 挂在入场动画起点是同一个道理。
+   *
+   * 只有"选完"这一条路会发。菜单里关掉开关、人死了、打完一局回选人也会收牌（走 hide），
+   * 那几种是"牌被撤掉"而不是"玩家做完了一次选择"，不该有回响。
+   */
+  onDismiss?(): void;
+  /**
    * 手上有哪些药和符。摆在牌底下，图在上、字在下，排法和战场上的快捷栏一致。
    *
    * 为什么摆在这儿：抽牌是一局里**世界停住**的两个时刻之一（另一个是结算），而快捷栏上那几格
@@ -209,6 +230,8 @@ export class HudCardPicker {
     void this.root.offsetWidth;
     this.root.dataset.phase = 'in';
     this.startFigures();
+    // 放在最后：上面那一串一旦抛了，牌根本没弹出来，也就不该有声音。
+    this.hooks?.onShow?.();
   }
 
   /** 台子的循环。牌一开就跑，一收就停 —— 没牌的时候一帧都不该占。 */
@@ -284,6 +307,7 @@ export class HudCardPicker {
       this.cards[i].classList.toggle('hud-card--taken', i === index);
     }
     this.root.dataset.phase = 'out';
+    this.hooks?.onDismiss?.();
     // 动画跑完再藏。open 在这期间仍然是 true，所以世界会多停这 200ms —— 正好让牌浮出去。
     this.closing = setTimeout(() => {
       this.closing = 0;
