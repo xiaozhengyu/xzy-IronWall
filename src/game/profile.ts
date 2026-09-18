@@ -76,11 +76,13 @@ export interface RunRecord {
   at: number;
 }
 
-/** 存档里那一份设置。以后加音效、音乐开关就往这里加字段。 */
+/** 存档里那一份设置。 */
 export interface ProfileSettings {
   locale: HudLocale;
-  /** 音效开关。音乐那条以后加在这儿。 */
+  /** 音效开关。 */
   sfx: boolean;
+  /** 音乐开关。和音效分开：常有人只想关掉音乐、留着打击声。 */
+  music: boolean;
 }
 
 export interface ProfileData {
@@ -129,7 +131,7 @@ function freshRecord(): HeroRecord {
 }
 
 function freshSettings(): ProfileSettings {
-  return { locale: 'zh-CN', sfx: true };
+  return { locale: 'zh-CN', sfx: true, music: true };
 }
 
 function freshProfile(): ProfileData {
@@ -386,6 +388,16 @@ export class Profile {
   setSfxEnabled(on: boolean): void {
     if (this.data.settings.sfx === on) return;
     this.data.settings.sfx = on;
+    this.save();
+  }
+
+  get musicEnabled(): boolean {
+    return this.data.settings.music;
+  }
+
+  setMusicEnabled(on: boolean): void {
+    if (this.data.settings.music === on) return;
+    this.data.settings.music = on;
     this.save();
   }
 

@@ -15,6 +15,7 @@ export const HUD_TEXT_EN: HudMessages = {
   pauseHint: 'PRESS ESC TO PAUSE',
   language: 'LANGUAGE',
   sound: 'SOUND',
+  music: 'MUSIC',
   on: 'ON',
   off: 'OFF',
   currencyInfo: 'CURRENCY',

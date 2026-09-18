@@ -74,6 +74,8 @@ export interface SummaryHooks {
   onLocaleChange?(locale: HudLocale): void;
   /** 设置那一行开关了音效。同上，存档不归这一屏管。 */
   onSfxChange?(on: boolean): void;
+  /** 设置那一行开关了音乐。同上。 */
+  onMusicChange?(on: boolean): void;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -118,11 +120,13 @@ export class SummaryScreen {
   private readonly resumeButton = el('button', 'summary-btn main', '继续游戏');
   private readonly endButton = el('button', 'summary-btn', '结束游戏');
   private readonly confirmButton = el('button', 'summary-btn main', '确认');
-  /** 底下那一行设置。语言在这儿，以后音效和音乐也进这一行。 */
+  /** 底下那一行设置：语言、音效、音乐各一行。 */
   private readonly settings = el('div', 'summary-settings');
   private localeButtons: HTMLButtonElement[] = [];
   private sfxButtons: HTMLButtonElement[] = [];
   private sfxOn = true;
+  private musicButtons: HTMLButtonElement[] = [];
+  private musicOn = true;
   /** “结束游戏”按过一下了、正等第二下。见 armEnd()。 */
   private endArmed = false;
   /** 赢了那一屏的礼花。输了不放 —— 见 confetti.ts。 */
@@ -331,8 +335,21 @@ export class SummaryScreen {
       this.hooks.onSfxChange?.(this.sfxOn);
     }, ['on', 'off']);
 
+    /*
+     * 音乐：和音效分开两行，不合成一个"声音"开关。
+     *
+     * 这两样关掉的理由完全不同 —— 音乐是"我想听自己的歌"或者"听久了腻"，音效是"我在
+     * 办公室"。合成一个的话，想留着打击声只关音乐的人只能连着音效一起关掉。
+     */
+    this.musicButtons = this.chipRow('music', [['on', ''], ['off', '']], (value) => {
+      this.musicOn = value === 'on';
+      this.markMusic();
+      this.hooks.onMusicChange?.(this.musicOn);
+    }, ['on', 'off']);
+
     this.markLocale();
     this.markSfx();
+    this.markMusic();
     return this.settings;
   }
 
@@ -343,7 +360,7 @@ export class SummaryScreen {
    * 不传就用写死的 caption（语言那行的"中文/EN"故意不翻）。
    */
   private chipRow(
-    labelKey: 'language' | 'sound',
+    labelKey: 'language' | 'sound' | 'music',
     values: Array<[string, string]>,
     onPick: (value: string) => void,
     textKeys?: Array<'on' | 'off'>,
@@ -374,6 +391,18 @@ export class SummaryScreen {
   private markSfx(): void {
     for (const button of this.sfxButtons) {
       button.classList.toggle('on', button.dataset.value === (this.sfxOn ? 'on' : 'off'));
+    }
+  }
+
+  /** 外面（存档）先告诉这一屏音乐当前是开是关。 */
+  setMusicEnabled(on: boolean): void {
+    this.musicOn = on;
+    this.markMusic();
+  }
+
+  private markMusic(): void {
+    for (const button of this.musicButtons) {
+      button.classList.toggle('on', button.dataset.value === (this.musicOn ? 'on' : 'off'));
     }
   }
   /** 当前这一档高亮。语言是从 HudText 问的，所以外面换了语言这里也跟得上。 */

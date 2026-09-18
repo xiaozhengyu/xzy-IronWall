@@ -23,6 +23,7 @@ export interface HudMessages {
   pauseHint: string;
   language: string;
   sound: string;
+  music: string;
   on: string;
   off: string;
   currencyInfo: string;

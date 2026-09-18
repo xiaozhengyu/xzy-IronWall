@@ -15,6 +15,7 @@ export const HUD_TEXT_ZH_CN: HudMessages = {
   pauseHint: '按 ESC 暂停',
   language: '语言',
   sound: '音效',
+  music: '音乐',
   on: '开',
   off: '关',
   currencyInfo: '货币信息',

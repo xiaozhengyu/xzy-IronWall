@@ -10,7 +10,7 @@
 | `attack_swing/` | 自动攻击每次起手 | 11 条，218–718ms，峰值 -7dBFS |
 | `battle_hit/` | 攻击命中敌人 | 13 条，305–719ms，峰值 -1dBFS |
 | `footstep/` | 玩家疾走时每次落脚 | 14 条，99–152ms，峰值 -14dBFS |
-| `scene_switch/` | 整屏切换 | 1 条，734ms，峰值 -5dBFS |
+| `scene_switch/` | 整屏切换 | 1 条，519ms，峰值 -5dBFS |
 | `card_deal/` | 三选一弹出、选完飞出去 | 1 条，1765ms，峰值 -5dBFS |
 
 `hud_click.ogg` 是界面按钮声，来自 Kenney.nl（CC0），单独一件不进文件夹。

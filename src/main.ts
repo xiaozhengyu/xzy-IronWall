@@ -25,7 +25,8 @@ import { ACTIVE_SKILL_CODES, SPRINT_SKILL, type ActiveSkillSlot } from './game/s
 import { Field } from './game/field';
 import { ItemCatalog } from './items/catalog';
 import { loadSounds, type SoundId } from './audio/bank';
-import { setSfxEnabled, unlock as unlockAudio } from './audio/mixer';
+import { setMusicDucked, setMusicEnabled, setSfxEnabled, unlock as unlockAudio } from './audio/mixer';
+import { loadMusic, setTrack as setMusicTrack } from './audio/music';
 import { play } from './audio/sfx';
 import { installUiClickSound } from './audio/uiClick';
 import { ItemSheet } from './items/renderer';
@@ -309,7 +310,11 @@ await boot('加载音效');
 // 那一声就丢了 —— 就是"第一次点没声音，第二次才有"。见 mixer.sfxAudible。
 unlockAudio();
 setSfxEnabled(profile.sfxEnabled);
+setMusicEnabled(profile.musicEnabled);
 await loadSounds();
+// 音乐**不 await**：两首加起来两分钟，解出来四十多兆，解码本身也要几百毫秒。摆进加载条
+// 里就是让玩家为一首还没开始听的曲子干等。后台解，解好了 updateMusic 自己接上。
+loadMusic();
 // 界面上所有按钮的点击声。一个委托监听器管十八处按钮，见 audio/uiClick.ts。
 installUiClickSound();
 bootDone += AUDIO_WEIGHT;
@@ -330,6 +335,38 @@ bootDone += AUDIO_WEIGHT;
  */
 function sceneChanged(): void {
   play('scene-switch');
+}
+
+/**
+ * 每帧问一次：现在该放哪一首，以及音乐要不要让开。
+ *
+ * **每帧算而不是在切换点各写一句**，和 sceneChanged 那九处正相反 —— 这两件事的性质不同：
+ * 换屏声是一个**事件**（漏了就是少响一声，补一句就好），而"现在该放哪一首"是一个**状态**。
+ * 状态挂在切换点上，只要有一条路忘了写，音乐就会一直停在错的那一首，而且是静悄悄地错。
+ * 每帧重算则没有"忘了写"这回事：状态是什么，音乐就是什么。
+ *
+ * 两个被调用的函数都是幂等的（已经在放这一首、已经是这个档位就直接返回），所以一秒调
+ * 六十次没有任何代价。setTrack 还顺带承担"素材还没解完 / context 还没解锁就下一帧再试"，
+ * 这也正需要有人每帧推一下。
+ *
+ * 进图那一下按 'entering' 就开始换，不等 'playing'：换曲要一秒（CROSSFADE），压在黑幕
+ * 落下那段时间里正好，等打起来再换就是硬切在脸上。
+ */
+function updateMusic(): void {
+  setMusicTrack(state === 'loading' || state === 'setup' ? 'start' : 'battle');
+  /*
+   * 有东西盖上来就让开。**只有战斗那一侧需要这件事。**
+   *
+   * 商店和战绩不在这张单子上，虽然它们也是盖上来的整屏面板 —— 因为选人那一首本来就压得
+   * 很低（TRACK_VOLUME.start），已经是"不参与表达"的背景音了，再压一档既听不出来，
+   * 又会让人在那一屏上听见音量来回浮动，反而显得不稳。选人界面音乐从头到尾一个音量。
+   *
+   * 战斗那首不同：它是有存在感的，而三选一、暂停、结算这几下玩家要停下来读字、做选择，
+   * 音乐继续顶在前面就烦人。这几样的共同点是**玩家这一刻不在打**。
+   */
+  setMusicDucked(
+    hud.cards.open || state === 'paused' || state === 'interlude' || state === 'result',
+  );
 }
 
 const battle = new Battle(field);
@@ -551,6 +588,8 @@ function flushSoundEvents(): void {
  * if 的话，暂停时改一档颗粒度、拖一下窗口，画面就再也刷不出来了。
  */
 app.ticker.add((ticker) => {
+  // 音乐每帧问一次，包括备战那一屏 —— 所以它排在下面所有提前 return 之前。
+  updateMusic();
   // 备战界面：世界冻着，动的只有三块 —— 台子上那个人、地图上的天气、右边那排敌人。
   if (state === 'setup' || state === 'entering') {
     if (setup.showsStages) drawSetupScreen(Math.min(ticker.deltaMS / 1000, 1 / 20));
@@ -1481,10 +1520,17 @@ const summary = new SummaryScreen({
     setSfxEnabled(on);
     profile.setSfxEnabled(on);
   },
+  // 音乐开关：同上。关掉只是把音乐那条总线推到 0，曲子还在后台走 —— 再打开就接着响，
+  // 不用重新起播，也就不会从头开始。
+  onMusicChange: (on) => {
+    setMusicEnabled(on);
+    profile.setMusicEnabled(on);
+  },
 }, hud.text);
 // 存档里那一档先告诉结算屏，它那两个方块才知道哪个该亮。语言走的是共用的 HudText，
 // 不用再喂一次。
 summary.setSfxEnabled(profile.sfxEnabled);
+summary.setMusicEnabled(profile.musicEnabled);
 
 const setup = new SetupScreen(
   {
