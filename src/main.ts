@@ -16,7 +16,7 @@ import { skillById } from './game/skills';
 import { GameMaps, type GameMapDef } from './data/maps';
 import { Heroes } from './data/heroes';
 import type { HeroDef } from './data/types';
-import { BLAST_PER_ENEMY, SKILL_MAX_LEVEL, expToNextLevel } from './data/balance';
+import { SKILL_MAX_LEVEL, expToNextLevel } from './data/balance';
 import { unitAppearance } from './characters/unitDef';
 import { Profile } from './game/profile';
 import { gemsPerCard, resolveHeroStats } from './game/stats';
@@ -304,6 +304,9 @@ await boot('加载音效');
  *
  * 解码不需要 context 是 running 的，suspended 一样解得了，所以加载和解锁谁先谁后都行。
  */
+// **这一行必须排在 installUiClickSound 前面。** 两边都是挂在 window 上的 capture 监听器，
+// 同阶段按注册顺序走。解锁挂晚了的话，第一次点击时按钮的 play 会跑在 resume 发出之前，
+// 那一声就丢了 —— 就是"第一次点没声音，第二次才有"。见 mixer.sfxAudible。
 unlockAudio();
 setSfxEnabled(profile.sfxEnabled);
 await loadSounds();
@@ -474,25 +477,33 @@ let lastFps = 0;
  * Battle 和 node bench 都不用动。
  */
 const BATTLE_SOUND_IDS: Record<BattleSoundEventId, SoundId> = {
+  attack: 'attack-swing',
   hit: 'battle-hit',
-  critical: 'battle-critical',
-  pickup: 'pickup',
-  'level-up': 'level-up',
-  'boss-enter': 'boss-enter',
 };
+
+/**
+ * 一帧里同一个语义攒了几次，就折算成多响。
+ *
+ * **一个人也得听得清楚。** 一刀砍中一个人和砍中三十个人，都是"砍中了"，差别只该是厚度，
+ * 不是有没有。所以底是 BASE 而不是从零按人数往上加 —— 那样打单个敌人（比如追着一个首领
+ * 砍两分钟）会几乎听不见声音，而那恰恰是最需要打击感的场面。
+ *
+ * 上面那一截留给人海：多出来的人每个再加一点，十个人左右到顶。封在 1 是因为再往上就只是
+ * 把削波推给浏览器，听感不会更重，只会更糊。
+ */
+const SOUND_BASE_GAIN = 0.62;
+const SOUND_GAIN_PER_EXTRA = 0.045;
 
 /** 一帧只给同一个语义放一次；人越多越响，但仍受 sfx 的每 id 间隔和 24 声部总闸约束。 */
 function flushSoundEvents(): void {
-  const grass = field.footsteps.drainGrassContacts();
-  if (grass > 0) play('foot-grass', { gain: Math.min(1, 0.72 + grass * 0.08) });
-
   const merged = new Map<BattleSoundEventId, number>();
   for (const event of battle.drainSoundEvents()) {
     merged.set(event.id, (merged.get(event.id) ?? 0) + event.count);
   }
   for (const [eventId, count] of merged) {
     const soundId = BATTLE_SOUND_IDS[eventId];
-    play(soundId, { gain: Math.min(1, count * BLAST_PER_ENEMY) });
+    const gain = Math.min(1, SOUND_BASE_GAIN + (count - 1) * SOUND_GAIN_PER_EXTRA);
+    play(soundId, { gain });
   }
 }
 

@@ -819,8 +819,13 @@ function rollDamage(
 /**
  * 战斗层只认这些语义，不认文件、AudioContext 或声部。浏览器入口把它们翻译成真正的音效。
  * count 让队列即使在极端割草场面触顶，也能把同类事件压进一条记录而不无限长。
+ *
+ * **只有两个：挥出去，和砍中了。** 暴击、拾取、升级、首领出场都撤了 —— 那几件事画面上
+ * 本来就各有自己的说法（金色的大数字、飞向玩家的掉落、弹出来的卡牌、屏幕上的首领血条），
+ * 再各配一个音效只是在割草的噪音里多抢一个声部。这两个留下来是因为它们是**唯一没有画面
+ * 替身的反馈**：挥空的时候什么都没有，而砍中的那一下手感全在声音里。
  */
-export type BattleSoundEventId = 'hit' | 'critical' | 'pickup' | 'level-up' | 'boss-enter';
+export type BattleSoundEventId = 'attack' | 'hit';
 
 export interface BattleSoundEvent {
   id: BattleSoundEventId;
@@ -1591,7 +1596,6 @@ export class Battle {
     const before = this.player.maxHp;
     this.applyPlayerStats();
     if (this.player.maxHp > before) this.player.hp += this.player.maxHp - before;
-    this.emitSound('level-up', this.heroLevel - leveledFrom);
     /*
      * 头顶飘一串金字：LV+1。
      *
@@ -2624,7 +2628,6 @@ export class Battle {
     this.collectedGems += collected.gem;
     this.collectedCoins += collected.coin;
     for (const id of this.collectibles.collectedPickups) this.takeItem(id);
-    this.emitSound('pickup', collected.gem + collected.coin + collected.pickup);
     this.advanceTimedBonuses(dt);
     this.advanceRegens(dt);
     this.advancePlayerFloats(dt);
@@ -3016,6 +3019,9 @@ export class Battle {
       playerSwingTime(this.player) + skill.cooldown * this.skillLoadout.rateScale(skill.id),
     );
     if (!started) return false;
+    // 起手那一刻响，不是落点那一刻。兵器是先动起来才扫到人的，等到落点再响，玩家听到的
+    // 就是"砍中之后才听见挥"—— 而且那时命中声也正好在响，两个撞在一起谁都听不清。
+    this.emitSound('attack');
     this.pendingAttackSkill = skill.id;
     this.skillLoadout.consume(skill.id);
     return true;
@@ -3198,7 +3204,7 @@ export class Battle {
       dirX: dx,
       dirY: dy,
     });
-    this.emitSound(roll.crit ? 'critical' : 'hit');
+    this.emitSound('hit');
 
     // 没死就只闪一下白光（takeHit 里做的），不溅碎片也不掉东西。碎片是"这个人碎了"的信号，
     // 挨一下还站着的人溅出甲片会让玩家以为他已经死了。
@@ -4469,7 +4475,6 @@ export class Battle {
     const due = this.waves.takeBossDue();
     if (due > 0) {
       for (let i = 0; i < due; i++) this.spawn(view, resolveKind(BOSS_KIND));
-      this.emitSound('boss-enter', due);
       /*
        * 截止线**只给最后那一批**。
        *

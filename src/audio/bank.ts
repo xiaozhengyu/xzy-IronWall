@@ -5,48 +5,33 @@ import { audioContext } from './mixer';
  * 文件夹内文件名随意；每次构建由 Vite 收集全部 ogg/wav/mp3，同一文件夹内随机挑一件。
  * glob 必须写成字面量，不能抽成接收目录名的函数，否则 Vite 无法在构建期找到素材。
  */
-const footGrassUrls = Object.values(import.meta.glob(
-  '../../assets/audio/foot_grass/*.{ogg,wav,mp3}',
+const attackSwingUrls = Object.values(import.meta.glob(
+  '../../assets/audio/attack_swing/*.{ogg,wav,mp3}',
   { eager: true, query: '?url', import: 'default' },
 )) as string[];
 const battleHitUrls = Object.values(import.meta.glob(
   '../../assets/audio/battle_hit/*.{ogg,wav,mp3}',
   { eager: true, query: '?url', import: 'default' },
 )) as string[];
-const battleCriticalUrls = Object.values(import.meta.glob(
-  '../../assets/audio/battle_critical/*.{ogg,wav,mp3}',
-  { eager: true, query: '?url', import: 'default' },
-)) as string[];
-const pickupUrls = Object.values(import.meta.glob(
-  '../../assets/audio/pickup/*.{ogg,wav,mp3}',
-  { eager: true, query: '?url', import: 'default' },
-)) as string[];
-const levelUpUrls = Object.values(import.meta.glob(
-  '../../assets/audio/level_up/*.{ogg,wav,mp3}',
-  { eager: true, query: '?url', import: 'default' },
-)) as string[];
-const bossEnterUrls = Object.values(import.meta.glob(
-  '../../assets/audio/boss_enter/*.{ogg,wav,mp3}',
-  { eager: true, query: '?url', import: 'default' },
-)) as string[];
 
 /**
  * 音效表：id → 文件。
  *
+ * **只有三个，这是收过一轮的结果。** 上一版摆了七个语义（脚步、暴击、拾取、升级、首领出场），
+ * 每一个都得配素材、调响度、还要在割草场面里和别人抢那 24 个声部 —— 而一局里九成的声音就是
+ * 「我在挥」和「我砍中了」这两下。割草游戏的听感是这两下的节奏，不是音效的种类数。别的语义
+ * 以后真需要了再一个一个加回来，加的时候至少知道它是为了解决什么。
+ *
  * **这个文件只能被浏览器那一侧引到。** 和 items/pickupIcons.ts 分开的理由一模一样：
  * `.ogg` 一进来，esbuild 打 node 包时就没有 loader 了，`npm run bench` 和 tools/ 下那几个
- * 离线脚本会当场挂掉。战斗那一侧以后要发声，往队列里推 id 就行，不要从这里 import。
+ * 离线脚本会当场挂掉。战斗那一侧要发声，往队列里推 id 就行，不要从这里 import。
  *
- * hud-click 来自 Kenney.nl（CC0）；其余素材按 assets/audio/README.md 的目录投放。
+ * hud-click 来自 Kenney.nl（CC0）；两个战斗音效是 `npm run sfx` 算出来的，见 tools/sfx.ts。
  */
 const SOUND_URLS = {
   'hud-click': [hudClickUrl],
-  'foot-grass': footGrassUrls,
+  'attack-swing': attackSwingUrls,
   'battle-hit': battleHitUrls,
-  'battle-critical': battleCriticalUrls,
-  pickup: pickupUrls,
-  'level-up': levelUpUrls,
-  'boss-enter': bossEnterUrls,
 } as const;
 
 export type SoundId = keyof typeof SOUND_URLS;
@@ -57,9 +42,14 @@ export type SoundId = keyof typeof SOUND_URLS;
  * gap —— 两次之间至少隔多久，秒。同一个采样在几毫秒内连响会叠成一声闷响，而不是两下。
  * jitter —— 每次播放随机改变多少音调（比例）。
  *
- * **界面点击的 jitter 是 0，这是故意的。** 战斗音效必须抖（同一个采样连响十次而音高一样，
+ * **界面点击的 jitter 是 0，这是故意的。** 战斗音效要抖一点（同一个采样连响十次而音高一样，
  * 耳朵立刻听出是机关枪），但按钮相反 —— 同一个按钮每次按下去声音都不一样，会让人觉得
  * 界面不稳、像是坏了。按钮要的是"一模一样"。
+ *
+ * **战斗那两个的 jitter 现在比以前小。** 早先一个 id 只有一条采样，全靠改音调冒充变化，
+ * 抖得不够就是机关枪。现在挥击有 11 条、命中有 13 条真正不同的录音，"不重复"这件事已经
+ * 由变体自己解决了，音调再抖多了反而露馅 —— 真实录音被明显改调，听起来是"放慢/放快的
+ * 录音带"，而不是另一刀。
  */
 interface SoundSpec {
   gap: number;
@@ -68,13 +58,10 @@ interface SoundSpec {
 
 const SPECS: Record<SoundId, SoundSpec> = {
   'hud-click': { gap: 0.04, jitter: 0 },
-  // 触地本来就按步态一脚一次；这道短闸只挡低帧率相位跳变或重置造成的贴脸双响。
-  'foot-grass': { gap: 0.09, jitter: 0.035 },
-  'battle-hit': { gap: 0.035, jitter: 0.045 },
-  'battle-critical': { gap: 0.08, jitter: 0.025 },
-  pickup: { gap: 0.045, jitter: 0.035 },
-  'level-up': { gap: 0.5, jitter: 0 },
-  'boss-enter': { gap: 1, jitter: 0.015 },
+  // 挥击本来就按出手频率一刀一次，最快也有 0.2 秒；这道闸只挡"挥到一半被打断又立刻起手"
+  // 这类贴脸双响。
+  'attack-swing': { gap: 0.06, jitter: 0.035 },
+  'battle-hit': { gap: 0.035, jitter: 0.025 },
 };
 
 export const specOf = (id: SoundId): SoundSpec => SPECS[id];
@@ -86,36 +73,83 @@ interface LoadedSample {
 
 const samples = new Map<SoundId, LoadedSample[]>();
 
-/** 低于这个幅度就当成静音。-50dB 左右，编码器留下的底噪都在这条线以下。 */
-const SILENCE = 0.003;
+/**
+ * 起音判据用多长的窗口求能量。
+ *
+ * 判据看的是**能量包络**，不是某一个采样的瞬时值。起音段的原始波形抖得厉害，按瞬时值取线，
+ * 取到的往往是噪声里的一根毛刺，比真正听得见的那一下早十几毫秒。3ms 足够把这种毛刺抹平，
+ * 又短到不会把一个真正的瞬态糊掉。
+ */
+const ENVELOPE_WINDOW = 0.003;
 
 /**
- * 这个采样前面有多少秒是空的。
+ * 能量包络爬到峰值的这个比例，才算"这一声真的来了"。
  *
- * 素材前面常带一小段空白（录制、剪辑、编码器补帧都会留），而那一段是实打实的延迟：
- * 按钮按下去到听见响，中间隔着它。**按钮音效对这个特别敏感** —— 几十毫秒就足够让人觉得
- * 界面"不跟手"，而这正是玩家能感觉到、却说不出原因的那类问题。
+ * 0.25 是 -12dB。这个数是三条素材一起量出来的：
  *
- * 在这里算而不是把文件裁掉：一来不用带一套音频工具链，二来以后每加一个音效都自动生效，
- * 不依赖谁记得先裁一刀。原始文件保持不动，换素材直接覆盖就行。
+ *   hud-click 的整个起音只有 6ms 宽（-34dB 在 113.9ms，峰值在 119.8ms），-12dB 落在
+ *   117.1ms —— 正是耳朵认为它响了的那一刻。
  *
- * 找到第一个有声音的采样之后往回退到最近的过零点：从波形中间硬切会"啪"一声，
- * 那是另一个更难听的问题。退不到就退满 5ms，反正那一段本来就是静音。
+ *   挥击和命中相反，是**几十毫秒的抡起来**：-34dB 在 4ms 就越线了，可包络要到 42ms
+ *   （挥击）和 36ms（命中）才爬到 -12dB，峰值更是在 91ms 和 153ms。那四十毫秒的爬升
+ *   是素材自带的抡劲，放在割草游戏里就是"砍下去之后才响"。
+ *
+ * **所以这一刀是切在波形中间的，不是切在静音里。** 这样切必然有一个台阶，台阶就是"啪"
+ * 一声 —— 所以起播那一下必须淡入，见 sfx.ts 的 ATTACK_FADE。两者是一套的，只改一个会
+ * 立刻听出问题。
+ *
+ * 还想更"跟手"就把这个数调大（-6dB 就是 0.5），代价是素材的起音被削掉更多，听起来会越来
+ * 越像被掐头。
+ */
+const ONSET_FRACTION = 0.25;
+
+/**
+ * 这一声真正开始之前，有多少秒是听不见的。
+ *
+ * 素材前面那一段 —— 空白也好、抡起来的爬升也好 —— 都是实打实的延迟：按下去到听见响，
+ * 中间隔着它。**这个东西对手感的影响远大于它的长度看起来的样子**，十几毫秒就足够让人
+ * 觉得"不跟手"，而这正是玩家能感觉到、却说不出原因的那类问题。
+ *
+ * 在这里算而不是把文件裁掉：一来换素材直接覆盖就行，二来这条线是一个可以随时拧的旋钮 ——
+ * 裁进文件里就固化了，想往回调得重新出素材。hud-click 更是别人的 CC0 素材，为这点毫秒
+ * 把 ogg 重编一遍（有损转有损）不值得。
+ *
+ * 找到越线点之后再往回退到最近的过零点：过零点上切没有台阶，淡入要处理的东西更少。
+ * 退不到就退满 5ms。
  */
 function measureLeadIn(buffer: AudioBuffer): number {
   const data = buffer.getChannelData(0);
-  let first = -1;
+  const rate = buffer.sampleRate;
+  const win = Math.max(1, Math.round(rate * ENVELOPE_WINDOW));
+
+  // 滑动窗口里的能量和。比的是能量而不是 RMS —— 省掉每个采样一次 sqrt，把比例平方一下
+  // 就完全等价（0.25 的 RMS 比例就是 0.0625 的能量比例）。
+  let energy = 0;
+  let peak = 0;
   for (let i = 0; i < data.length; i++) {
-    if (Math.abs(data[i]) > SILENCE) { first = i; break; }
+    energy += data[i] * data[i];
+    if (i >= win) energy -= data[i - win] * data[i - win];
+    if (energy > peak) peak = energy;
   }
-  // 整条都是静音（或者本来就没有空白）：不用裁。
+  // 整条都是静音：没什么可裁的。
+  if (peak <= 0) return 0;
+
+  const line = peak * ONSET_FRACTION * ONSET_FRACTION;
+  let first = -1;
+  energy = 0;
+  for (let i = 0; i < data.length; i++) {
+    energy += data[i] * data[i];
+    if (i >= win) energy -= data[i - win] * data[i - win];
+    if (energy > line) { first = i; break; }
+  }
   if (first <= 0) return 0;
-  const floor = Math.max(0, first - Math.ceil(buffer.sampleRate * 0.005));
+
+  const floor = Math.max(0, first - Math.ceil(rate * 0.005));
   let cut = floor;
   for (let i = first; i > floor; i--) {
     if (data[i] === 0 || (data[i] > 0) !== (data[i - 1] > 0)) { cut = i; break; }
   }
-  return cut / buffer.sampleRate;
+  return cut / rate;
 }
 
 

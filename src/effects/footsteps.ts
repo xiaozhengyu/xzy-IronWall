@@ -71,8 +71,6 @@ export class FootstepEffects {
 
   /** 每个单位上一帧的步态相位。跨越检测要用。 */
   private readonly phase = new WeakMap<Character, number>();
-  /** main 每帧取走的纯数据触地数。这里不能 import 浏览器音频层，离线验证也会走 Field。 */
-  private grassContacts = 0;
   private seed = 20260810;
 
   private rand(): number {
@@ -95,14 +93,6 @@ export class FootstepEffects {
     this.printAt.fill(0);
     this.rippleAt.fill(0);
     this.dropAt.fill(0);
-    this.grassContacts = 0;
-  }
-
-  /** 取走玩家这一帧踩在草地上的次数。音频是否可用、播哪个采样都由 main 决定。 */
-  drainGrassContacts(): number {
-    const count = this.grassContacts;
-    this.grassContacts = 0;
-    return count;
   }
 
   update(
@@ -148,9 +138,6 @@ export class FootstepEffects {
       this.addDrops(wx, wy, man, water, focus);
     } else if (weather.snowCover > 0.12) {
       this.addPrint(wx, wy, man.facing, weather.snowCover, focus);
-    } else if (focus && terrain.sample(wx, wy).dirt < 0.55) {
-      // 敌群也有真实步态，但几百人的脚步会把玩家自己的落脚感淹掉；这里只报焦点角色。
-      this.grassContacts++;
     }
   }
 
