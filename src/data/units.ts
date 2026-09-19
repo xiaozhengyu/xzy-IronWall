@@ -28,6 +28,7 @@ export type EnemyKindId =
   | 'peasant'
   | 'spearman'
   | 'shieldman'
+  | 'bulwark'
   | 'archer'
   | 'halberdier'
   | 'cavalry'
@@ -38,7 +39,7 @@ export type BossKindId = 'elite' | 'knightBoss';
 export type UnitKindId = EnemyKindId | BossKindId;
 
 /**
- * 一个杂兵的属性底稿。九种兵都是在它上面改几项 —— 这样"这个兵和普通兵差在哪儿"是**写出来**
+ * 一个杂兵的属性底稿。十种兵都是在它上面改几项 —— 这样"这个兵和普通兵差在哪儿"是**写出来**
  * 的，而不是要拿两行数去对。
  */
 const grunt = (overrides: Partial<UnitStats>): UnitStats => ({
@@ -109,6 +110,36 @@ export const UnitKinds: readonly UnitKindDef[] = [
     // 防御是杂兵的四倍 —— "正面推不动"这件事以前只写在说明里，现在是个真的数。
     stats: grunt({ maxHp: 850, attack: 10, defense: 16, moveSpeed: 9, attackArc: 1.5, attackSpeed: 0.85 }),
     exp: 3,
+  },
+  {
+    id: 'bulwark',
+    name: '重甲兵',
+    note: '塔盾加一杆平举的长矛，正面撞不动',
+    appearance: 'bulwark',
+    palette: PALETTE_RED,
+    // **全场防御最高的杂兵**：34 挡掉玩家 25.4% 的伤害（持盾兵 16 是 13.8%，末波枪骑兵
+    // 那一档才追得上），已经摸到首领的量级（精锐 40）而仍然低于他 —— 首领必须还是最硬的
+    // 那一个。血也给到杂兵里的头一档，两样加起来就是"这个人得砍好几刀"。
+    //
+    // 代价全写在别的列里，不然他就是个无解的东西：
+    //   最慢（7）     —— 全场最慢，比持盾兵还慢两档。这是玩家唯一稳定的解法：走开。一堵
+    //                    墙的压力来自推不动，不来自追得上。
+    //   出手最慢（0.7）—— 他不挥，所以"他要打我了"在画面上没有任何预告。再给一个快的频率，
+    //                    玩家会觉得自己在被看不见的东西扎。
+    //   攻击只有 15    —— 比戟兵还低。他是一堵墙，不是一把刀。
+    //
+    // 范围 24 就是那条画出来的线：杆长 15×2.1，握点往前占七成，矛尖落在身体中心前面约 24 个
+    // 单位。判定还会再加上两个人的身体半径（见 battle.ts 的 reachable），所以实战里他比画面上
+    // 再够远一点点 —— 全场每个兵都是这么算的。
+    //
+    // attackArc 0.6 是全场最窄的，填的是这杆矛真实的样子（只戳正前方那一条线）。**但敌人这
+    // 一侧现在用不上它**：敌人打玩家只看距离，不看角度（同上，reachable 那段注释写了为什么）。
+    // 照实填是为了哪天角度判定接上来时它是对的，而不是留一个"绕到侧面就安全"的假承诺。
+    stats: grunt({
+      maxHp: 1400, attack: 15, defense: 34, moveSpeed: 7,
+      attackRange: 24, attackArc: 0.6, attackSpeed: 0.7,
+    }),
+    exp: 6,
   },
   {
     id: 'archer',

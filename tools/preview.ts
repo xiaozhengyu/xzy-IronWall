@@ -309,6 +309,7 @@ const presets: [string, () => UnitDef][] = [
   ['archer', UnitPresets.archer],
   ['elite', UnitPresets.elite],
   ['halberdier', UnitPresets.halberdier],
+  ['bulwark', UnitPresets.bulwark],
   ['cavalry', UnitPresets.cavalry],
   ['lancer', UnitPresets.lancer],
   ['horseArcher', UnitPresets.horseArcher],
@@ -509,6 +510,7 @@ writePng('.preview-attack.png', attackStrip.upscale(2));
     ['warlord', UnitPresets.warlord, PALETTE_BLUE],
     ['knight', UnitPresets.knight, PALETTE_RED],
     ['elite', UnitPresets.elite, PALETTE_RED],
+    ['bulwark', UnitPresets.bulwark, PALETTE_RED],
   ];
   const closeFacings = [0, Math.PI * 0.5, Math.PI, Math.PI * 1.5];
   const sheet = new Canvas(CELL_W * closeFacings.length, CELL_H * rows.length, [71, 105, 59]);

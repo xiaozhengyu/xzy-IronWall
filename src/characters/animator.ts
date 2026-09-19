@@ -73,6 +73,10 @@ const BOW_CANT_DRAWN: Vec3 = { x: 0.72, y: 0.06, z: 0.69 };
  * 只表现为"手感有点怪"，极难定位。改动作的时候记得一起改这里。
  */
 export function attackImpact(def: UnitDef): number {
+  // 端平锁死的矛没有"挥到位"这一刻 —— 它一直就在位。落点定在这一段的最前面，人贴上来的
+  // 那一下几乎当场就疼，这正是撞在一根戳着的矛上该有的手感。
+  if (def.braced) return 0.3;
+
   switch (def.weapon) {
     case 'hammer':
       return 0.54; // applyDoubleSmash: strike 段 0.36..0.54
@@ -90,6 +94,10 @@ export function attackImpact(def: UnitDef): number {
 }
 
 export function attackDuration(def: UnitDef): number {
+  // 全场最短的一段，而且看不见 —— 它只是"这一下什么时候结算"的计时器，不是一个动作。
+  // 出手快慢由 attackSpeed 经 enemySwingGap 决定，和这个数无关。
+  if (def.braced) return 0.35;
+
   switch (def.weapon) {
     case 'bow':
       return 1.15;
@@ -461,6 +469,10 @@ function buildWeaponRest(
 
     case 'spear':
     case 'halberd': {
+      if (def.braced) {
+        buildBracedPike(pose, shoulderL, shoulderR);
+        break;
+      }
       // 斜扛在肩上，只用持械那只手。两只手都扶在杆上会让手臂无处可去：整个走路循环里它们
       // 都夹在胸前，姿势读作扭曲。副手像普通士兵一样跟着步态摆，只在突刺时才回到杆上。
       const dir = def.weapon === 'halberd' ? norm3(v3(0.06, 0.2, 0.98)) : norm3(v3(0.1, 0.34, 0.94));
@@ -509,8 +521,41 @@ function buildWeaponRest(
   }
 }
 
+/**
+ * 端平锁死的长矛：矛平举在身前指着正前方，盾横在身前，两只手一步都不摆。见 UnitDef.braced。
+ *
+ * **方向是严格的 +y，一点都不抬。** +y 是身体的正前方，也正是塔盾盾面的法线，所以矛与盾
+ * 在任何朝向下都是垂直的 —— 这个兵种就是这么定义的，抬起来一点点就不再是了。
+ *
+ * 别的动作（applyPolearmThrust）会把矛往上掰到 0.47 的仰角，理由是"完全水平的突刺在俯视图
+ * 里会被压缩成一个点"。那条理由在这里不成立：突刺是一瞬间，看不清就等于没发生；而这杆矛是
+ * 一直举着的，玩家绕着他走，八个朝向里有六个都把这条线完整地铺在屏幕上。正对镜头的那两个
+ * 朝向上它确实缩成一截短粗的杆 —— 那是一杆指着你的矛该有的样子。
+ *
+ * 两只手都不跟步态摆，各有各的理由：
+ *   持盾的左手 —— 盾的左右位置是跟着它走的（见 renderer 的 drawShield）。手一摆，一面比人
+ *                 还宽的盾就跟着左右晃，走两步就露出半个身子。
+ *   持矛的右手 —— 矛尖在手前面二十多个单位，握点抖一个单位，矛尖就扫过去一大截。这条线
+ *                 必须是死的。
+ */
+function buildBracedPike(pose: Pose, shoulderL: Vec3, shoulderR: Vec3): void {
+  // 左手压在身前偏内侧：盾心要落在人的正前方（drawShield 从胸往手插值 0.72），一面正面挡人
+  // 的盾不能像挎着的圆盾那样偏到一边去。
+  pose.handL = v3(shoulderL.x + 1.1, shoulderL.y + 2.3, shoulderL.z - 2.6);
+
+  // 握点在盾上沿的高度、盾面外侧一点：矛是从盾的上沿探出去的，不是从盾里穿出去的。
+  const grip = v3(shoulderR.x + 0.35, shoulderR.y + 2.4, shoulderR.z - 1.0);
+  pose.weaponGrip = grip;
+  pose.handR = grip;
+  pose.weaponDir = v3(0, 1, 0);
+}
+
 /** 把攻击动作叠在静止姿势之上。 */
 function applyAttack(pose: Pose, def: UnitDef, t: number, shoulderL: Vec3, shoulderR: Vec3): void {
+  // 端平锁死的人不做任何攻击动作 —— 他不是在"攻击"，他是一根一直戳在那儿的矛，走进去的人
+  // 自己撞上来。伤害照常在 attackImpact 那一刻落下，只是画面上一帧都不变。
+  if (def.braced) return;
+
   switch (def.weapon) {
     case 'bow':
       applyBow(pose, t, shoulderL, shoulderR);

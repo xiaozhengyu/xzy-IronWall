@@ -139,6 +139,7 @@ const blackstonePass: GameMapDef = {
   weatherNote: '阴，风大',
   sight: '最差的一张：中段两侧的林子挡死侧向视野',
   foes: [
+    foe('bulwark', '矛端在身前一动不动，正面撞不动'),
     foe('shieldman', '这张图的主力，正面推不动'),
     foe('halberdier', '举过头顶砸下来，够得比刀远'),
     foe('spearman', '躲在盾后面往外扎'),

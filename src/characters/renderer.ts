@@ -979,7 +979,9 @@ function drawShield(shapes: ShapeBatch, p: Projector, pose: Pose, palette: Chara
   // 只盖住持盾那一侧的半个人，不是整个人：盾是挎在一边的，把人完全盖住只会剩下一个长方形
   // 加一个头。这样也把持盾的手臂放到了它自己的盾后面 —— 那本来就是那条手臂该在的地方。
   const footZ = SHIELD_FOOT_Z;
-  const topZ = SHIELD_TOP_Z;
+  // 放大只往上长。盾是拄在地上的（见 SHIELD_FOOT_Z），围着盾心等比放大会把下沿抬离草皮，
+  // 于是一面更大的盾反而读作"被举起来了"—— 正好丢掉它最要紧的那件事。
+  const topZ = footZ + (SHIELD_TOP_Z - footZ) * def.shieldScale;
   const halfHeight = (topZ - footZ) * 0.5;
   // 0.72 而不是 0.55：盾是挎在一边的。偏 0.55 时盾心几乎压在胸骨上，正面看整个人
   // 就是一面盾加一个头，肩甲、腰带、垂片全被吃掉。
@@ -995,7 +997,7 @@ function drawShield(shapes: ShapeBatch, p: Projector, pose: Pose, palette: Chara
   if (def.shield === 'round') {
     // 一个立在"右/上"平面内的圆盘；正确投影那个平面，它才会随着人转向而变成一条边。
     const { sx, sy, rot } = projectUprightDisc(p);
-    const radius = 4.4;
+    const radius = 4.4 * def.shieldScale;
     const rx = p.s(radius * sx);
     const ry = Math.max(p.s(radius * sy), p.s(0.5));
 
@@ -1067,7 +1069,7 @@ function drawShield(shapes: ShapeBatch, p: Projector, pose: Pose, palette: Chara
 
   // 塔盾。它的上轴在屏幕上永远是竖直的，所以画成一个竖立的矩形，宽度随着人转向侧面而收窄，
   // 高度像所有立着的东西一样被相机俯角压缩 —— 否则一面按人身高做的盾在屏幕上会比人还高。
-  const halfW = 3.4;
+  const halfW = 3.4 * def.shieldScale;
   const w = Math.max(p.s(2 * halfW * p.sideOn), p.s(1.1));
   const h = p.s(2 * halfHeight * Projection.heightSquash);
 

@@ -59,6 +59,28 @@ export interface UnitDef {
   dualWield: boolean;
 
   /**
+   * 端平锁死：长杆武器一直平举在身前指着正前方，而且**不做攻击动作**。
+   *
+   * 这是"这个人怎么动"里唯一一条写在长相表里的 —— 它属于这里，因为它改的正是轮廓：一个
+   * 端平的矛在任何一帧都是从盾面法线方向直直伸出去的一条线，而会挥的矛每一帧长得都不一样。
+   * 重甲兵之所以在人堆里一眼能认出来，靠的就是这条永远不动的直线（见 UnitPresets.bulwark）。
+   *
+   * 矛的方向就是身体的正前方，也就是塔盾盾面的法线 —— 矛与盾**永远垂直**。见 animator 的
+   * buildWeaponRest；attack 那一支在它身上整个跳过（applyAttack），所以攻击时画面上什么都
+   * 不会变，伤害照样在 attackImpact 那一刻落下。
+   */
+  braced: boolean;
+
+  /**
+   * 盾牌的放大倍率。宽度直接乘它，高度从脚边往上长 —— 盾是拄在地上的，放大它不该把下沿
+   * 抬离草皮。
+   *
+   * 不跟着 bulk 走：bulk 是这个人的体格，而盾多大是他扛了块什么，两者没有关系（精锐统领
+   * bulk 1.5，扛的仍是制式塔盾）。
+   */
+  shieldScale: number;
+
+  /**
    * 骑在马上。
    *
    * 这是一个单位身上**最响**的一条：马肩隆就有十个单位高，骑手的头因此落在 24 上下，比
@@ -123,6 +145,8 @@ const DEFAULTS: UnitDef = {
   tassel: false,
   cape: false,
   dualWield: false,
+  braced: false,
+  shieldScale: 1,
   mounted: false,
   barding: false,
   bulk: 1,
@@ -326,6 +350,43 @@ export const UnitPresets = {
       bulk: 1.02,
       reach: 1.7,
       helmetTone: 1.05,
+    }),
+
+  /**
+   * 重甲兵：一人高的塔盾加一杆端平的长矛，矛尖始终垂直于盾面指向正前方。
+   *
+   * 场上唯一一个**不挥武器**的人（braced）。这不是省一套动作，这就是他：其余每个兵种都靠
+   * "抡起来的那一下"被认出来（戟兵举过头顶、长枪兵前刺、锤子横扫），而他从走进画面到被砍
+   * 倒，那条矛一动不动 —— 一排重甲兵压过来是一排平行线在平移，那是这个游戏里别的东西做不
+   * 出来的画面。
+   *
+   * 三件事共同说"硬"，缺一件就只是个大号持盾兵：
+   *   盾   —— shieldScale 1.22，比制式塔盾宽出一截、上沿盖到眼睛，正面几乎看不到人。
+   *   甲   —— plate 加颈甲、肩甲、膝甲，全身没有一块布。
+   *   体格 —— bulk 1.18 / stature 1.05，比杂兵宽一圈，但明显矮于精锐统领（1.5 / 1.34）：
+   *           他是**一堵墙**，不是一个首领，个头压过首领会让两者读反。
+   *
+   * 矛比步兵长枪短一档（reach 2.1 对 2.6）：那杆枪是斜扛在肩上的，杆尾指着天；这杆是平举的，
+   * 杆尾就横在人背后 —— 同样的长度在这里会拖出一条比人还长的尾巴。
+   */
+  bulwark: (): UnitDef =>
+    makeUnitDef({
+      weapon: 'spear',
+      shield: 'tower',
+      helmet: 'great',
+      armor: 'plate',
+      braced: true,
+      shieldScale: 1.22,
+      gorget: true,
+      pauldrons: true,
+      poleyns: true,
+      skirt: true,
+      tassel: true,
+      bulk: 1.18,
+      stature: 1.05,
+      reach: 2.1,
+      // 比周围的钢暗一档：这颗大盔是整个轮廓的最高处，调亮会把眼睛从那条矛上引开。
+      helmetTone: 0.92,
     }),
 
   // ------------------------------------------------------------ 骑兵

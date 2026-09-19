@@ -562,6 +562,7 @@ export const PlayerPresets: { id: UnitPresetId; name: string; make: () => UnitDe
   { id: 'elite', name: 'elite 精英', make: UnitPresets.elite },
   { id: 'knight', name: 'knight 骑士', make: UnitPresets.knight },
   { id: 'halberdier', name: 'halberdier 戟兵', make: UnitPresets.halberdier },
+  { id: 'bulwark', name: 'bulwark 重甲兵', make: UnitPresets.bulwark },
   { id: 'cavalry', name: 'cavalry 骑兵', make: UnitPresets.cavalry },
   { id: 'lancer', name: 'lancer 枪骑兵', make: UnitPresets.lancer },
   { id: 'horseArcher', name: 'horseArcher 骑射', make: UnitPresets.horseArcher },
