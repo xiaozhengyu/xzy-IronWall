@@ -1,5 +1,5 @@
 import { Character } from '../game/character';
-import type { UnitDef } from '../characters/unitDef';
+import { unitAppearance, type UnitDef } from '../characters/unitDef';
 import { IRON_BODY_GLOW, PALETTE_HERO, brightenPalette } from '../characters/palette';
 import type { CharacterPalette } from '../characters/palette';
 import { HUMAN_PACE } from '../game/battle';
@@ -8,6 +8,13 @@ import { DamageNumbers } from '../effects/damageNumbers';
 import { RigSpec } from '../characters/rig';
 import { drawAegisDome } from '../effects/aegisDome';
 import { drawDharmaAspect } from '../effects/dharmaAspect';
+import {
+  HEAVEN_GUARD_LEAD,
+  HEAVEN_GUARD_PALETTE,
+  drawHeavenGuard,
+  heavenGuardFall,
+  heavenGuardOffset,
+} from '../effects/heavenGuard';
 import { drawOrbitStars } from '../effects/orbitStars';
 import {
   SKY_BLADE_LENGTH, drawSkyBlade, heavenSplitBlade, skyArrowBlade,
@@ -15,8 +22,8 @@ import {
 import { PLAYER_RUN_SPEED } from '../game/battle';
 import { RUN_MULTIPLIER } from '../data/balance';
 import {
-  BERSERK_HP_DRAIN, LIFESTEAL_PER_LEVEL, MEND_HP_PER_TICK, ORB_ORBIT_REACH, ORB_SPIN,
-  SKILL_DAMAGE_PER_POWER,
+  BERSERK_HP_DRAIN, HEAVEN_GUARD_PACE, LIFESTEAL_PER_LEVEL, MEND_HP_PER_TICK, ORB_ORBIT_REACH,
+  ORB_SPIN, SKILL_DAMAGE_PER_POWER,
 } from '../data/balance';
 import { REGEN_TICK } from '../data/pickups';
 import type { UnitStats } from '../data/types';
@@ -269,6 +276,67 @@ function arrowLanding(stage: DemoStage): Vec2 {
   return v2(Math.cos(stage.actor.facing) * d, Math.sin(stage.actor.facing) * d);
 }
 
+/**
+ * 神兵天降在牌上放几个人。
+ *
+ * **三个，不是一个也不是五个。** 一个看不出"一排"，而这一招的全部内容就是那一排；五个在
+ * 176 像素宽的画布上要横着排开一百三十多像素，两头的人半个身子在画布外 —— 牌上读到的会是
+ * "两个人被切了一半"。三个正好把"横着一排、中间那个对着你"说清楚，而人数随等级长这件事写在
+ * 牌上那行小字里，不归画面管。
+ */
+const GUARD_DEMO_COUNT = 3;
+
+/**
+ * 整个队形在牌上按这个比缩：人的颗粒度、间距、身前那一段、推出去多远，四样乘的是同一个数。
+ *
+ * 乘同一个数才是"把这一小片战场整个缩小"。四样各缩各的话，牌上的队形和场上不是同一个形状 ——
+ * 比如只缩间距，五个人就挤成一团；只缩人，一排人之间会空出两个身位。
+ *
+ * 0.5：金身兵约四十像素高（施放者八十几），一眼就读得出"他召来的比他矮一圈、但是一排"。
+ */
+const GUARD_SHRINK = 0.5;
+
+/**
+ * 牌上推出去多远，台子的世界单位。
+ *
+ * **不是场上那个距离。** 场上满级推 124 个单位、约六个身位，照搬到牌上那一排第二帧就出画布了 ——
+ * 而这张牌要说的恰恰是"看着他们推过去"。和突进那边的 DASH_SPEED 是同一类取舍（见那一段）：
+ * 牌面给的是形状和节奏，距离由那行小字和场上说了算。
+ *
+ * 这个数让队列推到地块前缘就散掉：再远两格他们整排落在地块外的黑底上，读作"飘走了"。
+ */
+const GUARD_MARCH = 16;
+
+/** 推完之后明灭多久。比场上那一档（HEAVEN_GUARD_FADE）短一点，牌的周期塞不下。 */
+const GUARD_FADE = 0.36;
+
+/**
+ * 牌上那几个金身兵，一次造好一直用。
+ *
+ * 和场上是同一个东西：unitAppearance('bulwark') 加 HEAVEN_GUARD_PALETTE，走同一套步态、
+ * 同一杆锁死的长矛。三张牌同时摆出来时最多只有一张是这一招，所以共用一份就够。
+ */
+let guardPool: Character[] | null = null;
+const demoGuards = (): Character[] => {
+  if (!guardPool) {
+    guardPool = Array.from(
+      { length: GUARD_DEMO_COUNT },
+      () => new Character(unitAppearance('bulwark'), HEAVEN_GUARD_PALETTE, HUMAN_PACE),
+    );
+  }
+  return guardPool;
+};
+
+/** 这一帧队列推进了多远、还在多高的天上。两处（update 和 draw）读同一份，免得腿和位置对不上。 */
+function guardPhase(stage: DemoStage, age: number): { fall: number; travel: number; fade: number } {
+  const drop = skillById('heavenGuard').duration;
+  if (age < drop) return { fall: heavenGuardFall(1 - age / drop) * GUARD_SHRINK, travel: 0, fade: 1 };
+  const speed = stage.stats.moveSpeed * HEAVEN_GUARD_PACE * GUARD_SHRINK;
+  const travel = Math.min((age - drop) * speed, GUARD_MARCH);
+  const over = (age - drop) - GUARD_MARCH / speed;
+  return { fall: 0, travel, fade: over > 0 ? Math.max(0, 1 - over / GUARD_FADE) : 1 };
+}
+
 const DEMOS: Partial<Record<SkillId, SkillDemo>> = {
   sweep: swingDemo('fan'),
   spin: swingDemo('ring'),
@@ -395,6 +463,67 @@ const DEMOS: Partial<Record<SkillId, SkillDemo>> = {
       if (age >= 0.18 && age - dt < 0.18) {
         floatGain(stage, stage.stats.attack * SKILL_DAMAGE_PER_POWER * LIFESTEAL_PER_LEVEL, 'heal', 'plus');
       }
+    },
+  },
+
+  /**
+   * 神兵天降：一排金身重甲兵砸在他身前，端着矛推出去。
+   *
+   * 这张牌演的东西和别的招不一样 —— **画面的主角不是施放者**。他抬一下手，剩下的三秒里屏幕上
+   * 动的是那一排人。这正是它在场上的样子，所以牌上也这么演：他起手之后就站在原地，队列自己
+   * 从画面上方落下来、从他身前推出去。
+   *
+   * 走的是场上那一份画法（drawHeavenGuard），连下落曲线（heavenGuardFall）和横向排布
+   * （heavenGuardOffset）都是同一个函数 —— 牌上看到的队形就是按下去之后会出现的队形。
+   */
+  heavenGuard: {
+    // 2.8 = 起手 0.45 + 下落 0.34 + 推 0.87 + 明灭 0.36，外加半秒留白。按满量给的话（上一版
+    // 3.4）最后三帧是一个人站在空地上 —— 而这张牌抽样偏向起手那一头，那三帧本来就贵。
+    loop: 2.8,
+    cast: CAST_AT,
+    begin(stage) {
+      stage.actor.swing(0);
+      // 脚下那一圈金光，和场上起手那一圈是同一件事：真正的东西要三分之一秒后才落地，
+      // 这一圈是"按下去了"的回执。
+      stageRing(stage, 0, 0, stage.range * 0.55, 'ring', rgb(255, 224, 132), 0.3);
+    },
+    update(stage, age, dt) {
+      if (age < 0) return;
+      const phase = guardPhase(stage, age);
+      const speed = stage.stats.moveSpeed * HEAVEN_GUARD_PACE * GUARD_SHRINK;
+      for (const guard of demoGuards()) {
+        // 在天上也走：一个在半空中蹬腿的人比一个僵直落下来的更像"从天而降"，而且落地那一帧
+        // 的姿势已经是走着的，接得上。和 advanceHeavenGuards 里那一行是同一个理由。
+        guard.facing = stage.actor.facing;
+        guard.speed = phase.fade < 1 ? 0 : speed;
+        guard.update(dt, true);
+      }
+    },
+    draw(shapes, stage, at, grain, age) {
+      if (age < 0) return;
+      const phase = guardPhase(stage, age);
+      if (phase.fade <= 0) return;
+      const heading = stage.actor.facing;
+      const dirX = Math.cos(heading);
+      const dirY = Math.sin(heading);
+      // 横轴 = 朝向转 +90°，和 castSkill 里那两行一样。
+      const sideX = -dirY;
+      const sideY = dirX;
+      const ahead = HEAVEN_GUARD_LEAD * GUARD_SHRINK + phase.travel;
+
+      demoGuards().forEach((guard, i) => {
+        const offset = heavenGuardOffset(i, GUARD_DEMO_COUNT) * GUARD_SHRINK;
+        const x = dirX * ahead + sideX * offset;
+        const y = dirY * ahead + sideY * offset;
+        drawHeavenGuard(
+          shapes,
+          guard,
+          project(at, x, y, grain),
+          grain * GUARD_SHRINK,
+          phase.fall,
+          phase.fade,
+        );
+      });
     },
   },
 

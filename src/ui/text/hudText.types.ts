@@ -45,6 +45,7 @@ export interface HudMessages {
   skillLunge: string;
   skillAegis: string;
   skillDharma: string;
+  skillHeavenGuard: string;
   skillSprint: string;
   skillIronBody: string;
   skillBulwark: string;

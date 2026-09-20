@@ -186,6 +186,17 @@ export class Character {
   domeHitAt = -Infinity;
   aspectHitAt = -Infinity;
 
+  /**
+   * 上一次被"犁"过是什么时候。目前只有神兵天降那一排金身重甲兵会写它。
+   *
+   * 和 orbHitAt 同一个道理，但更要紧：那一排要推三四秒，没有窗口的话，一个没被一下打死的人
+   * 会贴在盾前面每帧挨一下 —— 伤害于是跟着帧率走。窗口长度见 HEAVEN_GUARD_HIT_GAP。
+   *
+   * 记在**人**身上而不是记在每个重甲兵身上：一排五个人扫过来，共用同一份免疫窗口，否则
+   * 队列一密就成了五倍伤害。
+   */
+  plowHitAt = -Infinity;
+
   /** 击飞的速度，世界单位/秒。落地清零。 */
   private velX = 0;
   private velY = 0;

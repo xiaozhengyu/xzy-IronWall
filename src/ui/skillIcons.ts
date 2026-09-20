@@ -48,6 +48,9 @@ export const SKILL_ICONS: Record<SkillId, string> = {
   berserk: HUD_ICON_URLS.fire,
   // 饮血借 HUD 那张心：符篓图一共十张，已经被十招占满。心和回血本来就是同一件事。
   bloodthirst: HUD_ICON_URLS.heart,
+  // 神兵天降借 HUD 那面盾。它和防御那张属性牌撞图，而这一招的全部内容正是**一排盾**推过来 ——
+  // 十张符箓早就占满了，而在剩下那几张里，没有比一面盾更贴的。
+  heavenGuard: HUD_ICON_URLS.shield,
 };
 
 /** 一个 `<img>`，图是这一招的。三处界面共用，省得各自去拼 img 的那几个属性。 */

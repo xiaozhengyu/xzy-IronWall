@@ -2,6 +2,7 @@ import { Container, Graphics, RenderTexture, Sprite, type Renderer } from 'pixi.
 import { RigSpec } from '../characters/rig';
 import { drawAegisDome } from '../effects/aegisDome';
 import { drawDharmaAspect } from '../effects/dharmaAspect';
+import { drawHeavenGuard, heavenGuardFall } from '../effects/heavenGuard';
 import { drawOrbitStars } from '../effects/orbitStars';
 import { SKY_BLADE_LENGTH, drawSkyBlade, heavenSplitBlade, skyArrowBlade } from '../effects/skyBlade';
 import { drawCharacter, drawSkeleton } from '../characters/renderer';
@@ -360,6 +361,26 @@ export class Scene {
       }
       this.drawn++;
     }
+    /*
+     * 神兵天降那一排金身重甲兵。
+     *
+     * 画在敌人**之后**、玩家之前，但这只决定同深度时谁压谁 —— 真正的遮挡归全局深度排序
+     * （每个人按自己脚下那一行算），所以走在人海里的那一排该被谁挡就被谁挡。
+     *
+     * 每个人自己带着模型和步态（battle.heavenGuards 里的 actor 就是个 Character），这里只负责
+     * 把"他还在天上多高"折算出来：drop / dropTotal 是剩余比例，heavenGuardFall 把它变成高度。
+     */
+    for (const g of battle.heavenGuards) {
+      drawHeavenGuard(
+        shapes,
+        g.actor,
+        cam.worldToScreen(g.actor.x, g.actor.y),
+        grain,
+        g.drop > 0 ? heavenGuardFall(g.drop / g.dropTotal) : 0,
+        g.fade,
+      );
+    }
+
     const playerAt = cam.worldToScreen(battle.player.x, battle.player.y);
     const dharma = battle.dharma;
     if (dharma) {

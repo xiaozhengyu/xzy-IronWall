@@ -37,6 +37,7 @@ export const HUD_TEXT_ZH_CN: HudMessages = {
   skillLunge: '突进',
   skillAegis: '金钟罩',
   skillDharma: '天地法相',
+  skillHeavenGuard: '神兵天降',
   skillSprint: '疾走',
   skillIronBody: '铁布衫',
   skillBulwark: '磐石',

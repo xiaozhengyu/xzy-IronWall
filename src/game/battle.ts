@@ -26,6 +26,10 @@ import {
   ORB_HIT_RADIUS,
   ORB_HIT_GAP,
   AURA_HIT_GAP,
+  HEAVEN_GUARD_PACE,
+  HEAVEN_GUARD_BODY_MARGIN,
+  HEAVEN_GUARD_HIT_GAP,
+  HEAVEN_GUARD_FADE,
   FINAL_BOSS_LIMIT,
   ORB_POWER,
   expToNextLevel,
@@ -46,6 +50,7 @@ import { Debris } from '../effects/debris';
 import { WarpField } from '../effects/warpField';
 import { ImpactEffects, frontRadius, weaponImpactPoint, type ShockwaveOptions } from '../effects/impact';
 import { SKY_BLADE_LENGTH, SKY_BLADE_WIDTH } from '../effects/skyBlade';
+import { HEAVEN_GUARD_LEAD, HEAVEN_GUARD_PALETTE, heavenGuardOffset } from '../effects/heavenGuard';
 import { Character } from './character';
 import { isFreeSpot, moveWithCollision } from './collision';
 import { inSector, sweptBy } from './combat';
@@ -579,6 +584,32 @@ export function playerPresetDisplayName(index: number): string {
  */
 
 /**
+ * 一个召出来的金身重甲兵。
+ *
+ * 他不进 Battle.enemies，也不进人群分离和碰撞：他是**玩家放出去的一段判定**，只是长着一个
+ * 人的样子。走直线、穿过所有东西、走完就散。真让他走一遍寻路和挤人，一排五个会当场挤成一
+ * 堆，而"一排平行的矛推过来"正是这一招的全部内容。
+ */
+export interface HeavenGuard {
+  /** 模型和步态。位置也存在他身上（x/y/facing），画的时候直接喂给 drawHeavenGuard。 */
+  actor: Character;
+  heading: number;
+  /** 推进速度，世界单位/秒。见 HEAVEN_GUARD_PACE。 */
+  speed: number;
+  /** 还要往前推多远，世界单位。归零就开始收。 */
+  left: number;
+  /** 还在天上的剩余时间，秒。> 0 时不结算也不推进，只往下掉。 */
+  drop: number;
+  /** 下落总时长，秒。drop / dropTotal 就是"还有多高"，见 heavenGuardFall。 */
+  dropTotal: number;
+  /** 收尾倒计时，1 → 0。推完才开始走。 */
+  fade: number;
+  power: number;
+  /** 发招那一刻的技能等级倍率。落地之后再升级不追加到已经放出去的这一排。 */
+  scale: number;
+}
+
+/**
  * 一道正在往外跑的技能波。
  *
  * 这是**游戏状态**，不是特效：它每帧都要结算杀伤。同名的东西在 effects/impact.ts 里也有
@@ -1109,6 +1140,18 @@ export class Battle {
      */
     fading: boolean;
   } | null = null;
+
+  /**
+   * 神兵天降：召出来的那一排金身重甲兵，一个一条。
+   *
+   * 和别的技能状态不一样，这里存的是**真的 Character**：同一份骨架、同一套步态、同一杆锁死
+   * 的长矛（UnitPresets.bulwark）。不另做一个"金色的形状"有两个理由 —— 玩家在人堆里已经认得
+   * 这个轮廓，而且步态、朝向、盾的转向这些东西照抄一遍迟早会和真正的重甲兵长得不一样。
+   *
+   * 数组而不是单个状态：一次放出去一到五个，各自走各自的直线、各自结算、各自收尾。公开给
+   * Scene 画（drawHeavenGuard）。
+   */
+  readonly heavenGuards: HeavenGuard[] = [];
 
   /**
    * 磐石那几颗绕着人转的流星：转到哪个角度了，一共几颗。
@@ -2136,6 +2179,7 @@ export class Battle {
     this.dharma = null;
     this.heavenSplit = null;
     this.skyArrow = null;
+    this.heavenGuards.length = 0;
     this.pendingAttackSkill = this.skillLoadout.attackSkill;
     this.sustainOpen.clear();
     this.sprintEngaged = false;
@@ -3069,6 +3113,11 @@ export class Battle {
       case 'skyArrow':
         this.skyArrow = null;
         break;
+      case 'heavenGuard':
+        // 卸下这一招，已经在推的那一排当场收走。和别的招不同的是它是一**批**东西，
+        // 所以清的是数组不是一个字段。
+        this.heavenGuards.length = 0;
+        break;
       case 'lunge':
         this.lunge = null;
         break;
@@ -3483,6 +3532,110 @@ export class Battle {
         return;
       }
 
+      case 'heavenGuard': {
+        /*
+         * 人数**就是技能等级**：一级一个，满级五个。
+         *
+         * 这是这一招的主线升级。多一个人在画面上当场读得出来（这一排明显更宽了），而"每个人
+         * 更疼一点"只是数字在变 —— 和磐石"一级一颗、满级五颗"是同一条思路。
+         */
+        const count = Math.max(1, Math.min(this.skillLoadout.level(skill.id), SKILL_MAX_LEVEL));
+        /*
+         * 朝**走的方向**推，站着不动时才用脸朝的方向。**和突进同一个字段、同一条规矩**
+         * （moveDir 就是 `moveAngle ?? facing`，见 Character）。
+         *
+         * 先做的是"一律按 facing"，那一版错在**把方向从玩家手里拿走了**：朝向归自动锁敌，
+         * 玩家按不动它。于是这一招只有一种放法 —— 推向系统替他选的那个最近的人。而这是一堵
+         * 会走的墙，它最该用的地方恰恰是玩家自己看见的那一片：要往哪边突围、哪个方向人最厚。
+         *
+         * 接到 moveDir 上之后，"推哪边"重新变成一个动作：**走着放就推着走的方向去，站桩放就
+         * 推向正在打的那一片。** 站桩那一支一个字没变（不动时 moveAngle 是空的，moveDir 自己
+         * 落回 facing），所以原来那种用法照旧成立，只是多出了另一种。
+         *
+         * 键位上和突进读作同一件事也要紧：两招都是"朝我要去的方向推出去"，玩家按之前不用回想
+         * 哪一招看脚、哪一招看脸。
+         */
+        const heading = player.moveDir;
+        const dirX = Math.cos(heading);
+        const dirY = Math.sin(heading);
+        /*
+         * 推多远。reach 已经含了等级（attackRange × skill.reach × reachScale），这里只再夹一道
+         * "不许推出画面"—— 和破空同一条规矩、同一个函数。
+         *
+         * 对这一招它比对破空更要紧：破空出了画面只是少杀几个人，而这一排是玩家盯着看的东西，
+         * 推出去就等于把最值钱的那一段演在他看不见的地方。arc 给 0 表示只量正前方那一条线：
+         * 队列是横着排开的，但它整排是**平移**，不是张开一个扇面。
+         */
+        const march = cappedReach(
+          player.x + dirX * HEAVEN_GUARD_LEAD,
+          player.y + dirY * HEAVEN_GUARD_LEAD,
+          heading,
+          0,
+          reach,
+          player.stats.attackRange,
+          view.spawn,
+        );
+        // 走多快按施放者的步速折算，见 HEAVEN_GUARD_PACE。
+        const speed = player.stats.moveSpeed * HEAVEN_GUARD_PACE;
+        // 横轴：朝向转 +90°。第 i 个沿它偏移，左右对称（heavenGuardOffset）。
+        const sideX = -dirY;
+        const sideY = dirX;
+
+        for (let i = 0; i < count; i++) {
+          const offset = heavenGuardOffset(i, count);
+          const actor = new Character(unitAppearance('bulwark'), HEAVEN_GUARD_PALETTE, speed);
+          /*
+           * 落点**不夹在场地里**。
+           *
+           * 夹过一版，当场出事：玩家贴着地图边缘朝外放，五个落点各自被夹到同一条边界线上 ——
+           * 一排人叠成了一个人。而且夹了也不一致，推进那一段本来就不夹（他们是一段判定，不是
+           * 场上的人）。
+           *
+           * 不夹的代价只是队列两头可能站到树墙里去，而那一侧玩家本来就走不过去；推多远已经被
+           * 出货视口夹过一道（上面的 cappedReach），而玩家贴边时那个框也是夹在场地里的，所以
+           * 这一排不会推到地图外面很远的地方。
+           */
+          actor.x = player.x + dirX * HEAVEN_GUARD_LEAD + sideX * offset;
+          actor.y = player.y + dirY * HEAVEN_GUARD_LEAD + sideY * offset;
+          actor.facing = heading;
+          // 速度给满，这样他从落地第一帧起就是**走着**的 —— 站定的步态混合要小半秒才推上去，
+          // 那半秒里一排人贴地平移，读作五张滑过来的贴纸。
+          actor.speed = speed;
+          // 先推一帧，把骨架从一堆零搭成站姿：没跑过 update 的 Pose 画出来是个塌在原点的人，
+          // 而这一招第一眼看到的就是他们还在天上的那一帧。
+          actor.update(1 / 60, true);
+          this.heavenGuards.push({
+            actor,
+            heading,
+            speed,
+            left: march,
+            drop: skill.duration,
+            dropTotal: skill.duration,
+            fade: 1,
+            power: skill.power,
+            scale,
+          });
+        }
+        /*
+         * 脚下推开一圈金光。**只有画面，不打人** —— 所以走 effects.spawn 而不是 castRing
+         * （那一条会连着结算一圈伤害，金钟罩的起手用的也是这条纯画面的路）。
+         *
+         * 它存在是因为这一招的"发动"在画面上是空的：玩家按下去，真正的东西要三分之一秒后才
+         * 落地。没有这一圈，那三分之一秒读作按空了。
+         */
+        this.effects.spawn(player.x, player.y, heading, {
+          power: 1,
+          span: Math.PI * 2,
+          from: 1,
+          to: reach * 0.3,
+          life: 0.3,
+          weight: 1.8 * player.def.bulk,
+          overhead: true,
+          tint: rgb(255, 224, 132),
+        });
+        return;
+      }
+
       case 'heavenSplit': {
         // 朝着锁定的那个人放出去。起手后把角度锁进状态，飞剑不会再跟着身体转 —— 目标半路
         // 倒下时，已经飞出去的那一剑不该拐弯去追下一个。
@@ -3809,6 +3962,9 @@ export class Battle {
     }
 
     this.advanceOrbit(dt);
+    // 玩家死了也照推：这一排是已经放出去的东西，不是他身上的一层状态（金钟罩和法相是）。
+    // 放完就倒下，那几秒里它仍然在替他犁 —— 而这恰恰是这一招最好看的时候。
+    this.advanceHeavenGuards(dt);
 
     if (this.dharma) {
       /*
@@ -3907,6 +4063,97 @@ export class Battle {
   }
 
   /**
+   * 神兵天降：那一排金身重甲兵各自往前推一格，犁掉挡在路上的人。
+   *
+   * 一个人分三段过完自己的一生：**掉下来 → 往前推 → 明灭着散掉**。三段各有各的出口条件，
+   * 所以写成三个分支而不是一条插值曲线 —— 中间那一段有多长是等级定的（推多远 ÷ 走多快），
+   * 另外两段是固定的。
+   *
+   * 他们**不进人群分离、不撞树、不撞地图边界**：这是一段长着人形的判定，不是场上的一个人。
+   * 真让他走一遍寻路和挤人，一排五个会当场挤成一堆，而"一排平行的矛平推过来"正是这一招的
+   * 全部内容。走出地图边界也无所谓 —— 推进距离已经被夹在出货视口里了（castSkill 里的
+   * cappedReach），他到不了那么远。
+   */
+  private advanceHeavenGuards(dt: number): void {
+    const guards = this.heavenGuards;
+    for (let i = guards.length - 1; i >= 0; i--) {
+      const g = guards[i];
+      const actor = g.actor;
+
+      if (g.drop > 0) {
+        // 还在天上。不结算也不前进 —— 一个还没落地的人杀人，玩家读作"隔空死的"。
+        g.drop -= dt;
+        if (g.drop <= 0) {
+          g.drop = 0;
+          /*
+           * 落地那一下：脚边推开一圈，并把这一圈里的人当场犁掉。
+           *
+           * 用 strikeAlongLunge 而不是 castRing，两个理由：castRing 的圈是按玩家的朝向和体格
+           * 画的（它读的是 this.player），而这一下发生在离玩家十几个单位外的另一个人脚底下；
+           * 更要紧的是**受力方向** —— 被砸中的人该朝这一排推进的方向两侧飞开，那正是 lunge
+           * 那条规则算的，而环是朝四面八方推。
+           *
+           * 起点终点是同一个点，所以它退化成一个以落点为心的圆 —— 这条正是"线段判定"在零
+           * 长度时该有的样子，不用另写一份。
+           */
+          this.strikeAlongLunge(
+            actor.x, actor.y, actor.x, actor.y,
+            g.heading,
+            actor.radius + HEAVEN_GUARD_BODY_MARGIN,
+            g.power, g.scale,
+            HEAVEN_GUARD_HIT_GAP,
+          );
+          this.effects.spawn(actor.x, actor.y, g.heading, {
+            power: 1,
+            span: Math.PI * 2,
+            from: 1,
+            to: (actor.radius + HEAVEN_GUARD_BODY_MARGIN) * 1.6,
+            life: 0.32,
+            weight: 2.2,
+            overhead: false,
+            style: 'burst',
+            tint: rgb(255, 228, 140),
+          });
+          this.debris.burst(actor.x, actor.y, 0, 0, g.power, actor.palette, 0.6);
+        }
+      } else if (g.left > 0) {
+        const step = Math.min(g.speed * dt, g.left);
+        const fromX = actor.x;
+        const fromY = actor.y;
+        actor.x += Math.cos(g.heading) * step;
+        actor.y += Math.sin(g.heading) * step;
+        g.left -= step;
+        /*
+         * 判定的是**这一帧走过的那条线段**，不是落点那一个圈。和突进同一条理由（见那一段）：
+         * 掉帧时一步能跨过好几个身位，按圆判会把中间的人整个跳过去，玩家读作"从人身上穿过去
+         * 了"。这一招尤其不能漏 —— 它的全部卖点就是身后那条空出来的路。
+         */
+        this.strikeAlongLunge(
+          fromX, fromY, actor.x, actor.y,
+          g.heading,
+          actor.radius + HEAVEN_GUARD_BODY_MARGIN,
+          g.power, g.scale,
+          HEAVEN_GUARD_HIT_GAP,
+        );
+      } else {
+        // 推到头了。站着明灭几帧再散 —— 走到最后一步凭空消失读作画面卡了一下。
+        // 这一段**不再结算**：一排停在原地还继续绞人的墙会变成一个可以站桩的杀阵。
+        g.fade -= dt / HEAVEN_GUARD_FADE;
+        actor.speed = 0;
+        if (g.fade <= 0) {
+          guards[i] = guards[guards.length - 1];
+          guards.pop();
+          continue;
+        }
+      }
+
+      // 步态照常推进。他在天上的时候也走 —— 一个在半空中蹬腿的人比一个僵直落下来的更像
+      // "从天而降"，而且落地那一帧的姿势已经是走着的，接得上。
+      actor.update(dt, true);
+    }
+  }
+
+  /**
    * 磐石的流星：转一格，撞该撞的人。
    *
    * 几颗由磐石的**技能等级**定，一级一颗、满级五颗 —— 这一招的升级方向是"更多颗"，不是
@@ -3990,14 +4237,19 @@ export class Battle {
     hit: number,
     power: number,
     scale: number,
+    immunity = 0,
   ): void {
     const segX = bx - ax;
     const segY = by - ay;
     const segLen2 = segX * segX + segY * segY;
     const dirX = Math.cos(heading);
     const dirY = Math.sin(heading);
+    const now = this.elapsed;
     for (const e of this.enemies) {
       if (!e.alive) continue;
+      // 免疫窗口。突进和开天都不传（它们只有零点几秒，一个人最多被扫到一两帧），神兵天降要
+      // 推三四秒，必须有它 —— 见 Character.plowHitAt。
+      if (immunity > 0 && now - e.plowHitAt < immunity) continue;
       let t = segLen2 > 1e-9 ? ((e.x - ax) * segX + (e.y - ay) * segY) / segLen2 : 0;
       t = t < 0 ? 0 : t > 1 ? 1 : t;
       const dx = e.x - (ax + segX * t);
@@ -4005,6 +4257,7 @@ export class Battle {
       const reach = hit + e.radius;
       if (dx * dx + dy * dy > reach * reach) continue;
 
+      if (immunity > 0) e.plowHitAt = now;
       const side = -dx * dirY + dy * dirX;
       const sign = Math.abs(side) > 0.05 ? Math.sign(side) : e.sideBias;
       let kx = -dirY * sign + dirX * LUNGE_SIDE_FORWARD;

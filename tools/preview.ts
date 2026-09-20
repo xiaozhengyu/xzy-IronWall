@@ -1918,7 +1918,7 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   // 一律用双锤武将：这一张比的是招，不是人。骑马的那个落点更低（figureAnchor 自己会分），
   // 但换个人会把"这一招长什么样"和"这个角色长什么样"混在一起。
   const rows: SkillId[] = [
-    'sweep', 'spin', 'wave', 'lunge', 'mend', 'berserk', 'aegis', 'dharma',
+    'sweep', 'spin', 'wave', 'lunge', 'mend', 'berserk', 'aegis', 'dharma', 'heavenGuard',
     'heavenSplit', 'skyArrow', 'sprint', 'ironBody', 'bulwark', 'bloodthirst',
   ];
 
