@@ -14,6 +14,7 @@ import {
   BLAST_PER_ENEMY,
   LIFESTEAL_PER_LEVEL,
   BERSERK_ATTACK,
+  BERSERK_ATTACK_SPEED,
   BERSERK_DEFENSE,
   BERSERK_HP_DRAIN,
   MEND_HP_PER_TICK,
@@ -3691,10 +3692,19 @@ export class Battle {
          * 两条都用现成的机制：属性走 timedBonuses（到期自己重算），掉血走 regens（一秒一跳、
          * 头顶飘个数）。另开一套"狂暴状态"只会得到两个自己走自己节奏的计时器，而它们本该同时结束。
          *
-         * 输出那一项乘伤害倍率，掉血和降防不乘 —— 升级该把这一招变得更值，而不是更危险。
+         * 输出那两项（攻击力、出手频率）乘伤害倍率，掉血和降防不乘 —— 升级该把这一招变得
+         * 更值，而不是更危险。
+         *
+         * 频率那一项走的也是属性加成这条现成的路：playerSwingTime 拿 attackSpeed 去除动作
+         * 时长（见文件上方），所以加在这里，挥击动作本身就跟着变快 —— 狂暴的八秒因此在画面
+         * 上是看得见的，不用另外加一层特效去说"他现在很猛"。
          */
         this.timedBonuses.push({
-          bonus: { attack: BERSERK_ATTACK * scale, defense: BERSERK_DEFENSE },
+          bonus: {
+            attack: BERSERK_ATTACK * scale,
+            attackSpeed: BERSERK_ATTACK_SPEED * scale,
+            defense: BERSERK_DEFENSE,
+          },
           left: skill.duration,
         });
         this.regens.push({ hp: -BERSERK_HP_DRAIN, mp: 0, left: skill.duration, since: 0 });

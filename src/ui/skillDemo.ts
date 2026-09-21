@@ -223,10 +223,16 @@ function floatGain(
   stage.floats.spawn(0, 0, value, { style, sign, label: 'HP', follow: true, z: FLOAT_Z });
 }
 
-/** 每隔 REGEN_TICK 一跳。回春和狂暴共用 —— 场上它们本来就走同一条 advanceRegens。 */
-function ticked(age: number, dt: number): boolean {
+/**
+ * 每隔 period 一跳，默认 REGEN_TICK。回春和狂暴的掉血共用这个默认值 —— 场上它们本来就走
+ * 同一条 advanceRegens。
+ *
+ * 能改周期，是因为狂暴牌面上还有第二件按自己节奏发生的事：它挥得比一秒一下快（见
+ * BERSERK_ATTACK_SPEED），而那正是这一招在场上的样子。
+ */
+function ticked(age: number, dt: number, period: number = REGEN_TICK): boolean {
   if (age < 0) return false;
-  return Math.floor(age / REGEN_TICK) !== Math.floor((age - dt) / REGEN_TICK);
+  return Math.floor(age / period) !== Math.floor((age - dt) / period);
 }
 
 /**
@@ -427,17 +433,19 @@ const DEMOS: Partial<Record<SkillId, SkillDemo>> = {
    * 掉血那一串和回春是同一条路（负的 regen），所以牌上也是同一串字、同一个节奏，只是符号
    * 反过来 —— 那正是这一招要说的一半：它和回春按下去长得像，收到的却是相反的东西。
    *
-   * 另一半（攻击 +30%、防御 −40%）在场上是看不见的，牌面那行小字说得比任何画面都清楚。
-   * 人在挥，是因为这一招买来的就是"接着打"：站着掉血只演了代价，没演它买到了什么。
+   * 攻击力那一项（+72%）和防御那一项（−40%）在场上是看不见的，牌面那行小字说得比任何画面
+   * 都清楚。人在挥，是因为这一招买来的就是"接着打"：站着掉血只演了代价，没演它买到了什么。
+   *
+   * **挥得比掉血快。** 出手频率也是这一招的一半（见 BERSERK_ATTACK_SPEED），而那一项恰好
+   * 是四项里唯一演得出来的：一秒一下的挥击和一秒两下的挥击，眼睛一下就分得开，不用去读
+   * 那行小字。所以掉血仍然按 REGEN_TICK 飘，挥击走自己那条更快的节奏。
    */
   berserk: {
     loop: CAST_AT + REGEN_TICK * 3 + 0.5,
     cast: CAST_AT,
     update(stage, age, dt) {
-      if (ticked(age, dt)) {
-        floatGain(stage, stage.stats.maxHp * BERSERK_HP_DRAIN, 'heal', 'minus');
-        stage.actor.swing(0);
-      }
+      if (ticked(age, dt)) floatGain(stage, stage.stats.maxHp * BERSERK_HP_DRAIN, 'heal', 'minus');
+      if (ticked(age, dt, REGEN_TICK / 2)) stage.actor.swing(0);
     },
   },
 

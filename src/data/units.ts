@@ -192,18 +192,24 @@ export const UnitKinds: readonly UnitKindDef[] = [
   // ------------------------------------------------------------ 首领
   //
   // 属性和杂兵是同一套字段，只是数大一截 —— 首领不需要新的机制，需要的是"打不动"这件事
-  // 真的成立。血是末波枪骑兵的十几倍，防御四十上下（挡掉玩家三成伤害），所以他是场上唯一
-  // 一个要认真打几十下的人。
+  // 真的成立。他是场上唯一一个要认真打十几秒的人。
   //
-  // 他们不吃波次成长（见 balance.ts 的 scaleForWave）：自己这一档已经把强度写死了，再乘
-  // 一遍末波曲线会得到一个谁也打不动的东西。
+  // 他们不吃普通那条波次曲线，走自己的一组（balance.ts 的 BOSS_*_PER_WAVE）。
+  //
+  // **防御是这两条记录里最要紧的那个数，不是血。** 玩家一局下来身上叠的全是乘算加成（等级、
+  // 技能等级、属性牌、本命加成），只加血的话首领就是个数字很大的沙袋 —— 砍的时间变长了，
+  // 但每一刀仍然轻飘飘。防御走的是递减公式（见 DEFENSE_SCALE），110 挡掉玩家一半出头的
+  // 伤害，那一刀砍上去**手感**就不一样了：他真的在挡。
+  //
+  // 攻击那一项同理往上抬了一大截：以前末波的精锐一下只打掉满配玩家 25 点血（两千八的血要
+  // 挨七十八下），站在他脸上砍是完全免费的。一个不用躲的首领不是首领，是个布景。
   {
     id: 'elite',
     name: '精锐统领',
     note: '塔盾与重甲，硬得像一堵墙',
     appearance: 'elite',
     palette: PALETTE_RED,
-    stats: grunt({ maxHp: 6000, attack: 44, defense: 40, moveSpeed: 22, attackRange: 19, attackArc: 1.5, attackSpeed: 0.8 }),
+    stats: grunt({ maxHp: 8000, attack: 150, defense: 110, moveSpeed: 22, attackRange: 19, attackArc: 1.5, attackSpeed: 0.85 }),
     boss: true,
     exp: 500,
   },
@@ -213,7 +219,7 @@ export const UnitKinds: readonly UnitKindDef[] = [
     note: '面甲与圆盾，比精锐快，也比精锐软',
     appearance: 'knight',
     palette: PALETTE_RED,
-    stats: grunt({ maxHp: 4200, attack: 36, defense: 32, moveSpeed: 26, attackRange: 16, attackArc: 1.7, attackSpeed: 1 }),
+    stats: grunt({ maxHp: 5600, attack: 120, defense: 88, moveSpeed: 26, attackRange: 16, attackArc: 1.7, attackSpeed: 1.05 }),
     boss: true,
     exp: 380,
   },

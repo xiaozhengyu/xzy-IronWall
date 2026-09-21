@@ -22,9 +22,15 @@ import {
   WAVE_ATTACK_SPEED_PER_WAVE,
   WAVE_DEFENSE_PER_WAVE,
   WAVE_EXP_PER_WAVE,
+  BOSS_ATTACK_PER_WAVE,
+  BOSS_ATTACK_SPEED_PER_WAVE,
+  BOSS_DEFENSE_PER_WAVE,
   BOSS_HP_PER_WAVE,
+  WAVE_ATTACK_SPEED_PER_WAVE_LATE,
   WAVE_HP_PER_WAVE,
+  WAVE_HP_PER_WAVE_LATE,
   WAVE_SPEED_PER_WAVE,
+  lateWaveSteps,
   applyBonuses,
   applyGrowth,
   scaleBonus,
@@ -81,8 +87,12 @@ export function resolveHeroStats(
  * 两层乘算：全局的波次曲线（balance.ts），再乘这张图自己的加成（MapModifier）。地图那一层
  * 还能给"每多一波再加多少"，所以隘口不只是一开始更硬，而是越往后越硬。
  *
- * **首领不吃波次成长。** 他们在 units.ts 里那一档已经把强度写死了（血是末波枪骑兵的十几
- * 倍），再乘一遍末波曲线会得到一个谁也打不动的东西。地图那一层照样吃 —— 那才几成的事。
+ * **首领不吃普通那条波次曲线**，走自己的一组（BOSS_*_PER_WAVE）。他们在 units.ts 里那一档
+ * 已经把强度写死了，再乘一遍末波的杂兵曲线会得到一个谁也打不动的东西。但"不吃"不等于"不长"——
+ * 以前他们除了血什么都不长，于是末波的首领和第一波的首领打起来一模一样，而玩家涨了六倍。
+ * 地图那一层两边照样吃 —— 那才几成的事。
+ *
+ * 普通兵在 WAVE_RAMP_FROM 波之后还叠一段更陡的（血和出手频率两项），见 balance.ts。
  */
 export function resolveEnemyStats(
   kind: ResolvedUnitKind,
@@ -90,12 +100,19 @@ export function resolveEnemyStats(
   modifier: MapModifier = NEUTRAL_MODIFIER,
 ): UnitStats {
   const steps = Math.max(0, wave - 1);
+  // 第三波之后的那一段陡坡，只有普通兵吃 —— 首领自己那组斜坡本来就比它陡。
+  const late = lateWaveSteps(wave);
   const base = kind.stats;
-  const waveHp = kind.boss ? 1 + BOSS_HP_PER_WAVE * steps : 1 + WAVE_HP_PER_WAVE * steps;
-  const waveAttack = kind.boss ? 1 : 1 + WAVE_ATTACK_PER_WAVE * steps;
-  const waveDefense = kind.boss ? 1 : 1 + WAVE_DEFENSE_PER_WAVE * steps;
+  const waveHp = kind.boss
+    ? 1 + BOSS_HP_PER_WAVE * steps
+    : 1 + WAVE_HP_PER_WAVE * steps + WAVE_HP_PER_WAVE_LATE * late;
+  const waveAttack = kind.boss ? 1 + BOSS_ATTACK_PER_WAVE * steps : 1 + WAVE_ATTACK_PER_WAVE * steps;
+  const waveDefense = kind.boss ? 1 + BOSS_DEFENSE_PER_WAVE * steps : 1 + WAVE_DEFENSE_PER_WAVE * steps;
+  // 速度那一条首领仍然不吃：他要能被绕开，见 MAX_ENEMY_SPEED 上面那段。
   const waveSpeed = kind.boss ? 1 : 1 + WAVE_SPEED_PER_WAVE * steps;
-  const waveAttackSpeed = kind.boss ? 1 : 1 + WAVE_ATTACK_SPEED_PER_WAVE * steps;
+  const waveAttackSpeed = kind.boss
+    ? 1 + BOSS_ATTACK_SPEED_PER_WAVE * steps
+    : 1 + WAVE_ATTACK_SPEED_PER_WAVE * steps + WAVE_ATTACK_SPEED_PER_WAVE_LATE * late;
 
   return {
     maxHp: base.maxHp * (waveHp + modifier.hpPerWave * steps) * modifier.enemyHp,
