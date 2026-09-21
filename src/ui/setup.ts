@@ -7,7 +7,7 @@ import type { WeatherKind } from '../world/weather';
 import { createHudIcon } from './hudIcons';
 import { createSkillIcon } from './skillIcons';
 import { StatHex, type StatAxis } from './statHex';
-import { HudText } from './text/hudText';
+import { HudText, type HudTextKey } from './text/hudText';
 
 /**
  * 备战界面：一屏之内选人、选图、开打。
@@ -142,25 +142,25 @@ function line(parent: HTMLElement, key: string, value: string): void {
  */
 function groupSkills(
   ids: readonly SkillId[],
-): { group: string; skills: { id: SkillId; name: string; note: string }[] }[] {
+): { groupKey: HudTextKey; skills: { id: SkillId; nameKey: HudTextKey; noteKey: HudTextKey }[] }[] {
   const order: SkillCategory[] = ['attack', 'active', 'projectile', 'guard'];
   const out = [];
   for (const category of order) {
     const skills = ids
       .map((id) => skillById(id))
       .filter((skill) => skill.category === category)
-      .map((skill) => ({ id: skill.id, name: skill.name, note: skill.note }));
+      .map((skill) => ({ id: skill.id, nameKey: skill.nameKey, noteKey: skill.noteKey }));
     if (skills.length === 0) continue;
-    out.push({ group: SkillCategoryRules[category].name, skills });
+    out.push({ groupKey: SkillCategoryRules[category].nameKey, skills });
   }
   return out;
 }
 
 /** 还没接上数值的字段统一显示这个。 */
-const WEATHERS: { kind: WeatherKind; name: string }[] = [
-  { kind: 'clear', name: '晴' },
-  { kind: 'rain', name: '雨' },
-  { kind: 'snow', name: '雪' },
+const WEATHERS: { kind: WeatherKind; nameKey: HudTextKey }[] = [
+  { kind: 'clear', nameKey: 'weatherClear' },
+  { kind: 'rain', nameKey: 'weatherRain' },
+  { kind: 'snow', nameKey: 'weatherSnow' },
 ];
 
 export class SetupScreen {
@@ -207,7 +207,7 @@ export class SetupScreen {
    */
   readonly foeSlots: HTMLElement[] = [];
   private readonly foeBox = el('div', 'setup-foes');
-  private readonly startButton = el('button', 'setup-main', '开始游戏');
+  private readonly startButton = el('button', 'setup-main');
   /**
    * 开始按钮底下那一排：这一局会带进去的补给。
    *
@@ -221,9 +221,9 @@ export class SetupScreen {
    * 以后的商店花的就是它。灵石不在这里 —— 那是一局之内的东西，打完就清零。
    */
   private readonly purse = el('span', 'setup-purse');
-  private readonly shopButton = el('button', 'setup-shop', '商店');
+  private readonly shopButton = el('button', 'setup-shop');
   /** 商店右边那一个。摆在这儿而不是角色栏里：它记的是**所有**角色的事。 */
-  private readonly historyButton = el('button', 'setup-shop', '战绩');
+  private readonly historyButton = el('button', 'setup-shop');
   /** 顶栏底下那行会自己消失的提示。 */
 
   /** 进入战场时盖住整屏的那一层。 */
@@ -238,6 +238,11 @@ export class SetupScreen {
   constructor(bridge: SetupBridge, text: HudText = new HudText()) {
     this.bridge = bridge;
     this.text = text;
+    // 换语言：静态那几处是绑定的、HudText 自己会刷；角色卡、地图详情、出兵列表这些是
+    // 按当时的数据拼出来的，得重画一遍。关着就不画 —— 下次 show() 本来就会重画。
+    this.text.onChange(() => {
+      if (!this.root.hidden) this.rebuild();
+    });
     this.build();
     document.body.appendChild(this.root);
     this.root.hidden = true;
@@ -269,17 +274,28 @@ export class SetupScreen {
     this.entering = false;
     this.entryVeil.hidden = true;
     this.startButton.disabled = false;
-    this.startButton.textContent = '开始游戏';
+    this.startButton.textContent = this.text.value('setupStart');
     // 每次回到这一屏都从当前地图自己的天气重新起步 —— 上一局打完回来，右栏不该还亮着
     // 上一局在别的图上点过的那一档。
     this.weather = this.currentMap.weather;
+    this.rebuild();
+    this.bridge.onHeroChange(this.currentHero);
+    this.bridge.onMapChange(this.currentMap);
+  }
+
+  /**
+   * 把四块面板按当前选择重画一遍。
+   *
+   * 单独抽出来是给换语言用的：那时候该变的只有字，而 show() 还会重播入场动画、把天气
+   * 重置回这张图的默认档 —— 玩家只是点了一下语言按钮，不该把他刚选的东西弄没。
+   */
+  private rebuild(): void {
+    this.startButton.textContent = this.text.value('setupStart');
     this.buildHeroList();
     this.buildHeroDetail();
     this.buildMapStrip();
     this.buildMapDetail();
     this.refreshSummary();
-    this.bridge.onHeroChange(this.currentHero);
-    this.bridge.onMapChange(this.currentMap);
   }
 
   hide(): void {
@@ -298,15 +314,15 @@ export class SetupScreen {
       const face = el('div', 'setup-face');
       const portrait = this.portraitOf(hero);
       if (portrait) face.appendChild(portrait);
-      else face.textContent = hero.name.slice(0, 1);
+      else face.textContent = this.text.value(hero.nameKey).slice(0, 1);
       item.appendChild(face);
       const box = el('div', 'setup-item-text');
       const nameRow = el('div', 'setup-item-name');
-      nameRow.appendChild(el('span', 'setup-item-k', hero.name));
+      nameRow.appendChild(el('span', 'setup-item-k', this.text.value(hero.nameKey)));
       // 等级贴在名字后面，不另起一行：每个角色各记各的等级，列表上一眼看出练了谁。
       nameRow.appendChild(el('span', 'setup-item-lv', `Lv.${this.bridge.progress.level(hero)}`));
       box.appendChild(nameRow);
-      box.appendChild(el('span', 'setup-item-v', hero.tagline));
+      box.appendChild(el('span', 'setup-item-v', this.text.value(hero.taglineKey)));
       item.appendChild(box);
       item.addEventListener('click', () => this.selectHero(index));
       this.heroList.appendChild(item);
@@ -345,8 +361,8 @@ export class SetupScreen {
     this.heroTags.replaceChildren();
 
     const head = el('div', 'setup-tags-head');
-    head.appendChild(el('span', 'setup-tags-k', hero.name));
-    head.appendChild(el('span', 'setup-tags-v', hero.blurb));
+    head.appendChild(el('span', 'setup-tags-k', this.text.value(hero.nameKey)));
+    head.appendChild(el('span', 'setup-tags-v', this.text.value(hero.blurbKey)));
     this.heroTags.appendChild(head);
 
     const chips = el('div', 'setup-chips');
@@ -354,8 +370,8 @@ export class SetupScreen {
       for (const skill of group.skills) {
         const chip = el('span', 'setup-chip');
         chip.appendChild(createSkillIcon(skill.id, 'setup-chip-icon'));
-        chip.appendChild(el('span', undefined, skill.name));
-        chip.title = `${group.group} · ${skill.note}`;
+        chip.appendChild(el('span', undefined, this.text.value(skill.nameKey)));
+        chip.title = `${this.text.value(group.groupKey)} · ${this.text.value(skill.noteKey)}`;
         chips.appendChild(chip);
       }
     }
@@ -377,20 +393,20 @@ export class SetupScreen {
       cell.appendChild(el('span', 'setup-stat-v', value));
       parent.appendChild(cell);
     };
-    one(levelRow, '等级', `${level}`);
-    one(levelRow, '成长', ARCHETYPE_LABEL[hero.archetype]);
-    one(levelRow, '经验', `${Math.floor(exp.have)} / ${exp.need}`);
+    one(levelRow, this.text.value('statLevel'), `${level}`);
+    one(levelRow, this.text.value('setupGrowth'), this.text.value(ARCHETYPE_LABEL[hero.archetype]));
+    one(levelRow, this.text.value('statExp'), `${Math.floor(exp.have)} / ${exp.need}`);
     this.heroTags.appendChild(levelRow);
 
     const statRow = el('div', 'setup-stats');
-    one(statRow, '生命', `${Math.round(stats.maxHp)}`);
-    one(statRow, '进攻', `${Math.round(stats.attack)}`);
-    one(statRow, '防御', `${Math.round(stats.defense)}`);
-    one(statRow, '速度', `${Math.round(stats.moveSpeed)}`);
-    one(statRow, '敏捷', `${stats.attackSpeed.toFixed(2)}x`);
-    one(statRow, '暴击', `${Math.round(stats.crit * 100)}%`);
-    one(statRow, '范围', `${Math.round(stats.attackRange)}`);
-    one(statRow, '拾取', `${Math.round(stats.pickupRange)}`);
+    one(statRow, this.text.value('statHp'), `${Math.round(stats.maxHp)}`);
+    one(statRow, this.text.value('statAttack'), `${Math.round(stats.attack)}`);
+    one(statRow, this.text.value('statDefense'), `${Math.round(stats.defense)}`);
+    one(statRow, this.text.value('statSpeed'), `${Math.round(stats.moveSpeed)}`);
+    one(statRow, this.text.value('statAgility'), `${stats.attackSpeed.toFixed(2)}x`);
+    one(statRow, this.text.value('statCrit'), `${Math.round(stats.crit * 100)}%`);
+    one(statRow, this.text.value('statRange'), `${Math.round(stats.attackRange)}`);
+    one(statRow, this.text.value('statPickup'), `${Math.round(stats.pickupRange)}`);
 
     /*
      * 六边形和那排数字并排，不是二选一。
@@ -408,12 +424,12 @@ export class SetupScreen {
       max: Math.max(...all.map(read)),
     });
     this.statHex.draw([
-      axis('生命', (s) => s.maxHp),
-      axis('进攻', (s) => s.attack),
-      axis('敏捷', (s) => s.attackSpeed),
-      axis('暴击', (s) => s.crit),
-      axis('速度', (s) => s.moveSpeed),
-      axis('防御', (s) => s.defense),
+      axis(this.text.value('statHp'), (s) => s.maxHp),
+      axis(this.text.value('statAttack'), (s) => s.attack),
+      axis(this.text.value('statAgility'), (s) => s.attackSpeed),
+      axis(this.text.value('statCrit'), (s) => s.crit),
+      axis(this.text.value('statSpeed'), (s) => s.moveSpeed),
+      axis(this.text.value('statDefense'), (s) => s.defense),
     ]);
     const statBox = el('div', 'setup-stat-box');
     statBox.appendChild(this.statHex.root);
@@ -438,7 +454,7 @@ export class SetupScreen {
       const image = this.bridge.mapImage(map);
       if (image) thumb.appendChild(image);
       card.appendChild(thumb);
-      card.appendChild(el('span', 'setup-strip-k', map.name));
+      card.appendChild(el('span', 'setup-strip-k', this.text.value(map.nameKey)));
       card.addEventListener('click', () => this.selectMap(index));
       this.mapStrip.appendChild(card);
     });
@@ -498,17 +514,17 @@ export class SetupScreen {
     this.mapInfo.replaceChildren();
 
     const head = el('div', 'setup-detail-head');
-    head.appendChild(el('h2', 'setup-detail-k', map.name));
-    head.appendChild(el('p', 'setup-detail-v', map.blurb));
+    head.appendChild(el('h2', 'setup-detail-k', this.text.value(map.nameKey)));
+    head.appendChild(el('p', 'setup-detail-v', this.text.value(map.blurbKey)));
     this.mapInfo.appendChild(head);
 
-    const env = block(this.mapInfo, '战场环境');
-    line(env, '地形', map.terrain);
-    line(env, '视野', map.sight);
+    const env = block(this.mapInfo, this.text.value('setupEnvironment'));
+    line(env, this.text.value('setupTerrain'), this.text.value(map.terrainKey));
+    line(env, this.text.value('setupSight'), this.text.value(map.sightKey));
     const sky = el('div', 'setup-weather');
     this.weatherButtons.length = 0;
-    for (const { kind, name } of WEATHERS) {
-      const button = el('button', 'setup-weather-b', name);
+    for (const { kind, nameKey } of WEATHERS) {
+      const button = el('button', 'setup-weather-b', this.text.value(nameKey));
       button.classList.toggle('on', kind === this.weather);
       button.addEventListener('click', () => this.selectWeather(kind));
       this.weatherButtons.push({ node: button, kind });
@@ -516,10 +532,10 @@ export class SetupScreen {
     }
     env.appendChild(sky);
     // 这张图本来是什么天气。三个按钮说的是"这一局下什么"，这一行说的是"这地方平时什么样"。
-    line(env, '天候', map.weatherNote);
+    line(env, this.text.value('setupWeather'), this.text.value(map.weatherNoteKey));
 
-    const goal = block(this.mapInfo, '本局目标');
-    goal.appendChild(el('p', 'setup-goal', map.objective));
+    const goal = block(this.mapInfo, this.text.value('setupObjective'));
+    goal.appendChild(el('p', 'setup-goal', this.text.value(map.objectiveKey)));
 
     // 出兵人物**不在**上面那块信息面板里，它是右栏里单独的一块。
     //
@@ -532,7 +548,9 @@ export class SetupScreen {
       const card = el('div', `setup-foe${enemy.boss ? ' boss' : ''}`);
       const frame = el('div', 'setup-foe-frame');
       card.appendChild(frame);
-      card.appendChild(el('span', 'setup-foe-k', enemy.boss ? `${enemy.name} · 首领` : enemy.name));
+      const foeName = this.text.value(enemy.nameKey);
+      card.appendChild(el('span', 'setup-foe-k',
+        enemy.boss ? this.text.value('setupBossTag', { name: foeName }) : foeName));
       this.foeBox.appendChild(card);
       this.foeSlots.push(frame);
     }
@@ -546,7 +564,8 @@ export class SetupScreen {
   }
 
   private refreshSummary(): void {
-    this.summary.textContent = `${this.currentHero.name} · ${this.currentMap.name}`;
+    this.summary.textContent =
+      `${this.text.value(this.currentHero.nameKey)} · ${this.text.value(this.currentMap.nameKey)}`;
     this.purse.textContent = String(this.bridge.progress.coins());
     this.refreshCarry();
   }
@@ -590,11 +609,13 @@ export class SetupScreen {
     // 不弹确认框：确认就是这一下。按钮当场锁住并改字，重复点击进不来第二次。
     this.entering = true;
     this.startButton.disabled = true;
-    this.startButton.textContent = '正在进入…';
+    this.startButton.textContent = this.text.value('setupEntering');
     this.entryLines.replaceChildren();
-    this.entryLines.appendChild(el('div', 'setup-veil-k', `正在进入 · ${this.currentMap.name}`));
-    this.entryLines.appendChild(el('div', 'setup-veil-v', `出战角色：${this.currentHero.name}`));
-    this.entryLines.appendChild(el('div', 'setup-veil-w', '准备战场…'));
+    this.entryLines.appendChild(el('div', 'setup-veil-k',
+      this.text.value('setupEnteringMap', { map: this.text.value(this.currentMap.nameKey) })));
+    this.entryLines.appendChild(el('div', 'setup-veil-v',
+      this.text.value('setupEnteringHero', { hero: this.text.value(this.currentHero.nameKey) })));
+    this.entryLines.appendChild(el('div', 'setup-veil-w', this.text.value('setupPreparing')));
     this.entryVeil.hidden = false;
     this.bridge.onStart(this.currentHero, this.currentMap, this.weather);
   }
@@ -607,7 +628,9 @@ export class SetupScreen {
     const brand = el('span', 'setup-brand');
     this.text.bindText(brand, 'gameTitle');
     top.appendChild(brand);
-    top.appendChild(el('span', 'setup-lead', '选择出战角色与地图'));
+    const lead = el('span', 'setup-lead');
+    this.text.bindText(lead, 'setupLead');
+    top.appendChild(lead);
     // 顶栏右边：金币和商店入口。
     //
     // 摆在这儿而不是角色那一栏：金币是**跨局**的家底，不属于任何一个角色，换谁上场它都
@@ -615,9 +638,12 @@ export class SetupScreen {
     const purseBox = el('div', 'setup-top-right');
     purseBox.appendChild(createHudIcon('coin', 'setup-purse-icon'));
     purseBox.appendChild(this.purse);
+    // 这两个按钮上一轮被我删掉了字面量却没接文案，成了两个空按钮。绑上去。
+    this.text.bindText(this.shopButton, 'shopTitle');
     this.shopButton.type = 'button';
     this.shopButton.addEventListener('click', () => this.bridge.onShop());
     purseBox.appendChild(this.shopButton);
+    this.text.bindText(this.historyButton, 'historyTitle');
     this.historyButton.type = 'button';
     this.historyButton.addEventListener('click', () => this.bridge.onHistory(this.currentHero.id));
     purseBox.appendChild(this.historyButton);
@@ -642,10 +668,16 @@ export class SetupScreen {
 
     const legend = el('div', 'setup-legend');
     legend.appendChild(el('span', 'setup-legend-i start'));
-    legend.appendChild(el('span', undefined, '进入位置'));
+    const spawnTag = el('span');
+    this.text.bindText(spawnTag, 'setupSpawn');
+    legend.appendChild(spawnTag);
     legend.appendChild(el('span', 'setup-legend-i camp'));
-    legend.appendChild(el('span', undefined, '营地'));
-    legend.appendChild(el('span', 'setup-legend-t', '左键拖动 · 滚轮缩放'));
+    const campTag = el('span');
+    this.text.bindText(campTag, 'setupCamp');
+    legend.appendChild(campTag);
+    const mapHint = el('span', 'setup-legend-t');
+    this.text.bindText(mapHint, 'setupMapHint');
+    legend.appendChild(mapHint);
     colMid.appendChild(legend);
 
     const strip = el('div', 'setup-strip');
@@ -659,7 +691,9 @@ export class SetupScreen {
     const colRight = el('div', 'setup-col r');
     colRight.appendChild(this.mapInfo);
     const foeSection = el('div', 'setup-foe-section');
-    foeSection.appendChild(el('h3', 'setup-block-k', '出兵人物'));
+    const foeTitle = el('h3', 'setup-block-k');
+    this.text.bindText(foeTitle, 'setupFoes');
+    foeSection.appendChild(foeTitle);
     foeSection.appendChild(this.foeBox);
     colRight.appendChild(foeSection);
     const foot = el('div', 'setup-foot');

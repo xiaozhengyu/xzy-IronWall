@@ -15,6 +15,7 @@
  * 这个文件里一个数都没有 —— 数在 units.ts / heroes.ts / balance.ts 那三张表里。
  */
 
+import type { HudTextKey } from '../ui/text/hudText.types';
 import type { SkillId } from '../game/skills';
 import type { UnitDef, UnitPresetId } from '../characters/unitDef';
 import type { CharacterPalette } from '../characters/palette';
@@ -127,11 +128,12 @@ export type HeroArchetype = 'offense' | 'defense' | 'speed' | 'balanced';
 
 export interface HeroDef {
   id: string;
-  name: string;
+  /** 名字、定位、介绍都只存 key，文字在 ui/text 的语言包里。 */
+  nameKey: HudTextKey;
   /** 一句定位，列表里跟在名字下面。 */
-  tagline: string;
+  taglineKey: HudTextKey;
   /** 一句玩法介绍，右栏用。 */
-  blurb: string;
+  blurbKey: HudTextKey;
   archetype: HeroArchetype;
 
   /**
@@ -182,9 +184,10 @@ export interface HeroDef {
  */
 export interface UnitKindDef {
   id: string;
-  name: string;
+  /** 名字和小字都只存 key，文字在 ui/text 的语言包里。 */
+  nameKey: HudTextKey;
   /** 界面上那行小字。选图时右栏列敌人用。 */
-  note: string;
+  noteKey: HudTextKey;
   appearance: UnitPresetId;
   palette: CharacterPalette;
   stats: UnitStats;

@@ -1,4 +1,5 @@
 import './history.css';
+import type { HudText } from './text/hudText';
 import type { HeroRecord } from '../game/profile';
 
 /**
@@ -51,16 +52,18 @@ function clock(seconds: number): string {
  * 不写绝对时间：玩家关心的是"这是刚才那一局还是上礼拜的"，而一个 2026-09-14 20:31 要他自己
  * 去和今天比一遍。超过一周才退回日期 —— 那时候"七天前"已经不比日期更好读了。
  */
-function ago(at: number): string {
+function ago(at: number, text: HudText): string {
   const delta = Date.now() - at;
   if (!Number.isFinite(delta) || delta < 0) return '';
   const min = Math.floor(delta / 60000);
-  if (min < 1) return '刚刚';
-  if (min < 60) return `${min} 分钟前`;
+  if (min < 1) return text.value('agoJustNow');
+  if (min < 60) return text.value('agoMinutes', { count: min });
   const hour = Math.floor(min / 60);
-  if (hour < 24) return `${hour} 小时前`;
+  if (hour < 24) return text.value('agoHours', { count: hour });
   const day = Math.floor(hour / 24);
-  if (day < 7) return `${day} 天前`;
+  if (day < 7) return text.value('agoDays', { count: day });
+  // 超过一周就退回系统日期：这时候"几天前"已经不比日期更好读了，而日期格式交给浏览器
+  // 按它自己的地区习惯去排（中文是 2026/9/21，英文是 9/21/2026）。
   return new Date(at).toLocaleDateString();
 }
 
@@ -68,13 +71,19 @@ export class HistoryScreen {
   readonly root = el('div', 'history');
 
   private readonly hooks: HistoryHooks;
+  private readonly text: HudText;
   private readonly heroList = el('div', 'history-list');
   private readonly body = el('div', 'history-body');
   private heroIndex = 0;
 
-  constructor(hooks: HistoryHooks) {
+  constructor(hooks: HistoryHooks, text: HudText) {
     this.hooks = hooks;
+    this.text = text;
     this.build();
+    // 和商店同一条：这一屏是一次性拼出来的，换语言得重画。关着就不画。
+    text.onChange(() => {
+      if (this.open) this.refresh();
+    });
     document.body.appendChild(this.root);
     this.root.hidden = true;
   }
@@ -109,7 +118,9 @@ export class HistoryScreen {
       item.classList.toggle('on', index === this.heroIndex);
       item.appendChild(el('span', 'history-item-name', hero.name));
       // 列表上只写一件事：打了几局。别的都在右边，列表是用来挑人的，不是第二张表。
-      item.appendChild(el('span', 'history-item-runs', hero.record.runs > 0 ? `${hero.record.runs} 局` : '未出战'));
+      item.appendChild(el('span', 'history-item-runs', hero.record.runs > 0
+        ? this.text.value('historyRuns', { runs: hero.record.runs })
+        : this.text.value('historyNotPlayed')));
       item.addEventListener('click', () => {
         this.heroIndex = index;
         this.refresh();
@@ -142,43 +153,52 @@ export class HistoryScreen {
     };
 
     // ---- 累计
-    this.body.appendChild(el('div', 'history-head', '累计'));
+    this.body.appendChild(el('div', 'history-head', this.text.value('historyTotal')));
     const total = el('div', 'history-grid');
     // 胜率摆第一个、占两格：这一屏所有的数里只有它是一个**评价**，别的都是计数。
     // 它自己带着"几胜几局"，所以不再单开一格写战斗次数 —— 九个格子正好三行。
-    cell(total, '胜率',
-      played ? `${Math.round((r.wins / r.runs) * 100)}%（${r.wins} 胜 / ${r.runs} 局）` : '—', true);
-    cell(total, '总击杀', num(r.kills));
-    cell(total, '斩首领', num(r.bosses));
-    cell(total, '承受伤害', num(r.damageTaken));
-    cell(total, '总时长', played ? clock(r.time) : '—');
-    cell(total, '最远波次', num(r.bestWave));
-    cell(total, '金币', num(r.coins));
-    cell(total, '灵石', num(r.gems));
+    cell(total, this.text.value('historyWinRate'),
+      played
+        ? this.text.value('historyWinRateValue', {
+          percent: Math.round((r.wins / r.runs) * 100),
+          wins: r.wins,
+          runs: r.runs,
+        })
+        : '—', true);
+    cell(total, this.text.value('historyKills'), num(r.kills));
+    cell(total, this.text.value('historyBosses'), num(r.bosses));
+    cell(total, this.text.value('historyDamageTaken'), num(r.damageTaken));
+    cell(total, this.text.value('historyTotalTime'), played ? clock(r.time) : '—');
+    cell(total, this.text.value('historyBestWave'), num(r.bestWave));
+    cell(total, this.text.value('statGold'), num(r.coins));
+    cell(total, this.text.value('statGems'), num(r.gems));
     this.body.appendChild(total);
 
     // ---- 最近一场
     const last = r.last;
     const head = el('div', 'history-head');
-    head.appendChild(el('span', undefined, '最近一场'));
+    head.appendChild(el('span', undefined, this.text.value('historyLastRun')));
     head.appendChild(el('span', 'history-when',
-      last ? `${last.map} · ${ago(last.at)}` : '还没有用这个角色打过'));
+      last
+        // 存档里那个 map 存的是文案 key；本地化之前的旧档存的是当时那一版的中文，原样显示。
+        ? `${this.text.valueOrRaw(last.map)} · ${ago(last.at, this.text)}`
+        : this.text.value('historyNeverPlayed')));
     this.body.appendChild(head);
 
     const one = el('div', 'history-grid');
     const verdict = el('div',
       `history-cell history-cell--wide${last ? ` history-verdict--${last.won ? 'won' : 'lost'}` : ''}`);
-    verdict.appendChild(el('span', 'history-k', '结果'));
+    verdict.appendChild(el('span', 'history-k', this.text.value('historyResult')));
     verdict.appendChild(el('span', `history-v${last ? '' : ' history-v--none'}`,
-      last ? (last.won ? '通关' : '战败') : '—'));
+      last ? this.text.value(last.won ? 'historyWon' : 'historyLost') : '—'));
     one.appendChild(verdict);
-    cell(one, '击杀', last ? `${last.kills}` : '—');
-    cell(one, '斩首领', last ? `${last.bosses}` : '—');
-    cell(one, '承受伤害', last ? `${last.damageTaken}` : '—');
-    cell(one, '用时', last ? clock(last.time) : '—');
-    cell(one, '波次', last ? `${last.wave} / ${last.waves}` : '—');
-    cell(one, '金币', last ? `${last.coins}` : '—');
-    cell(one, '灵石', last ? `${last.gems}` : '—');
+    cell(one, this.text.value('historyKillsOne'), last ? `${last.kills}` : '—');
+    cell(one, this.text.value('historyBosses'), last ? `${last.bosses}` : '—');
+    cell(one, this.text.value('historyDamageTaken'), last ? `${last.damageTaken}` : '—');
+    cell(one, this.text.value('historyTimeOne'), last ? clock(last.time) : '—');
+    cell(one, this.text.value('historyWave'), last ? `${last.wave} / ${last.waves}` : '—');
+    cell(one, this.text.value('statGold'), last ? `${last.coins}` : '—');
+    cell(one, this.text.value('statGems'), last ? `${last.gems}` : '—');
     this.body.appendChild(one);
   }
 
@@ -187,8 +207,11 @@ export class HistoryScreen {
     this.root.appendChild(card);
 
     const head = el('div', 'history-top');
-    head.appendChild(el('span', 'history-title', '战绩'));
-    const close = el('button', 'history-close', '返回');
+    const title = el('span', 'history-title');
+    this.text.bindText(title, 'historyTitle');
+    head.appendChild(title);
+    const close = el('button', 'history-close');
+    this.text.bindText(close, 'back');
     close.type = 'button';
     close.addEventListener('click', () => this.hooks.onClose());
     head.appendChild(close);

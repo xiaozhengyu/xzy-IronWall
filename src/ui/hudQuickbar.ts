@@ -249,9 +249,11 @@ export class HudQuickbar {
     if (icon) {
       const src = item.options.icon;
       if (src && icon.src !== src) icon.src = src;
-      icon.alt = def?.name ?? '';
+      icon.alt = def ? this.text.value(def.nameKey) : '';
     }
-    item.view.root.title = def ? `${def.name} · ${def.note}` : '';
+    item.view.root.title = def
+      ? `${this.text.value(def.nameKey)} · ${this.text.value(def.noteKey)}`
+      : '';
     this.refreshItemCount(item);
   }
 
@@ -274,7 +276,9 @@ export class HudQuickbar {
     return {
       id: item.options.id ?? `item-${index + 1}`,
       icon,
-      label: def?.name ?? this.text.value('itemEffect', { key: item.options.key }),
+      label: def
+        ? this.text.value(def.nameKey)
+        : this.text.value('itemEffect', { key: item.options.key }),
       duration,
     };
   }

@@ -14,6 +14,7 @@
  * 类型、给一个被动，界面和存档会自己长出来（存档按 id 记等级，见 game/profile.ts）。
  */
 
+import type { HudTextKey } from '../ui/text/hudText.types';
 import type { HeroDef, UnitStats } from './types';
 
 /**
@@ -84,9 +85,9 @@ const stats = (overrides: Partial<UnitStats>): UnitStats => ({ ...baseline, ...o
 export const Heroes: readonly HeroDef[] = [
   {
     id: 'warlord',
-    name: '双锤武将',
-    tagline: '近身横扫',
-    blurb: '两柄重锤扫开身前一片，站在人堆中间也能把人堆推开。',
+    nameKey: 'heroWarlordName',
+    taglineKey: 'heroWarlordTagline',
+    blurbKey: 'heroWarlordBlurb',
     archetype: 'balanced',
     appearance: 'warlord',
     // 基准角色：全部落在基线上，别的角色和他比。
@@ -106,9 +107,9 @@ export const Heroes: readonly HeroDef[] = [
   },
   {
     id: 'knight',
-    name: '骑士',
-    tagline: '持盾破阵',
-    blurb: '一手剑一手盾，靠回旋清开贴身的人，再顶着盾冲进下一堆。',
+    nameKey: 'heroKnightName',
+    taglineKey: 'heroKnightTagline',
+    blurbKey: 'heroKnightBlurb',
     archetype: 'defense',
     appearance: 'knight',
     // 防御型：血最厚、防御最高，代价是够不远（16 是原来挂在 knight 预设上的那个数）也打不快。
@@ -131,9 +132,9 @@ export const Heroes: readonly HeroDef[] = [
   },
   {
     id: 'swordsman',
-    name: '披风剑士',
-    tagline: '远程破空',
-    blurb: '出手最远的一个：一道破空推出去，路过的都倒，自己不用挤进人堆。',
+    nameKey: 'heroBladeName',
+    taglineKey: 'heroBladeTagline',
+    blurbKey: 'heroBladeBlurb',
     archetype: 'offense',
     appearance: 'hero',
     // 进攻型：攻击力涨得最快，血和防御最薄。他本来也不该挤进人堆。
@@ -153,9 +154,9 @@ export const Heroes: readonly HeroDef[] = [
   },
   {
     id: 'rider',
-    name: '骠骑将军',
-    tagline: '马上长枪',
-    blurb: '唯一骑马的一个：坐在鞍上比谁都高，枪够得也最远，靠冲进去再冲出来打。',
+    nameKey: 'heroLancerName',
+    taglineKey: 'heroLancerTagline',
+    blurbKey: 'heroLancerBlurb',
     archetype: 'speed',
     appearance: 'lancer',
     // 速度型：移动速度长得最快，攻击范围 30 是原来挂在 lancer 预设上的那个数（坐在鞍上，
@@ -185,9 +186,9 @@ export function heroById(id: string): HeroDef {
 }
 
 /** 成长类型在界面上显示成什么。 */
-export const ARCHETYPE_LABEL: Record<HeroDef['archetype'], string> = {
-  offense: '进攻型',
-  defense: '防御型',
-  speed: '速度型',
-  balanced: '均衡型',
+export const ARCHETYPE_LABEL: Record<HeroDef['archetype'], HudTextKey> = {
+  offense: 'archetypeOffense',
+  defense: 'archetypeDefense',
+  speed: 'archetypeSpeed',
+  balanced: 'archetypeBalanced',
 };

@@ -1,3 +1,4 @@
+import type { HudTextKey } from '../ui/text/hudText.types';
 import type { CharacterPalette } from '../characters/palette';
 import type { UnitDef } from '../characters/unitDef';
 import { DEFAULT_LAYOUT, type TerrainLayout } from '../world/terrain';
@@ -19,8 +20,8 @@ import type { WeatherKind } from '../world/weather';
  * 以前这里要给每一条手写 name 和 note，同一个持盾兵在四张图上写了四遍。现在只写 id。
  */
 export interface MapFoe {
-  name: string;
-  note: string;
+  nameKey: HudTextKey;
+  noteKey: HudTextKey;
   def: UnitDef;
   palette: CharacterPalette;
   /** 首领。目前还没进出兵模板，摆在这里是让玩家先认识轮廓。 */
@@ -28,16 +29,22 @@ export interface MapFoe {
 }
 
 /** 从兵种表里取一种兵。取不到当场炸 —— 宁可炸也别默默画错人。 */
-function foe(id: UnitKindId, note?: string): MapFoe {
+function foe(id: UnitKindId, noteKey?: HudTextKey): MapFoe {
   const kind = resolveKind(id);
   const def = unitKind(id);
-  return { name: def.name, note: note ?? def.note, def: kind.def, palette: kind.palette, boss: kind.boss || undefined };
+  return {
+    nameKey: def.nameKey,
+    noteKey: noteKey ?? def.noteKey,
+    def: kind.def,
+    palette: kind.palette,
+    boss: kind.boss || undefined,
+  };
 }
 
 /** 这张图的首领。每张图挑一个，名字各自不同，属性是同一档。 */
-function boss(id: BossKindId, name: string, note: string): MapFoe {
+function boss(id: BossKindId, nameKey: HudTextKey, noteKey: HudTextKey): MapFoe {
   const kind = resolveKind(id);
-  return { name, note, def: kind.def, palette: kind.palette, boss: true };
+  return { nameKey, noteKey, def: kind.def, palette: kind.palette, boss: true };
 }
 
 /**
@@ -55,19 +62,20 @@ function boss(id: BossKindId, name: string, note: string): MapFoe {
  */
 export interface GameMapDef {
   id: string;
-  name: string;
+  /** 下面这些都只存 key，文字在 ui/text 的语言包里。 */
+  nameKey: HudTextKey;
   /** 列表卡片上的环境标签，一个词。 */
-  tag: string;
+  tagKey: HudTextKey;
   /** 一两句环境描述。 */
-  blurb: string;
+  blurbKey: HudTextKey;
   /** 战场环境三行：地形 / 天气 / 视野。 */
-  terrain: string;
-  weatherNote: string;
-  sight: string;
+  terrainKey: HudTextKey;
+  weatherNoteKey: HudTextKey;
+  sightKey: HudTextKey;
   /** 主要敌人，外加一个首领。右栏列名字，中栏下面摆模型。 */
   foes: MapFoe[];
   /** 本局目标。没有胜负结算之前，就照实写。 */
-  objective: string;
+  objectiveKey: HudTextKey;
 
   width: number;
   height: number;
@@ -95,22 +103,22 @@ export interface GameMapDef {
  */
 const provingGround: GameMapDef = {
   id: 'proving',
-  name: '演武荒原',
-  tag: '林地',
-  blurb: '四面合围的一块平地，边上是围死的树墙，中间散着几处水塘和踩出来的土路。',
-  terrain: '草地为主，几片林地和水塘，土路穿过中央',
-  weatherNote: '晴，局内可切雨雪',
-  sight: '全场开阔，只有林地和树墙挡视线',
+  nameKey: 'mapProvingName',
+  tagKey: 'mapProvingTag',
+  blurbKey: 'mapProvingBlurb',
+  terrainKey: 'mapProvingTerrain',
+  weatherNoteKey: 'mapProvingWeather',
+  sightKey: 'mapProvingSight',
   foes: [
-    foe('thug', '数量最多，贴身砍'),
-    foe('spearman', '够得比杂兵远一点'),
-    foe('shieldman', '正面难打，绕后'),
-    foe('archer', '站远处放箭'),
-    foe('cavalry', '后段才来，比谁都高、比谁都快'),
+    foe('thug', 'unitThugNote'),
+    foe('spearman', 'unitSpearmanNote'),
+    foe('shieldman', 'unitShieldmanNote'),
+    foe('archer', 'unitArcherNote'),
+    foe('cavalry', 'unitCavalryNote'),
     // 首领还没接进出兵模板，见 MapFoe.boss。属性已经有了（units.ts 的 elite），缺的只是出场。
-    boss('elite', '精锐统领', '塔盾与重甲，尚未出现在波次里'),
+    boss('elite', 'mapProvingBossName', 'mapBossPending'),
   ],
-  objective: '抵御不断来袭的敌人。',
+  objectiveKey: 'mapProvingObjective',
 
   width: 1200,
   height: 1200,
@@ -132,21 +140,21 @@ const provingGround: GameMapDef = {
  */
 const blackstonePass: GameMapDef = {
   id: 'pass',
-  name: '黑石隘口',
-  tag: '峡谷',
-  blurb: '两壁夹着的一条南北向窄谷，中段被两侧的林子掐得最细，一条土路从头贯到尾。',
-  terrain: '一条纵贯的土路，两侧密林压到路边，没有水',
-  weatherNote: '阴，风大',
-  sight: '最差的一张：中段两侧的林子挡死侧向视野',
+  nameKey: 'mapPassName',
+  tagKey: 'mapPassTag',
+  blurbKey: 'mapPassBlurb',
+  terrainKey: 'mapPassTerrain',
+  weatherNoteKey: 'mapPassWeather',
+  sightKey: 'mapPassSight',
   foes: [
-    foe('bulwark', '矛端在身前一动不动，正面撞不动'),
-    foe('shieldman', '这张图的主力，正面推不动'),
-    foe('halberdier', '举过头顶砸下来，够得比刀远'),
-    foe('spearman', '躲在盾后面往外扎'),
-    foe('thug', '填在队列缝里'),
-    boss('elite', '隘口守将', '塔盾与重甲，尚未出现在波次里'),
+    foe('bulwark', 'unitBulwarkNote'),
+    foe('shieldman', 'unitShieldmanNote'),
+    foe('halberdier', 'unitHalberdierNote'),
+    foe('spearman', 'unitSpearmanNote'),
+    foe('thug', 'unitThugNote'),
+    boss('elite', 'mapPassBossName', 'mapBossPending'),
   ],
-  objective: '在窄谷里顶住六波推进。',
+  objectiveKey: 'mapPassObjective',
 
   width: 1100,
   height: 1600,
@@ -195,21 +203,21 @@ const blackstonePass: GameMapDef = {
  */
 const redSandSteppe: GameMapDef = {
   id: 'steppe',
-  name: '赤沙荒原',
-  tag: '荒原',
-  blurb: '一整片跑得开的沙草地，边上那圈林子薄得几乎挡不住视线，地上散着几块踩秃的沙土。',
-  terrain: '大片开阔草地，五处沙土，边缘只有一层薄林',
-  weatherNote: '晴，日头很足',
-  sight: '最好的一张：一眼能看到对面的林线',
+  nameKey: 'mapSteppeName',
+  tagKey: 'mapSteppeTag',
+  blurbKey: 'mapSteppeBlurb',
+  terrainKey: 'mapSteppeTerrain',
+  weatherNoteKey: 'mapSteppeWeather',
+  sightKey: 'mapSteppeSight',
   foes: [
-    foe('cavalry', '开局就有，冲得最快'),
-    foe('lancer', '披着马衣，够得最远'),
-    foe('horseArcher', '边跑边放箭，追不上'),
-    foe('peasant', '徒步的那一部分，填数量'),
+    foe('cavalry', 'unitCavalryNote'),
+    foe('lancer', 'unitLancerNote'),
+    foe('horseArcher', 'unitHorseArcherNote'),
+    foe('peasant', 'unitPeasantNote'),
     // 荒原是骑兵的地方，首领也换成骑着马的那一个。
-    boss('knightBoss', '荒原头人', '面甲与圆盾，比精锐快，尚未出现在波次里'),
+    boss('knightBoss', 'mapSteppeBossName', 'mapBossPending'),
   ],
-  objective: '在开阔地上撑过六波骑兵冲锋。',
+  objectiveKey: 'mapSteppeObjective',
 
   width: 1600,
   height: 1600,
@@ -257,20 +265,20 @@ const redSandSteppe: GameMapDef = {
  */
 const whiteRidgeSnowfield: GameMapDef = {
   id: 'snowfield',
-  name: '白岭雪原',
-  tag: '雪原',
-  blurb: '一片积着雪的缓坡，中间是冻住的大湖，三片杉林从边上探进来，能挡箭。',
-  terrain: '中央一片冻湖，三片探入场内的林子，其余是积雪的草地',
-  weatherNote: '雪，默认就在下',
-  sight: '中等：湖面一览无余，林子里看不清',
+  nameKey: 'mapSnowName',
+  tagKey: 'mapSnowTag',
+  blurbKey: 'mapSnowBlurb',
+  terrainKey: 'mapSnowTerrain',
+  weatherNoteKey: 'mapSnowWeather',
+  sightKey: 'mapSnowSight',
   foes: [
-    foe('archer', '这张图的主力，站得最远'),
-    foe('horseArcher', '边跑边放，位置一直在变'),
-    foe('shieldman', '压在前排替弓手挡'),
-    foe('spearman', '贴着盾往外扎'),
-    boss('elite', '雪原猎首', '塔盾与重甲，尚未出现在波次里'),
+    foe('archer', 'unitArcherNote'),
+    foe('horseArcher', 'unitHorseArcherNote'),
+    foe('shieldman', 'unitShieldmanNote'),
+    foe('spearman', 'unitSpearmanNote'),
+    boss('elite', 'mapSnowBossName', 'mapBossPending'),
   ],
-  objective: '在箭雨底下撑过六波。',
+  objectiveKey: 'mapSnowObjective',
 
   width: 1400,
   height: 1400,

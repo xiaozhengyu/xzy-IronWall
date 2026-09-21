@@ -1,4 +1,5 @@
 import './shop.css';
+import type { HudText, HudTextKey } from './text/hudText';
 import { createHudIcon, HUD_ICON_URLS } from './hudIcons';
 import { createSkillIcon } from './skillIcons';
 import { pickupById } from '../data/pickups';
@@ -73,12 +74,19 @@ export class ShopScreen {
   readonly root = el('div', 'shop');
 
   private readonly hooks: ShopHooks;
+  private readonly text: HudText;
   private readonly purse = el('span', 'shop-purse');
   private readonly body = el('div', 'shop-body');
 
-  constructor(hooks: ShopHooks) {
+  constructor(hooks: ShopHooks, text: HudText) {
     this.hooks = hooks;
+    this.text = text;
     this.build();
+    // 换语言时重画：货架是 refresh() 一次性拼出来的，不是绑定，自己不会跟着变。
+    // 关着的时候不画 —— 下次 show() 本来就会重画一遍。
+    text.onChange(() => {
+      if (this.open) this.refresh();
+    });
     document.body.appendChild(this.root);
     this.root.hidden = true;
   }
@@ -106,7 +114,7 @@ export class ShopScreen {
     this.body.replaceChildren();
 
     // ---- 根基
-    this.body.appendChild(this.shelf('根基', '永久属性，所有角色共享'));
+    this.body.appendChild(this.shelf('shelfRoots', 'shelfRootsNote'));
     // 根基恰好六项，排成三列是两行整的；四列的话第二行会空出两格。
     const roots = el('div', 'shop-grid shop-grid--three');
     for (const def of Roots) {
@@ -114,8 +122,10 @@ export class ShopScreen {
       const price = rootPrice(def, owned);
       roots.appendChild(this.card({
         icon: ROOT_ICONS[def.key],
-        name: def.name,
-        note: owned > 0 ? `已 +${Math.round(def.perRank * owned * 100)}%` : `每级 +${Math.round(def.perRank * 100)}%`,
+        name: this.text.value(def.nameKey),
+        note: owned > 0
+          ? this.text.value('rootOwnedBonus', { value: Math.round(def.perRank * owned * 100) })
+          : this.text.value('rootPerRankBonus', { value: Math.round(def.perRank * 100) }),
         owned,
         max: ROOT_MAX_RANK,
         price,
@@ -126,7 +136,7 @@ export class ShopScreen {
     this.body.appendChild(roots);
 
     // ---- 师承
-    this.body.appendChild(this.shelf('师承', '这一招到手时就已经是这一级'));
+    this.body.appendChild(this.shelf('shelfMastery', 'shelfMasteryNote'));
     const mastery = el('div', 'shop-grid');
     for (const id of masterySkills()) {
       const owned = view.mastery(id);
@@ -134,8 +144,8 @@ export class ShopScreen {
       const skill = skillById(id);
       mastery.appendChild(this.card({
         iconNode: createSkillIcon(id, 'shop-icon'),
-        name: skill.name,
-        note: `起始 ${startLevelOf(owned)} 级`,
+        name: this.text.value(skill.nameKey),
+        note: this.text.value('masteryStartLevel', { level: startLevelOf(owned) }),
         owned,
         max: MASTERY_MAX,
         price,
@@ -146,7 +156,7 @@ export class ShopScreen {
     this.body.appendChild(mastery);
 
     // ---- 补给
-    this.body.appendChild(this.shelf('补给', '游戏里打不出来，买一次用一局，进图发到快捷栏'));
+    this.body.appendChild(this.shelf('shelfSupply', 'shelfSupplyNote'));
     const supplies = el('div', 'shop-grid');
     for (const def of Supplies) {
       const item = pickupById(def.id);
@@ -154,8 +164,8 @@ export class ShopScreen {
       const owned = view.supply(def.id);
       supplies.appendChild(this.card({
         icon: pickupIcon(def.id),
-        name: item.name,
-        note: item.note,
+        name: this.text.value(item.nameKey),
+        note: this.text.value(item.noteKey),
         owned,
         max: SUPPLY_MAX,
         price: owned >= SUPPLY_MAX ? null : def.price,
@@ -168,10 +178,10 @@ export class ShopScreen {
     this.body.appendChild(supplies);
   }
 
-  private shelf(name: string, note: string): HTMLElement {
+  private shelf(nameKey: HudTextKey, noteKey: HudTextKey): HTMLElement {
     const head = el('div', 'shop-shelf');
-    head.appendChild(el('span', 'shop-shelf-k', name));
-    head.appendChild(el('span', 'shop-shelf-v', note));
+    head.appendChild(el('span', 'shop-shelf-k', this.text.value(nameKey)));
+    head.appendChild(el('span', 'shop-shelf-v', this.text.value(noteKey)));
     return head;
   }
 
@@ -209,11 +219,11 @@ export class ShopScreen {
 
     const foot = el('div', 'shop-card-foot');
     foot.appendChild(spec.stack
-      ? el('span', 'shop-owned', `屯 ${spec.owned} / ${spec.max}`)
+      ? el('span', 'shop-owned', this.text.value('supplyStock', { owned: spec.owned, max: spec.max }))
       : pips(spec.owned, spec.max));
     const price = el('span', 'shop-price');
     if (full) {
-      price.textContent = spec.stack ? '已屯满' : '已满级';
+      price.textContent = this.text.value(spec.stack ? 'supplyFull' : 'rankFull');
     } else {
       price.appendChild(createHudIcon('coin', 'shop-coin'));
       price.appendChild(el('span', undefined, String(spec.price)));
@@ -233,11 +243,14 @@ export class ShopScreen {
     this.root.appendChild(card);
 
     const head = el('div', 'shop-top');
-    head.appendChild(el('span', 'shop-title', '商店'));
+    const title = el('span', 'shop-title');
+    this.text.bindText(title, 'shopTitle');
+    head.appendChild(title);
     const right = el('div', 'shop-top-right');
     right.appendChild(createHudIcon('coin', 'shop-coin'));
     right.appendChild(this.purse);
-    const close = el('button', 'shop-close', '返回');
+    const close = el('button', 'shop-close');
+    this.text.bindText(close, 'back');
     close.type = 'button';
     close.addEventListener('click', () => this.hooks.onClose());
     right.appendChild(close);

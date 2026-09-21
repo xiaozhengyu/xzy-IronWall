@@ -17,6 +17,8 @@
  * 登记名字和类别。
  */
 
+import type { HudTextKey } from '../ui/text/hudText.types';
+
 export type SkillId =
   | 'sweep'
   | 'spin'
@@ -43,7 +45,7 @@ export type SkillEquipMode = 'single' | 'multiple' | 'activeSlots';
 export type SkillTrigger = 'attack' | 'automatic' | 'passive' | 'manual';
 
 export interface SkillCategoryRule {
-  name: string;
+  nameKey: HudTextKey;
   equip: SkillEquipMode;
   trigger: SkillTrigger;
   maxSlots: number;
@@ -51,10 +53,10 @@ export interface SkillCategoryRule {
 
 /** 所有类别的兼容规则集中在这里；后续增加类别时，菜单与装备器都会读同一张表。 */
 export const SkillCategoryRules: Record<SkillCategory, SkillCategoryRule> = {
-  attack: { name: '自动攻击技', equip: 'single', trigger: 'attack', maxSlots: 1 },
-  projectile: { name: '发射', equip: 'multiple', trigger: 'automatic', maxSlots: Number.POSITIVE_INFINITY },
-  guard: { name: '护身', equip: 'single', trigger: 'passive', maxSlots: 1 },
-  active: { name: '主动技', equip: 'activeSlots', trigger: 'manual', maxSlots: 4 },
+  attack: { nameKey: 'skillKindAttack', equip: 'single', trigger: 'attack', maxSlots: 1 },
+  projectile: { nameKey: 'skillKindProjectile', equip: 'multiple', trigger: 'automatic', maxSlots: Number.POSITIVE_INFINITY },
+  guard: { nameKey: 'skillKindGuard', equip: 'single', trigger: 'passive', maxSlots: 1 },
+  active: { nameKey: 'skillKindActive', equip: 'activeSlots', trigger: 'manual', maxSlots: 4 },
 };
 
 /**
@@ -82,9 +84,9 @@ export type SkillKind =
 export interface SkillDef {
   id: SkillId;
   /** 菜单上显示的名字。 */
-  name: string;
+  nameKey: HudTextKey;
   /** 菜单上那行小字，说明它是什么形状。 */
-  note: string;
+  noteKey: HudTextKey;
   category: SkillCategory;
   kind: SkillKind;
   /**
@@ -149,8 +151,8 @@ export interface SkillDef {
 export const Skills: SkillDef[] = [
   {
     id: 'sweep',
-    name: '横扫',
-    note: '前方扇形，一次算清',
+    nameKey: 'skillSweep',
+    noteKey: 'skillSweepNote',
     category: 'attack',
     kind: 'instant',
     /*
@@ -174,8 +176,8 @@ export const Skills: SkillDef[] = [
   },
   {
     id: 'spin',
-    name: '回旋',
-    note: '原地整圈，被围住时用',
+    nameKey: 'skillSpin',
+    noteKey: 'skillSpinNote',
     category: 'attack',
     kind: 'instant',
     // 整圈换来的代价是够不远：同样一刀的力气摊到四面八方，只能覆盖贴身那一圈。
@@ -207,8 +209,8 @@ export const Skills: SkillDef[] = [
   },
   {
     id: 'wave',
-    name: '破空',
-    note: '波向前飞，路过就死',
+    nameKey: 'skillWave',
+    noteKey: 'skillWaveNote',
     category: 'attack',
     kind: 'wave',
     /*
@@ -237,8 +239,8 @@ export const Skills: SkillDef[] = [
   },
   {
     id: 'lunge',
-    name: '突进',
-    note: '向前冲，撞到的全死',
+    nameKey: 'skillLunge',
+    noteKey: 'skillLungeNote',
     category: 'active',
     kind: 'lunge',
     /*
@@ -290,8 +292,8 @@ export const Skills: SkillDef[] = [
      * 当回血量用，见 battle.ts 的 castSkill）和冷却。
      */
     id: 'mend',
-    name: '回春',
-    note: '十秒内持续回血',
+    nameKey: 'skillMend',
+    noteKey: 'skillMendNote',
     category: 'active',
     kind: 'mend',
     reach: 0,
@@ -320,8 +322,8 @@ export const Skills: SkillDef[] = [
      * reach 给 0：和回春一样，它不碰任何人。
      */
     id: 'berserk',
-    name: '狂暴',
-    note: '八秒内攻击与出手频率大涨，代价是每秒掉一成血、防御变弱',
+    nameKey: 'skillBerserk',
+    noteKey: 'skillBerserkNote',
     category: 'active',
     kind: 'berserk',
     reach: 0,
@@ -356,8 +358,8 @@ export const Skills: SkillDef[] = [
      * 人海推平，推出画面等于把最值钱的那一段演在玩家看不见的地方。
      */
     id: 'heavenGuard',
-    name: '神兵天降',
-    note: '一排金甲重兵砸下来，端矛朝前推平一条路',
+    nameKey: 'skillHeavenGuard',
+    noteKey: 'skillHeavenGuardNote',
     category: 'active',
     kind: 'heavenGuard',
     reach: 2.6,
@@ -391,8 +393,8 @@ export const Skills: SkillDef[] = [
   },
   {
     id: 'aegis',
-    name: '金钟罩',
-    note: '罩子跟着人走，碰到就飞',
+    nameKey: 'skillAegis',
+    noteKey: 'skillAegisNote',
     category: 'active',
     kind: 'aura',
     // 贴身一圈。它换来的不是范围是**时间**：别的招是一瞬间的事，这个能顶几秒。
@@ -409,8 +411,8 @@ export const Skills: SkillDef[] = [
   },
   {
     id: 'dharma',
-    name: '天地法相',
-    note: '按住持续展开，松手立停，持续耗蓝',
+    nameKey: 'skillDharma',
+    noteKey: 'skillDharmaNote',
     category: 'active',
     kind: 'dharma',
     reach: 1.2,
@@ -457,8 +459,8 @@ export const Skills: SkillDef[] = [
   },
   {
     id: 'heavenSplit',
-    name: '开天',
-    note: '巨剑沿行走朝向飞出，剑体横扫敌群',
+    nameKey: 'skillHeavenSplit',
+    noteKey: 'skillHeavenSplitNote',
     category: 'projectile',
     kind: 'heavenSplit',
     reach: 3.8,
@@ -472,8 +474,8 @@ export const Skills: SkillDef[] = [
   },
   {
     id: 'skyArrow',
-    name: '穿云箭',
-    note: '冲天后随机落下，落地回旋',
+    nameKey: 'skillSkyArrow',
+    noteKey: 'skillSkyArrowNote',
     category: 'projectile',
     kind: 'skyArrow',
     reach: 1.5,
@@ -511,8 +513,8 @@ export const Skills: SkillDef[] = [
      * 突进和罩子都得等回蓝。
      */
     id: 'sprint',
-    name: '疾走',
-    note: '按住 Shift 加速移动，持续耗蓝',
+    nameKey: 'skillSprint',
+    noteKey: 'skillSprintNote',
     category: 'active',
     kind: 'sustained',
     reach: 0,
@@ -539,8 +541,8 @@ export const Skills: SkillDef[] = [
   // 加成随玩家等级一起长，所以一个被动在一级和三十级不是同一个东西。见 PassiveDef。
   {
     id: 'ironBody',
-    name: '铁布衫',
-    note: '永久生效，通体呼吸提亮并强化轮廓光',
+    nameKey: 'skillIronBody',
+    noteKey: 'skillIronBodyNote',
     category: 'guard',
     kind: 'passive',
     reach: 0,
@@ -554,8 +556,8 @@ export const Skills: SkillDef[] = [
   },
   {
     id: 'bulwark',
-    name: '磐石',
-    note: '永久生效，防御与生命上限提高',
+    nameKey: 'skillBulwark',
+    noteKey: 'skillBulwarkNote',
     category: 'guard',
     kind: 'passive',
     reach: 0,
@@ -579,8 +581,8 @@ export const Skills: SkillDef[] = [
      * 所以它在人堆里最值钱，而那正是玩家最容易死的地方。
      */
     id: 'bloodthirst',
-    name: '饮血',
-    note: '永久生效，造成伤害按比例回血',
+    nameKey: 'skillBloodthirst',
+    noteKey: 'skillBloodthirstNote',
     category: 'guard',
     kind: 'passive',
     reach: 0,

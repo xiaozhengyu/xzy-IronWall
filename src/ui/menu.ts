@@ -183,7 +183,7 @@ export class Menu {
   showLoading(label: string, progress: number): void {
     this.root.hidden = false;
     this.setPeek(false);
-    this.mode.textContent = '正在加载游戏资源…';
+    this.mode.textContent = this.text.value('loadingTitle');
     this.loading.hidden = false;
     this.startBox.hidden = true;
     this.detail.hidden = true;
@@ -411,7 +411,7 @@ export class Menu {
     const categories: SkillCategory[] = ['attack', 'projectile', 'guard', 'active'];
     for (const category of categories) {
       const rule = SkillCategoryRules[category];
-      const skills = row(parent, rule.name);
+      const skills = row(parent, this.text.value(rule.nameKey));
       for (const skill of this.bridge.skills.filter((entry) => entry.category === category)) {
         const b = this.button(skill.name, '');
         b.title = skill.cooldown > 0 ? `${skill.note} · 冷却 ${skill.cooldown.toFixed(1)} 秒` : `${skill.note} · 无冷却`;

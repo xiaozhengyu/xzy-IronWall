@@ -75,8 +75,8 @@ const grunt = (overrides: Partial<UnitStats>): UnitStats => ({
 export const UnitKinds: readonly UnitKindDef[] = [
   {
     id: 'thug',
-    name: '杂兵',
-    note: '数量最多，贴身砍',
+    nameKey: 'unitThugName',
+    noteKey: 'unitThugNote',
     appearance: 'thug',
     palette: PALETTE_RED,
     stats: grunt({}),
@@ -84,8 +84,8 @@ export const UnitKinds: readonly UnitKindDef[] = [
   },
   {
     id: 'peasant',
-    name: '流民',
-    note: '徒步的那一部分，填数量',
+    nameKey: 'unitPeasantName',
+    noteKey: 'unitPeasantNote',
     appearance: 'thug',
     palette: PALETTE_PEASANT,
     // 比杂兵更脆更快：他是来填人数的，不是来打人的。
@@ -94,8 +94,8 @@ export const UnitKinds: readonly UnitKindDef[] = [
   },
   {
     id: 'spearman',
-    name: '长枪兵',
-    note: '够得比杂兵远一点',
+    nameKey: 'unitSpearmanName',
+    noteKey: 'unitSpearmanNote',
     appearance: 'spearman',
     palette: PALETTE_RED,
     stats: grunt({ maxHp: 550, attack: 12, defense: 7, moveSpeed: 11, attackRange: 20, attackArc: 0.9 }),
@@ -103,8 +103,8 @@ export const UnitKinds: readonly UnitKindDef[] = [
   },
   {
     id: 'shieldman',
-    name: '持盾兵',
-    note: '正面难打，绕后',
+    nameKey: 'unitShieldmanName',
+    noteKey: 'unitShieldmanNote',
     appearance: 'shieldman',
     palette: PALETTE_RED,
     // 防御是杂兵的四倍 —— "正面推不动"这件事以前只写在说明里，现在是个真的数。
@@ -113,8 +113,8 @@ export const UnitKinds: readonly UnitKindDef[] = [
   },
   {
     id: 'bulwark',
-    name: '重甲兵',
-    note: '塔盾加一杆平举的长矛，正面撞不动',
+    nameKey: 'unitBulwarkName',
+    noteKey: 'unitBulwarkNote',
     appearance: 'bulwark',
     palette: PALETTE_RED,
     // **全场防御最高的杂兵**：34 挡掉玩家 25.4% 的伤害（持盾兵 16 是 13.8%，末波枪骑兵
@@ -143,8 +143,8 @@ export const UnitKinds: readonly UnitKindDef[] = [
   },
   {
     id: 'archer',
-    name: '弓手',
-    note: '站远处放箭',
+    nameKey: 'unitArcherName',
+    noteKey: 'unitArcherNote',
     appearance: 'archer',
     palette: PALETTE_PEASANT,
     stats: grunt({ maxHp: 340, attack: 12, defense: 3, moveSpeed: 15, attackRange: 96, attackArc: 1.4, attackSpeed: 0.9 }),
@@ -152,8 +152,8 @@ export const UnitKinds: readonly UnitKindDef[] = [
   },
   {
     id: 'halberdier',
-    name: '戟兵',
-    note: '举过头顶砸下来，够得比刀远',
+    nameKey: 'unitHalberdierName',
+    noteKey: 'unitHalberdierNote',
     appearance: 'halberdier',
     palette: PALETTE_RED,
     // 全场伤害最高的步兵，代价是抡起来慢（attackSpeed 0.8）。
@@ -162,8 +162,8 @@ export const UnitKinds: readonly UnitKindDef[] = [
   },
   {
     id: 'cavalry',
-    name: '骑兵',
-    note: '后段才来，比谁都高、比谁都快',
+    nameKey: 'unitCavalryName',
+    noteKey: 'unitCavalryNote',
     appearance: 'cavalry',
     palette: PALETTE_RED,
     stats: grunt({ maxHp: 950, attack: 14, defense: 10, moveSpeed: 16, attackRange: 20, attackArc: 1.6 }),
@@ -171,8 +171,8 @@ export const UnitKinds: readonly UnitKindDef[] = [
   },
   {
     id: 'lancer',
-    name: '枪骑兵',
-    note: '披着马衣，够得最远',
+    nameKey: 'unitLancerName',
+    noteKey: 'unitLancerNote',
     appearance: 'lancer',
     palette: PALETTE_RED,
     // 最硬的杂兵。马衣在画面上是"贵"，在这张表里就是血和防御。
@@ -181,8 +181,8 @@ export const UnitKinds: readonly UnitKindDef[] = [
   },
   {
     id: 'horseArcher',
-    name: '骑射',
-    note: '边跑边放箭，追不上',
+    nameKey: 'unitHorseArcherName',
+    noteKey: 'unitHorseArcherNote',
     appearance: 'horseArcher',
     palette: PALETTE_PEASANT,
     stats: grunt({ maxHp: 600, attack: 12, defense: 6, moveSpeed: 16, attackRange: 84, attackArc: 1.4, attackSpeed: 0.95 }),
@@ -205,8 +205,8 @@ export const UnitKinds: readonly UnitKindDef[] = [
   // 挨七十八下），站在他脸上砍是完全免费的。一个不用躲的首领不是首领，是个布景。
   {
     id: 'elite',
-    name: '精锐统领',
-    note: '塔盾与重甲，硬得像一堵墙',
+    nameKey: 'unitEliteName',
+    noteKey: 'unitEliteNote',
     appearance: 'elite',
     palette: PALETTE_RED,
     stats: grunt({ maxHp: 8000, attack: 150, defense: 110, moveSpeed: 22, attackRange: 19, attackArc: 1.5, attackSpeed: 0.85 }),
@@ -215,8 +215,8 @@ export const UnitKinds: readonly UnitKindDef[] = [
   },
   {
     id: 'knightBoss',
-    name: '骑士统领',
-    note: '面甲与圆盾，比精锐快，也比精锐软',
+    nameKey: 'unitKnightBossName',
+    noteKey: 'unitKnightBossNote',
     appearance: 'knight',
     palette: PALETTE_RED,
     stats: grunt({ maxHp: 5600, attack: 120, defense: 88, moveSpeed: 26, attackRange: 16, attackArc: 1.7, attackSpeed: 1.05 }),

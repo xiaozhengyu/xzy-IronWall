@@ -42,7 +42,7 @@ import { Scene } from './render/scene';
 import { Props } from './world/props';
 import type { WeatherKind } from './world/weather';
 import { Controls } from './ui/controls';
-import { Hud } from './ui/hud';
+import { Hud, HudText } from './ui/hud';
 import { Menu } from './ui/menu';
 import { SetupScreen, type MapPin } from './ui/setup';
 import { curtain } from './ui/curtain';
@@ -50,6 +50,8 @@ import { HistoryScreen } from './ui/history';
 import { ShopScreen } from './ui/shop';
 import { masterySkills, startLevelOf, Supplies } from './data/shop';
 import { SummaryScreen, type SummaryStats } from './ui/summary';
+import { setDamageNumberLanguage } from './effects/damageNumbers';
+import { currentItems } from './ui/currentItems';
 import './style.css';
 
 /**
@@ -127,12 +129,35 @@ const camera = new Camera();
  * 适配层只有四件事：把点击翻译成键码、报一份当前状态、换天气、帮忙夺指针。菜单里没有任何
  * 一个功能是自己实现的，全部转回 onKeyPressed，所以鼠标和键盘不会分岔。
  */
+/**
+ * **全程序唯一的一份 HudText。**
+ *
+ * 语言是一个全局状态：结算屏上点一下英文，HUD、备战、商店、战绩、加载界面都该当场变。
+ * 各建各的实例就做不到 —— 以前 menu 和 hud 就是各一份，于是备战界面永远停在建它那一刻的语言。
+ * 初值来自存档（新档由 detectLocale 按浏览器语言挑，见 game/profile.ts）。
+ */
+const text = new HudText(profile.locale);
+
+/*
+ * 两件事跟着这一份文案走，都要在界面建起来之前接好：
+ *
+ *   飘字     打人飘出来的那串"血 −120"不是 DOM，是自己烘的字模（见 effects/damageNumbers.ts）。
+ *            它有中英两套字模，这里把开关拨到和界面同一档。
+ *   物品条   那一条是模块级的单例（结算和三选一共用同一个 DOM），拿不到构造参数，喂一次。
+ */
+const syncTextConsumers = (): void => {
+  setDamageNumberLanguage(text.current === 'zh-CN' ? 'zh' : 'en');
+};
+syncTextConsumers();
+text.onChange(syncTextConsumers);
+currentItems.useText(text);
+
 const menu = new Menu({
   presets: PlayerPresets.map((_, index) => playerPresetDisplayName(index)),
   skills: Skills.map((s) => ({
     id: s.id,
-    name: s.name,
-    note: s.note,
+    name: text.value(s.nameKey),
+    note: text.value(s.noteKey),
     category: s.category,
     cooldown: s.cooldown,
   })),
@@ -180,7 +205,10 @@ const menu = new Menu({
       figureScreen: figure.screen,
     };
   },
-});
+// 菜单自己那份 HudText 也要按存档的语言建。它比 Hud 早建（加载界面就是它画的），
+// 不传的话走的是 HudText 自己的兜底英文 —— 中文玩家会先看到一屏英文标题，
+// 过几秒 Hud 建好了再突然变成中文。
+}, text);
 
 // ---------------------------------------------------------------- 加载
 
@@ -216,7 +244,7 @@ function boot(label: string): Promise<void> {
   return new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
 }
 
-await boot('启动渲染器');
+await boot(text.value('bootRenderer'));
 const app = new Application();
 await app.init({
   width: VIEW_WIDTH,
@@ -228,11 +256,7 @@ await app.init({
   autoDensity: false,
 });
 gameViewport.appendChild(app.canvas);
-const hud = new Hud(gameViewport, {
-  // 上次选的语言。HUD 这一份 HudText 是全局唯一的一份 —— 结算屏上那排语言按钮换的就是它，
-  // 所以换完 HUD 当场跟着变，不用再往下传一遍。
-  locale: profile.locale,
-});
+const hud = new Hud(gameViewport, { text });
 
 const scene = new Scene(app.renderer, camera);
 app.stage.addChild(scene.view);
@@ -241,7 +265,7 @@ app.stage.addChild(scene.view);
 scene.resize(app.screen.width, app.screen.height, app.renderer.resolution);
 bootDone += RENDERER_WEIGHT;
 
-await boot('生成地形');
+await boot(text.value('bootTerrain'));
 /**
  * 当前正在显示的那块地 —— 打仗时是战场，备战界面上是中栏那张地图。跟着选中的地图换，
  * 所以是 let（换法见 showField）。
@@ -254,7 +278,7 @@ scene.attachField(field);
 bootDone += TERRAIN_WEIGHT;
 
 for (let i = 0; i < Field.BAKE_SLICES; i++) {
-  await boot('烘制地面');
+  await boot(text.value('bootBake'));
   field.bakeSlice(i);
   bootDone += 1;
 }
@@ -288,7 +312,7 @@ function showField(map: GameMapDef): void {
   scene.attachField(field);
 }
 
-await boot('加载物品贴图');
+await boot(text.value('bootItems'));
 // 图不在也照常开局 —— 这个工程本来一张图都不加载，物品表是后补的。加载不上时 ready 是
 // false，图鉴里显示一行提示，别的什么都不受影响。
 const itemSheet = new ItemSheet();
@@ -298,7 +322,7 @@ await itemSheet.load();
 await loadPickupTextures();
 bootDone += SHEET_WEIGHT;
 
-await boot('加载音效');
+await boot(text.value('bootAudio'));
 /*
  * 解锁挂在这儿，但真正解开是在玩家第一次按下鼠标的时候（见 mixer.unlock）。
  * 正常玩下来，备战界面那个"开始游戏"就是那一下，所以进图之前一定已经解开了。
@@ -751,8 +775,8 @@ function draw(): void {
 function summaryStats(): SummaryStats {
   const wave = battle.waveStatus;
   return {
-    hero: setup.currentHero.name,
-    map: setup.currentMap.name,
+    heroKey: setup.currentHero.nameKey,
+    mapKey: setup.currentMap.nameKey,
     time: battle.runTime,
     coins: battle.collectedCoins,
     gems: battle.collectedGems,
@@ -785,7 +809,12 @@ function heldItems(): ItemStripEntry[] {
     const held = battle.itemAt(slot);
     const def = held ? pickupById(held.id) : null;
     if (!held || !def) continue;
-    out.push({ id: def.id, name: def.name, note: def.note, count: held.count });
+    out.push({
+      id: def.id,
+      name: text.value(def.nameKey),
+      note: text.value(def.noteKey),
+      count: held.count,
+    });
   }
   return out;
 }
@@ -816,7 +845,8 @@ function settleRun(): void {
    */
   const wave = battle.waveStatus;
   profile.recordRun(battle.heroId, {
-    map: setup.currentMap.name,
+    // 存 key 不存译文：这条记录会一直留在存档里，换了语言之后它也该跟着换。
+    map: setup.currentMap.nameKey,
     won: battle.outcome === 'won',
     kills: battle.kills,
     bosses: battle.bossKills,
@@ -1312,9 +1342,11 @@ function mapViewOf(rect: MapView['rect']): MapView {
  */
 function mapPinsOf(map: GameMapDef, rect: { w: number; h: number }): MapPin[] {
   const spots: { x: number; y: number; label: string; kind: 'start' | 'camp' }[] = [
-    { x: map.width * 0.5, y: map.height * 0.5, label: '进入位置', kind: 'start' },
+    { x: map.width * 0.5, y: map.height * 0.5, label: text.value('setupSpawn'), kind: 'start' },
   ];
-  for (const prop of mapProps(map).list) spots.push({ x: prop.x, y: prop.y, label: '营地', kind: 'camp' });
+  for (const prop of mapProps(map).list) {
+    spots.push({ x: prop.x, y: prop.y, label: text.value('setupCamp'), kind: 'camp' });
+  }
 
   const pins: MapPin[] = [];
   const placed: { x: number; y: number; labelled: boolean }[] = [];
@@ -1496,7 +1528,7 @@ const shop = new ShopScreen({
     // 这一下是两次换屏（关商店 + 重搭选人界面），但只该听见一声 —— 交给 gap 合。
     sceneChanged();
   },
-});
+}, text);
 
 /**
  * 战绩。从选人界面右上那个按钮进去，按返回回去。
@@ -1506,14 +1538,14 @@ const shop = new ShopScreen({
 const history = new HistoryScreen({
   heroes: () => Heroes.map((hero) => ({
     id: hero.id,
-    name: hero.name,
+    name: text.value(hero.nameKey),
     record: profile.record(hero.id),
   })),
   onClose: () => {
     history.hide();
     sceneChanged();
   },
-});
+}, text);
 
 /**
  * 结算画面。三个按钮各自对应流程上的一条边，界面自己不知道有"状态"这回事。
@@ -1550,7 +1582,7 @@ const summary = new SummaryScreen({
     setMusicEnabled(on);
     profile.setMusicEnabled(on);
   },
-}, hud.text);
+}, text);
 // 存档里那一档先告诉结算屏，它那两个方块才知道哪个该亮。语言走的是共用的 HudText，
 // 不用再喂一次。
 summary.setSfxEnabled(profile.sfxEnabled);
@@ -1571,8 +1603,8 @@ const setup = new SetupScreen(
         .filter((entry) => entry.count > 0 && entry.item !== null)
         .map((entry) => ({
           id: entry.def.id,
-          name: entry.item!.name,
-          note: entry.item!.note,
+          name: text.value(entry.item!.nameKey),
+          note: text.value(entry.item!.noteKey),
           icon: pickupIcon(entry.def.id),
           count: entry.count,
         })),
@@ -1632,7 +1664,7 @@ const setup = new SetupScreen(
     onShop: () => { shop.show(); sceneChanged(); },
     onHistory: (heroId) => { history.show(heroId); sceneChanged(); },
   },
-  menu.text,
+  text,
 );
 
 // 地图框：左键拖动看别处，滚轮缩放。
@@ -1701,7 +1733,7 @@ layout();
 const start = camera.worldToScreen(battle.player.x, battle.player.y);
 controls.placeCursor(start.x, start.y + 30);
 
-await boot('布置战场');
+await boot(text.value('bootField'));
 battle.seed(viewOf());
 bootDone += FIELD_WEIGHT;
 

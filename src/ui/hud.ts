@@ -66,6 +66,11 @@ export interface HudOptions {
   gemsPerCycle?: number;
   gemProgressSideOverhang?: number;
   locale?: HudLocale;
+  /**
+   * 整个程序共用的那一份 HudText。传进来而不是自己建：语言开关换的是这一个实例，
+   * 备战、商店、战绩、结算都挂在它上面，换一次全屏跟着变。
+   */
+  text?: HudText;
 }
 
 /**
@@ -137,7 +142,9 @@ export class Hud {
     this.root.hidden = true;
     this.root.style.width = `${HUD_DESIGN_WIDTH}px`;
     this.root.style.height = `${HUD_DESIGN_HEIGHT}px`;
-    this.text = new HudText(options.locale ?? 'zh-CN');
+    // 没传就用 HudText 自己的兜底，不在这里再写一个默认语言 ——
+    // 真正的默认值只有一处，在 profile.ts 的 detectLocale。
+    this.text = options.text ?? new HudText(options.locale);
 
     // 血、蓝、等级、经验全部由 draw 每帧喂真值，所以初值给 0：面板自带的那套占位数
     // （22 级、268/300 血、82/120 蓝）会在第一帧之前闪一下，那一下说的是假话。
@@ -210,7 +217,7 @@ export class Hud {
     this.quickbar = new HudQuickbar(this.text);
     this.combatPanel.content.append(this.vitals, this.quickbar.root);
     this.cooldownInfo = new HudCooldownPanel(this.text);
-    this.cards = new HudCardPicker();
+    this.cards = new HudCardPicker(this.text);
     // 被动 CD、血条技能面板、灵石进度条自上而下叠成一列，整列底部对齐。三者的间距和
     // 底部留白只在 .hud-bottom-stack 里写一次，要给主视图让高度也只改那一处。
     const bottomStack = document.createElement('div');

@@ -1,6 +1,6 @@
 import './summary.css';
 import { createHudIcon } from './hudIcons';
-import { HudText } from './text/hudText';
+import { HudText, type HudTextKey } from './text/hudText';
 import type { HudLocale } from './text/hudText.types';
 import { currentItems } from './currentItems';
 import { Confetti } from './confetti';
@@ -29,8 +29,9 @@ const SUMMARY_EXIT_MS = 200;
 
 /** 这一局到目前为止的战果。全部由 main 从 Battle 上读一份交过来。 */
 export interface SummaryStats {
-  hero: string;
-  map: string;
+  /** 角色名和地图名存 key 不存译文：这一屏上就有语言开关，换完要能原地重译。 */
+  heroKey: HudTextKey;
+  mapKey: HudTextKey;
   /** 这一局跑了多少秒。 */
   time: number;
   coins: number;
@@ -117,9 +118,9 @@ export class SummaryScreen {
   private readonly note = el('div', 'summary-note');
   /** 手上的药和符那一块。图在上、字在下，排法和战场上的快捷栏一致。 */
   private readonly actions = el('div', 'summary-actions');
-  private readonly resumeButton = el('button', 'summary-btn main', '继续游戏');
-  private readonly endButton = el('button', 'summary-btn', '结束游戏');
-  private readonly confirmButton = el('button', 'summary-btn main', '确认');
+  private readonly resumeButton = el('button', 'summary-btn main');
+  private readonly endButton = el('button', 'summary-btn');
+  private readonly confirmButton = el('button', 'summary-btn main');
   /** 底下那一行设置：语言、音效、音乐各一行。 */
   private readonly settings = el('div', 'summary-settings');
   private localeButtons: HTMLButtonElement[] = [];
@@ -134,9 +135,27 @@ export class SummaryScreen {
   /** 正在跑退场动画的定时器。0 = 没在跑。 */
   private closing = 0;
 
+  /**
+   * 上一次 show 的两个参数。
+   *
+   * 标题、胜负、"角色 · 地图"、那段说明都是**按当时的数据拼出来的字符串**，不是绑定 ——
+   * 而语言开关就在这一屏，换完必须当场重画。记住参数就能原样再拼一次。
+   */
+  private lastShow: { mode: SummaryMode; stats: SummaryStats } | null = null;
+
   constructor(hooks: SummaryHooks, text: HudText = new HudText()) {
     this.hooks = hooks;
     this.text = text;
+    // 换语言：绑定的标签由 HudText 自己刷新，拼出来的那几行走 applyTexts 重来一遍。
+    this.text.onChange(() => {
+      if (!this.root.hidden && this.lastShow) {
+        this.applyTexts(this.lastShow.mode, this.lastShow.stats);
+      }
+    });
+    // 这三个按钮的字绑在文案上：语言按钮就在这一屏，换完必须当场变。
+    this.text.bindText(this.resumeButton, 'summaryResume');
+    this.text.bindText(this.endButton, 'summaryEnd');
+    this.text.bindText(this.confirmButton, 'confirm');
     this.build();
     document.body.appendChild(this.root);
     this.root.hidden = true;
@@ -146,28 +165,53 @@ export class SummaryScreen {
     return !this.root.hidden;
   }
 
-  show(mode: SummaryMode, stats: SummaryStats): void {
-    this.cancelClose();
-    this.root.hidden = false;
-
+  /**
+   * 这一屏里**按数据拼出来的**那几行字。
+   *
+   * 和标签不一样：标签是 bindText 绑上去的，换语言 HudText 自己会刷；这几行要把当时的
+   * 数字和名字重新拼一遍，所以单独抽出来，show() 和换语言两条路都走它。
+   *
+   * 不要在换语言时直接再调一次 show()：那会重播入场动画、重新抢焦点、赢了还会再放一次
+   * 礼花 —— 玩家只是点了一下语言按钮。
+   */
+  private applyTexts(mode: SummaryMode, stats: SummaryStats): void {
     const final = mode === 'result';
     // 三种收场写三句话：清完首领是赢，人倒了或者首领没清完是输，其余只是“打完了”。
-    this.mode.textContent = final
-      ? (stats.won ? '全数斩首' : stats.defeated ? '首领未除' : '本局结束')
-      : '游戏暂停';
+    this.mode.textContent = this.text.value(final
+      ? (stats.won ? 'summaryWonTitle' : stats.defeated ? 'summaryDefeatedTitle' : 'summaryOverTitle')
+      : 'summaryPausedTitle');
     /*
      * 胜负那一行大字。
      *
      * 临时结算不写：那一屏还没分出胜负，摆一行大字会让玩家以为这一局已经完了。
      * 主动退出（既没赢也没输）也不写 —— 那不是一个结果，是一个决定。
      */
-    const verdict = final ? (stats.won ? '通 关' : stats.defeated ? '战 败' : '') : '';
+    const verdict = final && (stats.won || stats.defeated)
+      ? this.text.value(stats.won ? 'summaryVerdictWon' : 'summaryVerdictLost')
+      : '';
     this.verdict.textContent = verdict;
     this.verdict.hidden = verdict === '';
     this.verdict.classList.toggle('summary-verdict--won', verdict !== '' && stats.won);
     this.verdict.classList.toggle('summary-verdict--lost', verdict !== '' && !stats.won);
-    this.lead.textContent = `${stats.hero} · ${stats.map}`;
+    // 角色名和地图名是**译过的字**（见 main.ts 的 summaryStats），换语言时跟着这里重来。
+    this.lead.textContent = `${this.text.value(stats.heroKey)} · ${this.text.value(stats.mapKey)}`;
+    this.stats.cleared.textContent = this.text.value('summaryWaves', { count: stats.cleared });
+    // 升级是玩家最想看到的一条，所以它顶掉那两句常规说明。金币也在这句里点一下：那是
+    // 唯一一样带得走的东西，而灵石打完就没了。
+    this.note.textContent = final
+      ? stats.levelUp > 0
+        ? this.text.value('summaryNoteWon', { level: stats.level, coins: stats.coins })
+        : this.text.value(stats.defeated ? 'summaryNoteDefeated' : 'summaryNoteEnded')
+      : this.text.value('summaryNotePaused');
+  }
 
+  show(mode: SummaryMode, stats: SummaryStats): void {
+    this.cancelClose();
+    this.root.hidden = false;
+    this.lastShow = { mode, stats };
+    this.applyTexts(mode, stats);
+
+    const final = mode === 'result';
     this.coins.textContent = String(stats.coins);
     this.gems.textContent = String(stats.gems);
     this.stats.kills.textContent = String(stats.kills);
@@ -175,7 +219,7 @@ export class SummaryScreen {
     this.stats.damageTaken.textContent = String(stats.damageTaken);
     this.stats.time.textContent = clock(stats.time);
     this.stats.wave.textContent = `${stats.wave} / ${stats.waves}`;
-    this.stats.cleared.textContent = `${stats.cleared} 波`;
+
     // 一局的"得分"还没有正经公式，所以照实写成它的来源：击杀加收集。摆一个凭空算出来的
     // 分数比不摆更糟 —— 玩家会去猜它怎么来的，而它并不来自任何地方。
     this.stats.loot.textContent = String(stats.coins + stats.gems);
@@ -183,16 +227,6 @@ export class SummaryScreen {
     currentItems.show('summary', stats.items);
     this.stats.exp.textContent = `+${stats.exp}`;
     this.stats.level.textContent = stats.levelUp > 0 ? `Lv.${stats.level} ↑` : `Lv.${stats.level}`;
-
-    // 升级是玩家最想看到的一条，所以它顶掉那两句常规说明。金币也在这句里点一下：那是
-    // 唯一一样带得走的东西，而灵石打完就没了。
-    this.note.textContent = final
-      ? stats.levelUp > 0
-        ? `升到了 ${stats.level} 级。金币 +${stats.coins} 已存入，灵石只在本局有效。`
-        : stats.defeated
-          ? '这一局到此为止。确认之后回到选人画面，可以换个角色或者换张地图再来。'
-          : '这一局由你主动结束。确认之后回到选人画面。'
-      : '继续游戏会回到刚才那一刻，场上的人和捡到的东西都还在。经验和金币要打完这一局才结算。';
 
     this.actions.replaceChildren();
     if (final) {
@@ -264,21 +298,21 @@ export class SummaryScreen {
 
     // ---- 收集物：这一屏的主角
     const loot = el('div', 'summary-loot');
-    loot.appendChild(this.lootItem('coin', '金币', this.coins));
-    loot.appendChild(this.lootItem('gem', '灵石', this.gems));
+    loot.appendChild(this.lootItem('coin', 'statGold', this.coins));
+    loot.appendChild(this.lootItem('gem', 'statGems', this.gems));
     card.appendChild(loot);
 
     // ---- 其余战况
     const stats = el('div', 'summary-stats');
-    this.stats.kills = this.stat(stats, '击杀');
-    this.stats.deaths = this.stat(stats, '阵亡');
-    this.stats.damageTaken = this.stat(stats, '承受伤害');
-    this.stats.time = this.stat(stats, '用时');
-    this.stats.wave = this.stat(stats, '波次');
-    this.stats.cleared = this.stat(stats, '已清');
-    this.stats.loot = this.stat(stats, '收集物');
-    this.stats.exp = this.stat(stats, '经验');
-    this.stats.level = this.stat(stats, '等级');
+    this.stats.kills = this.stat(stats, 'statKills');
+    this.stats.deaths = this.stat(stats, 'statDeaths');
+    this.stats.damageTaken = this.stat(stats, 'statDamageTaken');
+    this.stats.time = this.stat(stats, 'statTime');
+    this.stats.wave = this.stat(stats, 'statWave');
+    this.stats.cleared = this.stat(stats, 'statCleared');
+    this.stats.loot = this.stat(stats, 'statLoot');
+    this.stats.exp = this.stat(stats, 'statExp');
+    this.stats.level = this.stat(stats, 'statLevel');
     card.appendChild(stats);
 
     card.appendChild(this.note);
@@ -415,7 +449,7 @@ export class SummaryScreen {
   /** 拿焦点、换字、换成主色。宽高和位置不动（见 summary.css 里的 .armed）。 */
   private armEnd(): void {
     this.endArmed = true;
-    this.endButton.textContent = '确认结束';
+    this.endButton.textContent = this.text.value('summaryEndConfirm');
     this.endButton.classList.add('armed');
     this.endButton.focus();
   }
@@ -423,25 +457,30 @@ export class SummaryScreen {
   private disarmEnd(): void {
     if (!this.endArmed) return;
     this.endArmed = false;
-    this.endButton.textContent = '结束游戏';
+    this.endButton.textContent = this.text.value('summaryEnd');
     this.endButton.classList.remove('armed');
   }
 
-  private lootItem(icon: 'coin' | 'gem', label: string, value: HTMLElement): HTMLElement {
+  private lootItem(icon: 'coin' | 'gem', key: HudTextKey, value: HTMLElement): HTMLElement {
     const box = el('div', 'summary-loot-item');
     // 灵石原图是紫色，战斗 HUD 通过 hud-icon--gem 统一调成青蓝；结算页沿用同一修饰类，
     // 避免同一种收集物在两个界面里像两件不同的东西。
     box.appendChild(createHudIcon(icon, `summary-loot-icon hud-icon--${icon}`));
     const text = el('div', 'summary-loot-text');
-    text.appendChild(el('span', 'summary-loot-k', label));
+    const label = el('span', 'summary-loot-k');
+    this.text.bindText(label, key);
+    text.appendChild(label);
     text.appendChild(value);
     box.appendChild(text);
     return box;
   }
 
-  private stat(parent: HTMLElement, label: string): HTMLElement {
+  private stat(parent: HTMLElement, key: HudTextKey): HTMLElement {
     const box = el('div', 'summary-stat');
-    box.appendChild(el('span', 'summary-stat-k', label));
+    // 绑定而不是写死：语言开关就在这一屏，换完这些标签必须当场跟着变。
+    const label = el('span', 'summary-stat-k');
+    this.text.bindText(label, key);
+    box.appendChild(label);
     const value = el('span', 'summary-stat-v', '-');
     box.appendChild(value);
     parent.appendChild(box);

@@ -363,10 +363,6 @@ export class Weather {
       }
     }
   }
-
-  get label(): string {
-    return this.kind === 'rain' ? '雨' : this.kind === 'snow' ? '雪' : '晴';
-  }
 }
 
 /**

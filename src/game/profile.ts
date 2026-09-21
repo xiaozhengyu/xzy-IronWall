@@ -130,8 +130,34 @@ function freshRecord(): HeroRecord {
   };
 }
 
+/**
+ * 第一次打开时说哪种话：**中文浏览器给中文，其余一律英文**。
+ *
+ * 看不懂界面的人不会去翻设置，只会关掉页面 —— 而这个游戏发在 itch.io 这类国际平台上，
+ * 打开它的人大多数不读中文。猜对了省一次切语言，猜错了也只是 ESC 页上点一下，而且会存进存档。
+ *
+ * **只看排在第一位的那一个语言标签。** 不扫整个 navigator.languages：一个主语言是英文、
+ * 列表里带着 zh 的人，要的是英文。languages[0] 比 language 优先，因为有些浏览器里
+ * 后者是界面语言、前者才是用户排过序的偏好。
+ *
+ * zh-TW / zh-HK 也落到 zh-CN 这一档：简繁是两回事，但看得懂的简体比看不懂的英文近。
+ * 哪天补了繁体语言包，这里按 zh-Hant / TW / HK 再分一支。
+ *
+ * typeof 守卫：profile.ts 现在只被浏览器那一侧引用，但 game/ 下的东西被 node 脚本
+ * （bench、figures）拉进去过，那边没有 navigator —— 留一道守卫，哪天被引到也不会当场炸。
+ */
+function detectLocale(): HudLocale {
+  if (typeof navigator === 'undefined') return 'en';
+  const tag = (navigator.languages?.[0] ?? navigator.language ?? '').toLowerCase();
+  return tag.startsWith('zh') ? 'zh-CN' : 'en';
+}
+
+/**
+ * 一份全新存档的默认设置。语言跟着浏览器走（见 detectLocale），只算一次 ——
+ * 存下来之后就是玩家自己的选择，换了浏览器语言也不会把他手动改过的设置推翻。
+ */
 function freshSettings(): ProfileSettings {
-  return { locale: 'zh-CN', sfx: true, music: true };
+  return { locale: detectLocale(), sfx: true, music: true };
 }
 
 function freshProfile(): ProfileData {

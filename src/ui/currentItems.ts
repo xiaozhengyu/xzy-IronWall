@@ -1,4 +1,5 @@
 import { createItemStrip, fillItemStrip, type ItemStripEntry } from './itemStrip';
+import type { HudText } from './text/hudText';
 import './currentItems.css';
 
 /**
@@ -8,10 +9,9 @@ import './currentItems.css';
  * 在两块界面之间切的时候，那一排东西一像素都不动 —— 这不是靠两边把数调准的，是因为它本来
  * 就没有第二份。
  *
- * 标题固定叫「当前物品」。原来两边各叫「药物与符咒」和「手上的药与符」，说的是同一件事却
- * 用了两个名字，玩家得读两遍才确认这是同一排东西。
+ * 标题固定是同一句（文案 key `currentItems`）。原来两边各叫「药物与符咒」和「手上的药与符」，
+ * 说的是同一件事却用了两个名字，玩家得读两遍才确认这是同一排东西。
  */
-const TITLE = '当前物品';
 
 /** 谁把它叫出来的。 */
 export type CurrentItemsOwner = 'summary' | 'cards';
@@ -19,6 +19,16 @@ export type CurrentItemsOwner = 'summary' | 'cards';
 class CurrentItems {
   private readonly root = createItemStrip('current-items item-strip--center');
   private mounted = false;
+  /**
+   * 文案。这一条是全工程唯一的一份实例（模块级 currentItems），拿不到构造参数，
+   * 所以由 main.ts 在启动时喂一次。没喂到就退回一个空标题 —— 少一行标题也好过整条不画。
+   */
+  private text: HudText | null = null;
+
+  /** 启动时接上全局那一份 HudText。 */
+  useText(text: HudText): void {
+    this.text = text;
+  }
   /**
    * 正要看它的有几家。
    *
@@ -34,7 +44,7 @@ class CurrentItems {
       this.mounted = true;
     }
     this.owners.add(owner);
-    fillItemStrip(this.root, entries, TITLE);
+    fillItemStrip(this.root, entries, this.text?.value('currentItems') ?? '');
     this.syncBand();
   }
 

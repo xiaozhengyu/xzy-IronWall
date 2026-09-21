@@ -14,6 +14,7 @@
  * 金币按击杀给，而清场速度随波次涨得比时长快，刷前三波的效率只有打满一局的四分之一。
  */
 
+import type { HudTextKey } from '../ui/text/hudText.types';
 import type { StatKey } from './types';
 import { Skills, type SkillId } from '../game/skills';
 import { SPRINT_SKILL } from '../game/skillLoadout';
@@ -21,7 +22,7 @@ import { SPRINT_SKILL } from '../game/skillLoadout';
 /** 一项根基。三级，每级 +3%，满级 +9%。 */
 export interface RootDef {
   key: StatKey;
-  name: string;
+  nameKey: HudTextKey;
   /** 每一级加多少，乘算。 */
   perRank: number;
   /** 第 1/2/3 级各多少钱。 */
@@ -36,12 +37,12 @@ export interface RootDef {
  * 现在的第六项是攻击范围，它是主干上真实存在、而且玩家确实能感觉到的一项。
  */
 export const Roots: readonly RootDef[] = [
-  { key: 'maxHp', name: '生命', perRank: 0.03, prices: [1500, 3000, 4500] },
-  { key: 'attack', name: '进攻', perRank: 0.03, prices: [1500, 3000, 4500] },
-  { key: 'defense', name: '防御', perRank: 0.03, prices: [1500, 3000, 4500] },
-  { key: 'moveSpeed', name: '速度', perRank: 0.03, prices: [1500, 3000, 4500] },
-  { key: 'attackSpeed', name: '敏捷', perRank: 0.03, prices: [1500, 3000, 4500] },
-  { key: 'attackRange', name: '范围', perRank: 0.03, prices: [1500, 3000, 4500] },
+  { key: 'maxHp', nameKey: 'rootMaxHp', perRank: 0.03, prices: [1500, 3000, 4500] },
+  { key: 'attack', nameKey: 'rootAttack', perRank: 0.03, prices: [1500, 3000, 4500] },
+  { key: 'defense', nameKey: 'rootDefense', perRank: 0.03, prices: [1500, 3000, 4500] },
+  { key: 'moveSpeed', nameKey: 'rootMoveSpeed', perRank: 0.03, prices: [1500, 3000, 4500] },
+  { key: 'attackSpeed', nameKey: 'rootAttackSpeed', perRank: 0.03, prices: [1500, 3000, 4500] },
+  { key: 'attackRange', nameKey: 'rootAttackRange', perRank: 0.03, prices: [1500, 3000, 4500] },
 ];
 
 export const ROOT_MAX_RANK = 3;

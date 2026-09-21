@@ -1,4 +1,5 @@
 import { SkillCategoryRules, skillById, type SkillId } from '../game/skills';
+import type { HudText, HudTextKey } from './text/hudText';
 import type { StatBonus } from '../data/types';
 import { HUD_ICON_URLS } from './hudIcons';
 import { SKILL_ICONS } from './skillIcons';
@@ -45,11 +46,11 @@ const STAT_STEPS = [8, 12, 15, 20];
 interface StatCard {
   key: keyof StatBonus;
   icon: string;
-  name: string;
+  nameKey: HudTextKey;
   /** 这一项的幅度要不要打折。不写就是 1。 */
   scale?: number;
-  /** 拿到本次抽中的幅度，拼成说明文案。 */
-  detail: (step: number) => string;
+  /** 说明文案的 key，里面带一个 {value}：本次抽中的幅度（已经乘过 scale）。 */
+  detailKey: HudTextKey;
 }
 
 /**
@@ -57,16 +58,20 @@ interface StatCard {
  * 不需要在别处再维护一张"卡名到属性"的对照表。
  */
 const STAT_CARDS: StatCard[] = [
-  { key: 'attack', icon: HUD_ICON_URLS.swords, name: '攻击力', detail: (s) => `所有伤害 +${s}%` },
-  { key: 'attackSpeed', icon: HUD_ICON_URLS.fire, name: '攻击频率', detail: (s) => `所有出手频率 +${s}%` },
-  // 范围牌的幅度只给一半：它和等级成长、技能等级三者相乘，满层叠下来末波的横扫会大到半个屏幕，
-  // 人还没走到脸前就没了。别的属性多一点只是数字大一点，范围多一点是把走位这件事跑掉。
-  { key: 'attackRange', icon: HUD_ICON_URLS.bow, name: '攻击范围', detail: (s) => `所有判定范围 +${Math.round(s / 2)}%`, scale: 0.5 },
-  { key: 'pickupRange', icon: HUD_ICON_URLS.gem, name: '拾取范围', detail: (s) => `灵石与金币吸附范围 +${s}%` },
-  { key: 'defense', icon: HUD_ICON_URLS.shield, name: '防御', detail: (s) => `受到的伤害减少（防御 +${s}%）` },
-  { key: 'moveSpeed', icon: HUD_ICON_URLS.boots, name: '移动速度', detail: (s) => `走和跑都 +${s}%` },
-  { key: 'maxHp', icon: HUD_ICON_URLS.heart, name: '生命上限', detail: (s) => `生命上限 +${s}%` },
-  { key: 'mpRegen', icon: HUD_ICON_URLS.potion, name: '法力回复', detail: (s) => `每秒回蓝 +${s}%` },
+  { key: 'attack', icon: HUD_ICON_URLS.swords, nameKey: 'cardAttack', detailKey: 'cardAttackDetail' },
+  { key: 'attackSpeed', icon: HUD_ICON_URLS.fire, nameKey: 'cardAttackSpeed', detailKey: 'cardAttackSpeedDetail' },
+  {
+    key: 'attackRange',
+    icon: HUD_ICON_URLS.bow,
+    nameKey: 'cardAttackRange',
+    detailKey: 'cardAttackRangeDetail',
+    scale: 0.5,
+  },
+  { key: 'pickupRange', icon: HUD_ICON_URLS.gem, nameKey: 'cardPickupRange', detailKey: 'cardPickupRangeDetail' },
+  { key: 'defense', icon: HUD_ICON_URLS.shield, nameKey: 'cardDefense', detailKey: 'cardDefenseDetail' },
+  { key: 'moveSpeed', icon: HUD_ICON_URLS.boots, nameKey: 'cardMoveSpeed', detailKey: 'cardMoveSpeedDetail' },
+  { key: 'maxHp', icon: HUD_ICON_URLS.heart, nameKey: 'cardMaxHp', detailKey: 'cardMaxHpDetail' },
+  { key: 'mpRegen', icon: HUD_ICON_URLS.potion, nameKey: 'cardMpRegen', detailKey: 'cardMpRegenDetail' },
 ];
 
 /** 一轮摆几张牌。 */
@@ -194,10 +199,13 @@ export class HudCardPicker {
     this.hooks = hooks;
   }
 
-  constructor() {
+  private readonly text: HudText;
+
+  constructor(text: HudText) {
+    this.text = text;
     this.root.className = 'hud-card-picker';
     this.root.hidden = true;
-    this.root.setAttribute('aria-label', '升级卡牌');
+    this.root.setAttribute('aria-label', this.text.value('cardPicker'));
 
     this.row.className = 'hud-card-row';
     for (let i = 0; i < CARD_COUNT; i++) {
@@ -355,8 +363,8 @@ export class HudCardPicker {
         return {
           key: c.key,
           icon: c.icon,
-          name: c.name,
-          detail: c.detail(step),
+          name: this.text.value(c.nameKey),
+          detail: this.text.value(c.detailKey, { value: Math.round(step * (c.scale ?? 1)) }),
           bonus: { [c.key]: (step * (c.scale ?? 1)) / 100 } as StatBonus,
         };
       });
@@ -368,9 +376,9 @@ export class HudCardPicker {
         return {
           key: `get:${id}`,
           icon: SKILL_ICONS[id],
-          name: skill.name,
-          detail: `${skill.note}
-获得【${SkillCategoryRules[skill.category].name}】`,
+          name: this.text.value(skill.nameKey),
+          detail: `${this.text.value(skill.noteKey)}
+${this.text.value('cardObtain', { kind: this.text.value(SkillCategoryRules[skill.category].nameKey) })}`,
           skill: id,
           obtain: true,
         };
@@ -385,9 +393,14 @@ export class HudCardPicker {
       return {
         key: `up:${entry.id}`,
         icon: SKILL_ICONS[entry.id],
-        name: skill.name,
-        detail: `${skill.note}
-${entry.level} 级 → ${entry.level + 1} 级（伤害 +${gain}%，范围 +${reach}%）`,
+        name: this.text.value(skill.nameKey),
+        detail: `${this.text.value(skill.noteKey)}
+${this.text.value('cardSkillUpgrade', {
+  from: entry.level,
+  to: entry.level + 1,
+  damage: gain,
+  reach,
+})}`,
         skill: entry.id,
       };
     });
@@ -409,7 +422,7 @@ ${entry.level} 级 → ${entry.level + 1} 级（伤害 +${gain}%，范围 +${rea
     return {
       key: `gold:${gold}`,
       icon: HUD_ICON_URLS.coin,
-      name: '金币',
+      name: this.text.value('gold'),
       detail: `本局已经满配
 金币 +${gold}（带得走）`,
       gold,

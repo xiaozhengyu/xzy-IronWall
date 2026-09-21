@@ -16,15 +16,17 @@
  */
 
 import type { StatBonus } from './types';
+import type { HudTextKey } from '../ui/text/hudText.types';
 
 export type PickupKind = 'potion' | 'charm';
 
 export interface PickupDef {
   id: string;
-  name: string;
+  /** 名字和那行小字都只存 key，文字在 ui/text 的语言包里（两边语言都有）。 */
+  nameKey: HudTextKey;
   kind: PickupKind;
   /** 界面上那行小字。 */
-  note: string;
+  noteKey: HudTextKey;
   /** 掉落权重，相对值。四种加起来才是 PICKUP_DROP_CHANCE 那一份。 */
   weight: number;
   /**
@@ -51,8 +53,8 @@ export interface PickupDef {
 export const Pickups: readonly PickupDef[] = [
   {
     id: 'potion-hp',
-    name: '回血丹',
-    note: '立刻回三成生命',
+    nameKey: 'pickupHealName',
+    noteKey: 'pickupHealNote',
     kind: 'potion',
     // 血比蓝值钱，所以掉得少一点。
     weight: 0.9,
@@ -61,8 +63,8 @@ export const Pickups: readonly PickupDef[] = [
   },
   {
     id: 'potion-mp',
-    name: '回蓝丹',
-    note: '立刻回四成法力',
+    nameKey: 'pickupManaName',
+    noteKey: 'pickupManaNote',
     kind: 'potion',
     weight: 1.1,
     restore: { mp: 0.4 },
@@ -76,8 +78,8 @@ export const Pickups: readonly PickupDef[] = [
      * 它救不了你，而在还撑得住的时候它比回血丹划算。两种药的取舍就在这一条上。
      */
     id: 'potion-hp-over-time',
-    name: '续命丹',
-    note: '8 秒内每秒回 4.5% 生命',
+    nameKey: 'pickupRegenName',
+    noteKey: 'pickupRegenNote',
     kind: 'potion',
     weight: 0.8,
     regen: { hp: 0.045 },
@@ -86,8 +88,8 @@ export const Pickups: readonly PickupDef[] = [
   {
     // 凝神丹。回蓝的那一支同理，总量比凝神一口（四成）多，但摊在八秒里。
     id: 'potion-mp-over-time',
-    name: '凝神丹',
-    note: '8 秒内每秒回 6% 法力',
+    nameKey: 'pickupFocusName',
+    noteKey: 'pickupFocusNote',
     kind: 'potion',
     weight: 0.9,
     regen: { mp: 0.06 },
@@ -101,8 +103,8 @@ export const Pickups: readonly PickupDef[] = [
      * 一张符要能改变接下来十几秒怎么打 —— 这一张说的是"冲进去"。
      */
     id: 'charm-swift',
-    name: '疾行符',
-    note: '12 秒内移动速度 +18%，攻击力 +15%',
+    nameKey: 'pickupHasteName',
+    noteKey: 'pickupHasteNote',
     kind: 'charm',
     weight: 1,
     buff: { moveSpeed: 0.18, attack: 0.15 },
@@ -116,8 +118,8 @@ export const Pickups: readonly PickupDef[] = [
      * 撑过一波的符，而不是一张"等你掉血了才有用"的符。到期时上限缩回去，血跟着夹住。
      */
     id: 'charm-ward',
-    name: '坚壁符',
-    note: '15 秒内生命与法力上限 +25%，涨出来的当场补满',
+    nameKey: 'pickupWardName',
+    noteKey: 'pickupWardNote',
     kind: 'charm',
     weight: 1,
     buff: { maxHp: 0.25, maxMp: 0.25 },
@@ -135,8 +137,8 @@ export const Pickups: readonly PickupDef[] = [
    */
   {
     id: 'charm-rage',
-    name: '狂暴符',
-    note: '15 秒内攻击力 +40%，防御 −25%',
+    nameKey: 'pickupRageName',
+    noteKey: 'pickupRageNote',
     kind: 'charm',
     weight: 0,
     buff: { attack: 0.4, defense: -0.25 },
@@ -144,8 +146,8 @@ export const Pickups: readonly PickupDef[] = [
   },
   {
     id: 'charm-gale',
-    name: '疾风符',
-    note: '15 秒内移动速度 +35%，出手频率 +20%',
+    nameKey: 'pickupGaleName',
+    noteKey: 'pickupGaleNote',
     kind: 'charm',
     weight: 0,
     buff: { moveSpeed: 0.35, attackSpeed: 0.2 },
@@ -160,8 +162,8 @@ export const Pickups: readonly PickupDef[] = [
      * 是借的"。真的无敌会让玩家学到"按下去就不用走位"。
      */
     id: 'charm-aegis',
-    name: '金身符',
-    note: '10 秒内生命上限 ×6，涨出来的当场补满',
+    nameKey: 'pickupGoldenName',
+    noteKey: 'pickupGoldenNote',
     kind: 'charm',
     weight: 0,
     buff: { maxHp: 5 },
@@ -171,8 +173,8 @@ export const Pickups: readonly PickupDef[] = [
     // 聚宝符：一整局金币翻倍。它把"这一局多投三百"变成一个赌注，而不只是一次消耗。
     // 持续时间给一个很大的数：一局最长二十来分钟，这一张该盖整局。
     id: 'charm-fortune',
-    name: '聚宝符',
-    note: '本局金币掉落翻倍',
+    nameKey: 'pickupFortuneName',
+    noteKey: 'pickupFortuneNote',
     kind: 'charm',
     weight: 0,
     buff: {},
