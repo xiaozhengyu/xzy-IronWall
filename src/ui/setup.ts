@@ -7,7 +7,7 @@ import type { WeatherKind } from '../world/weather';
 import { createHudIcon } from './hudIcons';
 import { createSkillIcon } from './skillIcons';
 import { StatHex, type StatAxis } from './statHex';
-import { HudText, type HudTextKey } from './text/hudText';
+import { HudText, type HudLocale, type HudTextKey } from './text/hudText';
 
 /**
  * 备战界面：一屏之内选人、选图、开打。
@@ -87,6 +87,13 @@ export interface SetupBridge {
   onShop(): void;
   /** 点了战绩。带上当前选中的角色 —— 打开就停在他身上，少一次点击。 */
   onHistory(heroId: string): void;
+  /**
+   * 顶栏那三个开关：语言、音效、音乐。和结算屏（ESC 页）上那三个是**同一组设置**，
+   * 两边改的都是存档里那一份，所以 main.ts 在接线时要把另一屏也同步一下。
+   */
+  onLocaleChange?(locale: HudLocale): void;
+  onSfxChange?(on: boolean): void;
+  onMusicChange?(on: boolean): void;
 }
 
 /** 备战界面要从存档里读的东西。 */
@@ -224,6 +231,12 @@ export class SetupScreen {
   private readonly shopButton = el('button', 'setup-shop');
   /** 商店右边那一个。摆在这儿而不是角色栏里：它记的是**所有**角色的事。 */
   private readonly historyButton = el('button', 'setup-shop');
+  /** 顶栏那三个开关。当前这一档靠 on 这个类高亮，值记在 dataset 上。 */
+  private localeButtons: HTMLButtonElement[] = [];
+  private sfxButtons: HTMLButtonElement[] = [];
+  private musicButtons: HTMLButtonElement[] = [];
+  private sfxOn = true;
+  private musicOn = true;
   /** 顶栏底下那行会自己消失的提示。 */
 
   /** 进入战场时盖住整屏的那一层。 */
@@ -241,6 +254,7 @@ export class SetupScreen {
     // 换语言：静态那几处是绑定的、HudText 自己会刷；角色卡、地图详情、出兵列表这些是
     // 按当时的数据拼出来的，得重画一遍。关着就不画 —— 下次 show() 本来就会重画。
     this.text.onChange(() => {
+      this.markLocale();
       if (!this.root.hidden) this.rebuild();
     });
     this.build();
@@ -289,6 +303,98 @@ export class SetupScreen {
    * 单独抽出来是给换语言用的：那时候该变的只有字，而 show() 还会重播入场动画、把天气
    * 重置回这张图的默认档 —— 玩家只是点了一下语言按钮，不该把他刚选的东西弄没。
    */
+  /**
+   * 顶栏右侧那三个开关：语言、音效、音乐。
+   *
+   * 和结算屏上那三个是同一组设置，长相也一样（两排小方块，当前那一档亮着）。**没有做成
+   * 一个共用组件**：那边是一屏停下来的设置行、竖着排，这边是顶栏、横着挤在商店按钮旁边，
+   * 共用的只是这十几行拼装代码，而抽出来之后两边都得为对方让一次步。
+   *
+   * 语言按钮写死"中文 / EN"，不跟着当前语言翻 —— 一个英文玩家在满屏中文里要找的就是
+   * "EN"这两个字母，把它翻成中文等于把出口藏起来。开/关两个字要翻，所以走 bindText。
+   */
+  private buildSettings(parent: HTMLElement): void {
+    this.localeButtons = this.chipRow(parent, 'language',
+      [['zh-CN', '中文'], ['en', 'EN']],
+      (value) => {
+        // 直接换共用的那一份 HudText：整个程序只有这一份，全屏当场跟着变。
+        this.text.setLocale(value as HudLocale);
+        this.markLocale();
+        this.bridge.onLocaleChange?.(value as HudLocale);
+      });
+    this.sfxButtons = this.chipRow(parent, 'sound', [['on', ''], ['off', '']], (value) => {
+      this.sfxOn = value === 'on';
+      this.markSfx();
+      this.bridge.onSfxChange?.(this.sfxOn);
+    }, ['on', 'off']);
+    this.musicButtons = this.chipRow(parent, 'music', [['on', ''], ['off', '']], (value) => {
+      this.musicOn = value === 'on';
+      this.markMusic();
+      this.bridge.onMusicChange?.(this.musicOn);
+    }, ['on', 'off']);
+    this.markLocale();
+    this.markSfx();
+    this.markMusic();
+  }
+
+  /** 一组开关：一个标题加几个小方块。textKeys 传了就把方块上的字也绑到文案表上。 */
+  private chipRow(
+    parent: HTMLElement,
+    labelKey: 'language' | 'sound' | 'music',
+    values: Array<[string, string]>,
+    onPick: (value: string) => void,
+    textKeys?: Array<'on' | 'off'>,
+  ): HTMLButtonElement[] {
+    const box = el('div', 'setup-set');
+    const label = el('span', 'setup-set-k');
+    this.text.bindText(label, labelKey);
+    box.appendChild(label);
+    const group = el('div', 'setup-set-v');
+    values.forEach(([value, caption], index) => {
+      const button = el('button', 'setup-chip', caption);
+      button.type = 'button';
+      button.dataset.value = value;
+      const key = textKeys?.[index];
+      if (key) this.text.bindText(button, key);
+      button.addEventListener('click', () => onPick(value));
+      group.appendChild(button);
+    });
+    box.appendChild(group);
+    parent.appendChild(box);
+    return [...group.children] as HTMLButtonElement[];
+  }
+
+  /** 当前语言那一档高亮。语言是问 HudText 要的，所以别处换了这里也跟得上。 */
+  private markLocale(): void {
+    for (const button of this.localeButtons) {
+      button.classList.toggle('on', button.dataset.value === this.text.current);
+    }
+  }
+
+  private markSfx(): void {
+    for (const button of this.sfxButtons) {
+      button.classList.toggle('on', button.dataset.value === (this.sfxOn ? 'on' : 'off'));
+    }
+  }
+
+  private markMusic(): void {
+    for (const button of this.musicButtons) {
+      button.classList.toggle('on', button.dataset.value === (this.musicOn ? 'on' : 'off'));
+    }
+  }
+
+  /** 存档（或者 ESC 页上那一组）先告诉这一屏音效当前是开是关。 */
+  setSfxEnabled(on: boolean): void {
+    this.sfxOn = on;
+    this.markSfx();
+  }
+
+  /** 同上，音乐。 */
+  setMusicEnabled(on: boolean): void {
+    this.musicOn = on;
+    this.markMusic();
+  }
+
   private rebuild(): void {
     this.startButton.textContent = this.text.value('setupStart');
     this.buildHeroList();
@@ -647,6 +753,8 @@ export class SetupScreen {
     this.historyButton.type = 'button';
     this.historyButton.addEventListener('click', () => this.bridge.onHistory(this.currentHero.id));
     purseBox.appendChild(this.historyButton);
+    purseBox.appendChild(el('span', 'setup-top-sep'));
+    this.buildSettings(purseBox);
     top.appendChild(purseBox);
     this.root.appendChild(top);
 

@@ -42,7 +42,7 @@ import { Scene } from './render/scene';
 import { Props } from './world/props';
 import type { WeatherKind } from './world/weather';
 import { Controls } from './ui/controls';
-import { Hud, HudText } from './ui/hud';
+import { Hud, HudText, type HudLocale } from './ui/hud';
 import { Menu } from './ui/menu';
 import { SetupScreen, type MapPin } from './ui/setup';
 import { curtain } from './ui/curtain';
@@ -1553,6 +1553,33 @@ const history = new HistoryScreen({
  * 建在 setup 之前 —— 它的 show 要读 setup.currentHero/currentMap（结算上要写清是谁在哪儿
  * 打的），但那只发生在按下 ESC 之后，那时两块界面都早就建好了。
  */
+/*
+ * 设置那三样：语言、音效、音乐。
+ *
+ * **两屏各有一组开关**（备战界面顶栏、ESC 页），改的却是同一份存档。所以这三件事各收成
+ * 一个函数：存进档、当场生效、再把**另一屏**的高亮也拨过去。写在回调里的话两边各写一遍，
+ * 迟早有一边少做一件事 —— 比如只改了音量没存档，下次打开又响了。
+ */
+function applyLocale(locale: HudLocale): void {
+  profile.setLocale(locale);
+  // 界面文字不用管：两屏用的是同一个 HudText 实例，点下去的那一边已经把它换掉了，
+  // 另一边的高亮由各自的 text.onChange 自己标。
+}
+
+function applySfx(on: boolean): void {
+  setSfxEnabled(on);
+  profile.setSfxEnabled(on);
+  summary.setSfxEnabled(on);
+  setup.setSfxEnabled(on);
+}
+
+function applyMusic(on: boolean): void {
+  setMusicEnabled(on);
+  profile.setMusicEnabled(on);
+  summary.setMusicEnabled(on);
+  setup.setMusicEnabled(on);
+}
+
 const summary = new SummaryScreen({
   onResume: () => controls.resume(),
   /*
@@ -1570,18 +1597,12 @@ const summary = new SummaryScreen({
   },
   onConfirm: () => quitToSetup(),
   // 语言存进档，下次打开还是这一档。
-  onLocaleChange: (locale) => profile.setLocale(locale),
+  onLocaleChange: (locale) => applyLocale(locale),
   // 音效开关：当场生效（改总线音量），同时存进档。
-  onSfxChange: (on) => {
-    setSfxEnabled(on);
-    profile.setSfxEnabled(on);
-  },
+  onSfxChange: (on) => applySfx(on),
   // 音乐开关：同上。关掉只是把音乐那条总线推到 0，曲子还在后台走 —— 再打开就接着响，
   // 不用重新起播，也就不会从头开始。
-  onMusicChange: (on) => {
-    setMusicEnabled(on);
-    profile.setMusicEnabled(on);
-  },
+  onMusicChange: (on) => applyMusic(on),
 }, text);
 // 存档里那一档先告诉结算屏，它那两个方块才知道哪个该亮。语言走的是共用的 HudText，
 // 不用再喂一次。
@@ -1663,6 +1684,10 @@ const setup = new SetupScreen(
      */
     onShop: () => { shop.show(); sceneChanged(); },
     onHistory: (heroId) => { history.show(heroId); sceneChanged(); },
+    // 顶栏那三个开关。和 ESC 页上那一组走同一条路，见 applyLocale / applySfx / applyMusic。
+    onLocaleChange: (locale) => applyLocale(locale),
+    onSfxChange: (on) => applySfx(on),
+    onMusicChange: (on) => applyMusic(on),
   },
   text,
 );

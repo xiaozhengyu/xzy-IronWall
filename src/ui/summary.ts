@@ -148,6 +148,8 @@ export class SummaryScreen {
     this.text = text;
     // 换语言：绑定的标签由 HudText 自己刷新，拼出来的那几行走 applyTexts 重来一遍。
     this.text.onChange(() => {
+      // 语言可能是备战界面上那一组改的，所以这一屏的高亮也要重新标一次。
+      this.markLocale();
       if (!this.root.hidden && this.lastShow) {
         this.applyTexts(this.lastShow.mode, this.lastShow.stats);
       }

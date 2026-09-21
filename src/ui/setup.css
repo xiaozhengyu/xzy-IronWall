@@ -851,4 +851,72 @@
   border-color: #6a5a34;
 }
 
+/*
+ * 顶栏右侧那三组开关：语言、音效、音乐。
+ *
+ * 和结算屏上那一组长得一样（小方块，当前那一档亮着），只是小一号 —— 那边是一屏停下来的
+ * 设置行，这边是顶栏，得和旁边的金币、商店按钮排在同一条线上而不喧宾夺主。
+ *
+ * 颜色刻意和 .setup-shop 拉开：商店和战绩是**会打开另一屏**的入口，这三组只是就地翻一个
+ * 开关。按钮长得一样的话，玩家会以为点了会跳走。
+ */
+.setup-set {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.setup-set-k {
+  color: #7c879d;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+}
+
+.setup-set-v {
+  display: flex;
+  gap: 4px;
+}
+
+.setup-chip {
+  min-width: 38px;
+  padding: 4px 9px;
+  color: #8d98ad;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  background: #161b27;
+  border: 1px solid #2c3444;
+  cursor: inherit;
+}
+
+.setup-chip:hover {
+  color: #cdd6e6;
+  border-color: #46516c;
+}
+
+/* 焦点环去掉，和这一屏别的按钮同一个理由：整屏只有一处该是亮的，那是当前选中的那一档。 */
+.setup-chip:focus,
+.setup-chip:focus-visible {
+  outline: none;
+}
+
+/*
+ * 当前这一档。**没有沿用结算屏那种实心金块**：那边是一整屏停下来的设置面板，金块是那一屏
+ * 的主角；这条顶栏上的主角是商店和战绩（它们会打开另一屏），三个实心金块摆上去比两个按钮
+ * 还抢眼，主次就反了。这里只把字提亮、描边转暖，够说明现在是这一档就行。
+ */
+.setup-chip.on {
+  color: #e6d9b8;
+  background: #221d13;
+  border-color: #6a5a34;
+}
+
+/* 商店/战绩和三个开关之间的那道竖线：左边是"去别处"，右边是"就地改一个数"。 */
+.setup-top-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: #2c3444;
+}
+
 /* 顶栏底下那行会自己消失的提示。压在三栏之上，不参与布局，所以它出现和消失都不会推动别的。 */
