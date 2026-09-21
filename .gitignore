@@ -63,3 +63,6 @@ Thumbs.db
 *.sw?
 
 .codex-loop/
+
+# 发布用的打包产物，不进仓库。
+/release/

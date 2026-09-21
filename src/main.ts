@@ -442,6 +442,44 @@ function onKeyPressed(code: string): void {
   // 这条路（跑步读的是 Controls 自己的按键集合），所以试练地上照样能跑。
   if (state !== 'playing' && state !== 'paused') return;
 
+  /*
+   * 玩家的键排在最前面，因为下面那一整片是**调试键，发布版里整个不存在**（见那一段的注释）。
+   * 分成两段而不是逐条判断，是为了让"哪些键是给玩家的"这件事在代码里一眼看得出来 ——
+   * 混在一起写的话，以后加一个玩家的键很容易顺手加进调试那半边，然后在发布版里神秘失踪。
+   */
+  const activeSlot = ACTIVE_SKILL_CODES.indexOf(code as (typeof ACTIVE_SKILL_CODES)[number]);
+  if (activeSlot >= 0) battle.triggerActiveSkill(activeSlot as ActiveSkillSlot, viewOf());
+
+  const digit = code.startsWith('Digit') ? Number(code.slice(5)) : NaN;
+  // 卡牌弹着的时候数字键先归它，不然选牌会顺手把药喝了。
+  if (hud.cards.open && digit >= 1 && hud.cards.choose(digit - 1)) return;
+  if (state === 'playing' && digit >= 1 && digit <= 4) {
+    hud.useItem(digit - 1, (slot) => battle.useItemAt(slot));
+  } else if (import.meta.env.DEV && state === 'paused' && digit >= 1 && digit <= PlayerPresets.length) {
+    // 调试用的那一排形象。正经的选人在备战界面里（见 ui/setup.ts），这里能翻到八个全部
+    // 预设，包括杂兵和弓手这些本来就不给玩家选的。
+    //
+    // 数字键的解析和道具共用上面那几行，所以这一条只能留在玩家那一段里，靠自己这个判断
+    // 出局 —— paused 这个状态在发布版里本来也到不了（F1 那扇门不开）。
+    battle.setPreset(digit - 1);
+    // 暂停时主循环不跑；菜单换角色后主动补一帧，让名称和头像当场同步。
+    draw();
+  }
+
+  /*
+   * ------------------------------------------------------------ 以下全是调试键
+   *
+   * 这一排开关（跳波次、改血上限、换形象、切天气、关自动攻击、原地重开）是对着开发者的，
+   * 它们能把一局的难度整个改掉。发出去收反馈的时候必须没有：玩家乱按之后得到的手感不是这个
+   * 游戏的手感，而那样拿回来的反馈是失真的 —— 收反馈恰恰是发出去的理由。
+   *
+   * **直接写 import.meta.env.DEV，不要包成一个常量。** vite build 把它替换成字面量 false，
+   * 于是这里是 `if (!false) return;`，后面整段成了不可达代码，被 esbuild 连同字符串一起摇掉 ——
+   * 产物里根本没有这些代码。包成模块级常量就摇不掉了（实测：Backslash、nudgeSpawnBatch
+   * 这些字符串仍然留在包里），那只是"按了没反应"，代码还躺在那儿等人翻出来。
+   */
+  if (!import.meta.env.DEV) return;
+
   if (code === 'KeyK') showSkeleton = !showSkeleton;
 
   // 图鉴。暂停时面板得跟着让开，否则那张图正好被遮罩盖住 —— 状态归这里管，所以由这里
@@ -472,9 +510,6 @@ function onKeyPressed(code: string): void {
   // 倒下自动重开。默认关着（倒下会走结算流程），压力测试时打开。
   if (code === 'KeyV') battle.autoRespawn = !battle.autoRespawn;
   if (code === 'KeyJ') battle.cycleAttackSkill();
-  const activeSlot = ACTIVE_SKILL_CODES.indexOf(code as (typeof ACTIVE_SKILL_CODES)[number]);
-  if (activeSlot >= 0) battle.triggerActiveSkill(activeSlot as ActiveSkillSlot, viewOf());
-
   // 天气。切换的是"在下什么"，地上积多少雪、湿到什么程度会自己慢慢跟上来。
   const weather = field.weather;
   if (code === 'KeyT') {
@@ -511,18 +546,6 @@ function onKeyPressed(code: string): void {
   if (code === 'BracketLeft') camera.nudgeMagnify(-1);
   if (code === 'BracketRight') camera.nudgeMagnify(1);
 
-  const digit = code.startsWith('Digit') ? Number(code.slice(5)) : NaN;
-  // 卡牌弹着的时候数字键先归它，不然选牌会顺手把药喝了。
-  if (hud.cards.open && digit >= 1 && hud.cards.choose(digit - 1)) return;
-  if (state === 'playing' && digit >= 1 && digit <= 4) {
-    hud.useItem(digit - 1, (slot) => battle.useItemAt(slot));
-  } else if (state === 'paused' && digit >= 1 && digit <= PlayerPresets.length) {
-    // 调试用的那一排形象。正经的选人在备战界面里（见 ui/setup.ts），这里能翻到八个全部
-    // 预设，包括杂兵和弓手这些本来就不给玩家选的。
-    battle.setPreset(digit - 1);
-    // 暂停时主循环不跑；菜单换角色后主动补一帧，让名称和头像当场同步。
-    draw();
-  }
 }
 
 // ---------------------------------------------------------------- 主循环
@@ -820,8 +843,9 @@ function openInterlude(): void {
   controls.pause();
 }
 
-/** F1：调试菜单。这是它唯一的入口。 */
+/** F1：调试菜单。这是它唯一的入口，发布版里这扇门根本不开（理由见 onKeyPressed 里那段）。 */
 function openDebugMenu(): void {
+  if (!import.meta.env.DEV) return;
   if (state !== 'playing') return;
   pauseTarget = 'debug';
   controls.pause();
