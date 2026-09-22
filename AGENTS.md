@@ -33,6 +33,10 @@ Use two-space indentation, semicolons, single-quoted strings, strict typing, and
 
 There is no test runner or coverage threshold. Before submitting changes, run `npm run build`; use `npm run figures` for rendering changes and `npm run bench` for simulation or crowd-performance changes. Manually exercise affected UI screens and include screenshots for visual changes.
 
+## Spec-Driven Development
+
+All feature work and gameplay-logic changes follow SDD. Before editing code, create or update `docs/spec/<feature-slug>/` with `01_feature.md`, `02_design.md`, and `03_validation.md`. Define the player-facing goal, scope, and acceptance criteria first; then document gameplay rules, state/data flow, affected modules, edge cases, and validation scenarios. Do not code against an incomplete or conflicting spec. After implementation, verify the diff against all three documents and record meaningful logic changes in `docs/decisions/AI_CHANGELOG.md`. Database work is not currently present; if introduced, every schema or seed change must include a dated `database/upgrade/upgrade_YYYYMMDD_<slug>.sql` and the corresponding `database/init` update.
+
 ## Commit & Pull Request Guidelines
 
 Recent commits use concise conventional-style subjects such as `feat(setup): ...`, `feat(i18n): ...`, `balance: ...`, `docs: ...`, and `chore(release): ...`. Keep commits focused. Pull requests should summarize behavior changes, list validation commands, include before/after screenshots for visual work, and report benchmarks for performance-sensitive changes. Do not commit `node_modules/`, `dist/`, `.preview-*.png`, or `.bench.mjs`.
