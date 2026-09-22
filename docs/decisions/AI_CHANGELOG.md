@@ -61,3 +61,10 @@ Use this format:
 - Summary: Enlarged all boss renderings, added a readable minion-to-boss clearance, and expanded every map to three times its previous width and height.
 - Impact: Bosses remain visually distinct in dense waves while preserving combat stats; larger normalized maps provide more traversal space without changing wave budgets or camera view size.
 - Validation: `npm run build`; `npm run figures`; `npm run bench`; `git diff --check`; manual boss spacing, map-edge traversal, and minimap-bound checks remain to be performed.
+
+## 2026-09-22 — card-stat-expansion
+
+- Spec: `docs/spec/card-stat-expansion/`
+- Summary: Added max-mana and critical-chance attribute cards to the run reward pool.
+- Impact: Attribute cards now cover ten stat families; both new cards use the existing multiplicative `StatBonus` path, stat cap, icon de-duplication, gem rewards, and wave rewards.
+- Validation: `npm run build`; `npm run figures`; `npm run bench`; `git diff --check`; manual card appearance, immediate stat update, and cap checks remain to be performed.

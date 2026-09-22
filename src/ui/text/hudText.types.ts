@@ -251,8 +251,12 @@ export interface HudMessages {
   cardMoveSpeedDetail: string;
   cardMaxHp: string;
   cardMaxHpDetail: string;
+  cardMaxMp: string;
+  cardMaxMpDetail: string;
   cardMpRegen: string;
   cardMpRegenDetail: string;
+  cardCrit: string;
+  cardCritDetail: string;
   cardLevelUp: string;
   /** 获取牌底下那一行：这一招属于哪一类。 */
   cardObtain: string;

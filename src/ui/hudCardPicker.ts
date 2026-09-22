@@ -71,7 +71,9 @@ const STAT_CARDS: StatCard[] = [
   { key: 'defense', icon: HUD_ICON_URLS.shield, nameKey: 'cardDefense', detailKey: 'cardDefenseDetail' },
   { key: 'moveSpeed', icon: HUD_ICON_URLS.boots, nameKey: 'cardMoveSpeed', detailKey: 'cardMoveSpeedDetail' },
   { key: 'maxHp', icon: HUD_ICON_URLS.heart, nameKey: 'cardMaxHp', detailKey: 'cardMaxHpDetail' },
+  { key: 'maxMp', icon: HUD_ICON_URLS.stats, nameKey: 'cardMaxMp', detailKey: 'cardMaxMpDetail' },
   { key: 'mpRegen', icon: HUD_ICON_URLS.potion, nameKey: 'cardMpRegen', detailKey: 'cardMpRegenDetail' },
+  { key: 'crit', icon: HUD_ICON_URLS.skull, nameKey: 'cardCrit', detailKey: 'cardCritDetail' },
 ];
 
 /** 两种奖励模式的牌面与选择额度。 */
@@ -372,7 +374,7 @@ export class HudCardPicker {
    *
    * **只要还有技能牌，牌组里就留一格给它。**
    *
-   * 最要紧的是头两轮：那时货架上只有八张属性牌加一张自动攻击技的升级，不留格的话
+   * 最要紧的是头两轮：那时货架上只有十张属性牌加一张自动攻击技的升级，不留格的话
    * 那一张升级只有三成三的机会露面 —— 也就是说有三分之二的开局玩家根本没得选，
    * 只能在属性牌里挑一张。而头两轮不上新招的全部意义就是"先把本命那一招推上去"。
    * 留一格之后，每一轮都至少有一张招式牌。
