@@ -136,6 +136,8 @@ export interface HudMessages {
   pickupGaleNote: string;
   pickupGoldenName: string;
   pickupGoldenNote: string;
+  pickupMagnetName: string;
+  pickupMagnetNote: string;
   pickupFortuneName: string;
   pickupFortuneNote: string;
 

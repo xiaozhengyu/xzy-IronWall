@@ -27,7 +27,7 @@ export interface PickupDef {
   kind: PickupKind;
   /** 界面上那行小字。 */
   noteKey: HudTextKey;
-  /** 掉落权重，相对值。四种加起来才是 PICKUP_DROP_CHANCE 那一份。 */
+  /** 掉落权重，相对值。所有 weight > 0 的非商店道具共同组成普通补给掉落池。 */
   weight: number;
   /**
    * 药：立刻回多少，按**上限的比例**给。
@@ -46,6 +46,8 @@ export interface PickupDef {
   regen?: { hp?: number; mp?: number };
   /** 符：一包乘算加成，和属性卡走同一条路（applyBonuses）。 */
   buff?: StatBonus;
+  /** 临时改变可收集物规则的效果。 */
+  collectibleEffect?: 'magnet';
   /** 符生效多久，秒。药是 0。 */
   duration: number;
 }
@@ -123,6 +125,16 @@ export const Pickups: readonly PickupDef[] = [
     kind: 'charm',
     weight: 1,
     buff: { maxHp: 0.25, maxMp: 0.25 },
+    duration: 15,
+  },
+  {
+    // 聚灵符：短时间内把三类地面掉落都拉到身边。它改的是拾取规则，不是玩家属性。
+    id: 'charm-magnet',
+    nameKey: 'pickupMagnetName',
+    noteKey: 'pickupMagnetNote',
+    kind: 'charm',
+    weight: 0.9,
+    collectibleEffect: 'magnet',
     duration: 15,
   },
   /*
@@ -210,13 +222,14 @@ export const pickupById = (id: string): PickupDef | null =>
  * 首领掉的那一件从这几样里摧。
  *
  * 一波才一个首领，而他要砍十来刀 —— 掉出一颗回血丹和砸一个篝火没区别的话，那十刀就白砍了。
- * 这四样都是"持续一段时间"的：两种慢回的丹、两种符。一口闷的那两种留给篝火。
+ * 这些都是"持续一段时间"的：两种慢回的丹、三种符。一口闷的那两种留给篝火。
  */
 const BOSS_PICKUP_IDS: readonly string[] = [
   'potion-hp-over-time',
   'potion-mp-over-time',
   'charm-swift',
   'charm-ward',
+  'charm-magnet',
 ];
 
 /** 首领掉的那一件。保底掉，所以这里不掷"掉不掉"，只掷"掉哪一件"。 */

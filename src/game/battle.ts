@@ -1252,6 +1252,62 @@ export class Battle {
     return this.player.maxHp >= INVINCIBLE_HP;
   }
 
+  /** 开发者控制台当前锁定的生命值。 */
+  get debugHpLocked(): number | null {
+    return this.debugHpLock;
+  }
+
+  /** 开发者控制台当前锁定的蓝量。 */
+  get debugMpLocked(): number | null {
+    return this.debugMpLock;
+  }
+
+  /** 开发者控制台的无敌开关。 */
+  get debugInvincibleEnabled(): boolean {
+    return this.debugInvincible;
+  }
+
+  /** 锁定/解除锁定当前生命值。死者不能建立新的生命锁定。 */
+  setDebugHpLock(enabled: boolean): void {
+    if (!enabled || !this.player.alive) {
+      this.debugHpLock = null;
+      return;
+    }
+    this.debugHpLock = Math.max(1, Math.min(this.player.hp, this.player.maxHp));
+  }
+
+  /** 锁定/解除锁定当前蓝量。 */
+  setDebugMpLock(enabled: boolean): void {
+    if (!enabled) {
+      this.debugMpLock = null;
+      return;
+    }
+    this.debugMpLock = Math.max(0, Math.min(this.currentMp, this.player.stats.maxMp));
+  }
+
+  /** 开关开发者控制台的独立无敌。 */
+  setDebugInvincible(enabled: boolean): void {
+    this.debugInvincible = enabled;
+  }
+
+  /** 立即补满当前生命。 */
+  fillDebugHp(): void {
+    if (!this.player.alive) return;
+    this.player.hp = this.player.maxHp;
+  }
+
+  /** 立即补满当前蓝量。 */
+  fillDebugMp(): void {
+    this.currentMp = this.player.stats.maxMp;
+  }
+
+  /** 清掉只属于当前调试场景的资源锁定和无敌。 */
+  clearDebugState(): void {
+    this.debugHpLock = null;
+    this.debugMpLock = null;
+    this.debugInvincible = false;
+  }
+
   /**
    * 调生命上限，沿 HP_SCALE_LADDER 走一格，并把血补满。
    *
@@ -1286,6 +1342,13 @@ export class Battle {
 
   /** 生命上限的调试倍率。见 nudgeMaxHp。 */
   private hpScale = 1;
+
+  /** 开发者控制台锁定的生命值；null 表示不锁。 */
+  private debugHpLock: number | null = null;
+  /** 开发者控制台锁定的蓝量；null 表示不锁。 */
+  private debugMpLock: number | null = null;
+  /** 开发者控制台的独立无敌开关，不影响生命上限调试倍率。 */
+  private debugInvincible = false;
 
   /**
    * 刚用过药或符之后的那一下发光还剩多久，秒。
@@ -1357,21 +1420,27 @@ export class Battle {
    *
    * 走 takeItem 而不是直接写格子：摧满、格子不够那几条规矩只应该存在一份。
    */
-  grantItems(items: { id: string; count: number }[]): void {
+  grantItems(items: { id: string; count: number }[]): number {
+    let granted = 0;
     for (const entry of items) {
-      for (let i = 0; i < entry.count; i++) this.takeItem(entry.id);
+      for (let i = 0; i < entry.count; i++) {
+        if (this.takeItem(entry.id)) granted++;
+      }
     }
+    return granted;
   }
 
-  private takeItem(id: string): void {
+  private takeItem(id: string): boolean {
     const held = this.itemSlots.find((entry) => entry?.id === id);
     if (held) {
+      if (held.count >= ITEM_STACK_MAX) return false;
       held.count = Math.min(ITEM_STACK_MAX, held.count + 1);
-      return;
+      return true;
     }
     const free = this.itemSlots.indexOf(null);
-    if (free < 0) return;
+    if (free < 0) return false;
     this.itemSlots[free] = { id, count: 1 };
+    return true;
   }
 
   /**
@@ -1423,6 +1492,10 @@ export class Battle {
   private spendMp(amount: number): boolean {
     if (amount <= 0) return true;
     if (this.currentMp < amount) return false;
+    if (this.debugMpLock !== null) {
+      this.spentMp += amount;
+      return true;
+    }
     this.currentMp -= amount;
     this.spentMp += amount;
     return true;
@@ -1689,6 +1762,9 @@ export class Battle {
   applyPickup(id: string): boolean {
     const def = pickupById(id);
     if (!def || !this.player.alive) return false;
+    if (def.collectibleEffect === 'magnet' && def.duration > 0) {
+      this.timedCharms.set(def.id, Math.max(this.timedCharms.get(def.id) ?? 0, def.duration));
+    }
     if (def.regen && def.duration > 0) {
       this.regens.push({
         hp: def.regen.hp ?? 0,
@@ -1822,6 +1898,18 @@ export class Battle {
         this.regens[i] = this.regens[this.regens.length - 1];
         this.regens.pop();
       }
+    }
+  }
+
+  /** 应用开发者控制台的资源锁定；放在正常伤害、消耗和回复之后。 */
+  private applyDebugLocks(): void {
+    if (this.debugHpLock !== null && this.player.alive) {
+      this.debugHpLock = Math.max(1, Math.min(this.debugHpLock, this.player.maxHp));
+      this.player.hp = this.debugHpLock;
+    }
+    if (this.debugMpLock !== null) {
+      this.debugMpLock = Math.max(0, Math.min(this.debugMpLock, this.player.stats.maxMp));
+      this.currentMp = this.debugMpLock;
     }
   }
 
@@ -2144,6 +2232,7 @@ export class Battle {
     this.regens.length = 0;
     this.itemSlots.fill(null);
     this.itemFlash = 0;
+    this.clearDebugState();
     this.applyPlayerStats();
     this.enemyArrows.length = 0;
     /*
@@ -2664,10 +2753,13 @@ export class Battle {
     this.debris.update(dt);
     this.warp.update(dt);
     this.damageNumbers.update(dt, this.player.x, this.player.y);
-    // 吸附半径是玩家的一项属性（拾取范围），不再是 collectibles 里的一个常量。
+    // 吸附半径是玩家的一项属性（拾取范围），不再是 collectibles 里的一个常量。聚灵符临时把
+    // 同一条公共范围放到无限：宝石、金币和药符一起吸，不单独维护三套规则。
     this.pickupTarget.x = player.x;
     this.pickupTarget.y = player.y;
-    this.pickupTarget.pickupRange = player.stats.pickupRange;
+    this.pickupTarget.pickupRange = this.hasCharm('charm-magnet')
+      ? Number.POSITIVE_INFINITY
+      : player.stats.pickupRange;
     this.pickupTarget.accepts = this.acceptsPickup;
     this.collectibles.update(dt, this.pickupTarget);
     const collected = this.collectibles.collected;
@@ -2676,6 +2768,7 @@ export class Battle {
     for (const id of this.collectibles.collectedPickups) this.takeItem(id);
     this.advanceTimedBonuses(dt);
     this.advanceRegens(dt);
+    this.applyDebugLocks();
     this.advancePlayerFloats(dt);
     if (this.itemFlash > 0) this.itemFlash = Math.max(0, this.itemFlash - dt);
     // 玩家作为地表反馈焦点：雪印、水波和水珠不能被同一帧的大量敌人特效覆盖。
@@ -2690,6 +2783,7 @@ export class Battle {
         this.player.death = -1;
         this.player.hp = this.player.maxHp;
         this.currentMp = this.player.stats.maxMp;
+        this.clearDebugState();
         this.player.hurt = 0;
         enemies.length = 0;
         // 和 reset 一样：清场就该是真的清场，不能让预留把上一条命的人海放回来。
@@ -3010,6 +3104,14 @@ export class Battle {
     return true;
   }
 
+  /** 开发者控制台恢复到本角色的开局技能方案，并清掉尚在运行的技能实体。 */
+  resetDebugSkills(): void {
+    this.resetSkillRuntime();
+    this.skillLoadout.startRun(this.hero.attackSkill, this.hero.startGuard ?? null);
+    this.applyPlayerStats();
+    this.currentMp = Math.min(this.currentMp, this.player.stats.maxMp);
+  }
+
   /** J 只在三个自动攻击之间循环，不再把护身、发射或主动技能塞进武器挥击。 */
   cycleAttackSkill(): void {
     this.skillLoadout.cycleAttack();
@@ -3177,7 +3279,13 @@ export class Battle {
   }
 
   private damagePlayer(attack: number, fromX: number, fromY: number): boolean {
+    if (this.debugInvincible) return false;
     const roll = rollDamage(attack, this.player.stats.defense, 1, CRIT_CHANCE_BASIC);
+    if (this.debugHpLock !== null) {
+      this.player.hp = Math.max(1, Math.min(this.debugHpLock, this.player.maxHp));
+      this.player.hurt = 1;
+      return false;
+    }
     /*
      * 挨打也飘字，但是**攒满一秒飘一个**。
      *

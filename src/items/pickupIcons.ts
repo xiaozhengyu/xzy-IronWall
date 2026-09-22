@@ -7,6 +7,7 @@ import pillMpOverTimeUrl from '../../assets/hud/item/pill/pill-07.png';
 import charmRageUrl from '../../assets/hud/item/talisman/talisman-06.png';
 import charmGaleUrl from '../../assets/hud/item/talisman/talisman-02.png';
 import charmAegisUrl from '../../assets/hud/item/talisman/talisman-08.png';
+import charmMagnetUrl from '../../assets/hud/item/talisman/talisman-09.png';
 import charmFortuneUrl from '../../assets/hud/item/talisman/talisman-10.png';
 import { Assets, type Texture } from 'pixi.js';
 
@@ -28,6 +29,7 @@ export const PICKUP_ICONS: Record<string, string> = {
   'potion-mp-over-time': pillMpOverTimeUrl,
   'charm-swift': charmSwiftUrl,
   'charm-ward': charmWardUrl,
+  'charm-magnet': charmMagnetUrl,
   /*
    * 商店独有的四张。各用一张没人用过的符篓图。
    *

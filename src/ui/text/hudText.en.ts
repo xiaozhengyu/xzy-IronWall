@@ -125,6 +125,8 @@ export const HUD_TEXT_EN: HudMessages = {
   pickupGaleNote: '+35% move speed and +20% attack rate for 15 seconds',
   pickupGoldenName: 'Golden Body Charm',
   pickupGoldenNote: 'Maximum health ×6 for 10 seconds, filled the moment it lands',
+  pickupMagnetName: 'Gathering Charm',
+  pickupMagnetNote: 'Pulls in gems, coins, and pickups from anywhere for 15 seconds',
   pickupFortuneName: 'Fortune Charm',
   pickupFortuneNote: 'Doubles gold drops for the rest of the run',
 

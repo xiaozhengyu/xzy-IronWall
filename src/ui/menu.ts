@@ -1,10 +1,11 @@
 import './menu.css';
-import { SkillCategoryRules, type SkillCategory, type SkillId } from '../game/skills';
-import { ACTIVE_SKILL_KEYS, type SkillLoadoutSnapshot } from '../game/skillLoadout';
+import { type SkillCategory, type SkillId } from '../game/skills';
+import type { SkillLoadoutSnapshot } from '../game/skillLoadout';
 import type { WaveStatus } from '../game/battle';
 import { startCursorBreathing } from './cursorImage';
 import { HudText } from './text/hudText';
 import type { WeatherKind } from '../world/weather';
+import { DeveloperConsole, type DeveloperConsoleBridge } from './developerConsole';
 
 /**
  * 加载条 + 暂停，两样东西共用一块面板。
@@ -94,6 +95,8 @@ export interface MenuBridge {
   setWeather(kind: WeatherKind): void;
   /** 按类别规则选择、开关或装入主动槽。 */
   toggleSkill(id: SkillId): void;
+  /** 开发环境的技能、道具和资源控制台；生产构建传 null。 */
+  developer?: DeveloperConsoleBridge | null;
   read(): MenuState;
   /** 开始或继续游戏，保持鼠标当前的屏幕位置。 */
   resume(): void;
@@ -158,10 +161,7 @@ export class Menu {
   private readonly toggles: { node: HTMLElement; on: (s: MenuState) => boolean }[] = [];
   private readonly presetButtons: HTMLButtonElement[] = [];
   private readonly spins: Record<string, HTMLElement> = {};
-  /** 技能那一行下面的说明，跟着当前选中的技能变。 */
-  private skillNote = el('div');
-  private itemRow: HTMLElement = el('div');
-  private itemNote: HTMLElement = el('div');
+  private readonly developerConsole: DeveloperConsole | null;
   /** 键位表那一条。加载时收起来 —— 那时候一个键都还按不了。 */
   private readonly keysBox = el('div');
 
@@ -169,6 +169,12 @@ export class Menu {
   constructor(bridge: MenuBridge, text: HudText = new HudText()) {
     this.bridge = bridge;
     this.text = text;
+    if (import.meta.env.DEV && bridge.developer) {
+      void import('./developerConsole.css');
+      this.developerConsole = new DeveloperConsole(bridge.developer);
+    } else {
+      this.developerConsole = null;
+    }
     this.build();
     document.body.appendChild(this.root);
 
@@ -275,31 +281,7 @@ export class Menu {
       ? `第 ${wave.wave}/${wave.waves} 波 · 末波续出 · 出兵目标 ${wave.crowd}${pinned}`
       : `第 ${wave.wave}/${wave.waves} 波 · 下一波 ${Math.ceil(wave.countdown)}s · 出兵目标 ${wave.crowd}${pinned}`;
     this.spins.enemies.textContent = `完整怪物上限 ${s.maxEnemies}`;
-
-    const equipped = this.bridge.skills
-      .filter((skill) => s.skillLoadout.equipped.includes(skill.id))
-      .map((skill) => skill.name)
-      .join('、');
-    const active = ACTIVE_SKILL_KEYS.map((key, index) => {
-      const id = s.skillLoadout.active[index];
-      const skill = id ? this.bridge.skills.find((entry) => entry.id === id) : null;
-      return `${key} ${skill?.name ?? '空'}`;
-    }).join(' · ');
-    // 满级那句写在这儿而不是每个按钮的 title 上：它是这排按钮的规则，不是某一招的属性。
-    this.skillNote.textContent =
-      `已装备：${equipped || '无'} ｜ 主动槽：${active} ｜ 点上直接给满级`;
-
-    // 药和符：一格一个小牌子，名字加个数，说明挂在 title 上，下面那行再摊开写一遍。
-    const items = this.bridge.items();
-    this.itemRow.replaceChildren();
-    for (const item of items) {
-      const tag = el('span', 'menu-tag', `${item.name} ×${item.count}`);
-      tag.title = item.note;
-      this.itemRow.appendChild(tag);
-    }
-    this.itemNote.textContent = items.length === 0
-      ? '手上没有药物或符咒。它们由敌人掉落，走过去捡。'
-      : items.map((item) => `${item.name}：${item.note}`).join(' ｜ ');
+    this.developerConsole?.refresh();
   }
 
   // ---------------------------------------------------------------- 搭面板
@@ -351,6 +333,7 @@ export class Menu {
     this.detail.appendChild(stats);
 
     this.detail.appendChild(el('div', 'menu-rule'));
+    if (this.developerConsole) this.detail.appendChild(this.developerConsole.root);
     this.buildControls(this.detail);
     card.appendChild(this.detail);
 
@@ -403,39 +386,6 @@ export class Menu {
     const waves = row(parent, '波次');
     waves.appendChild(this.spin('wave', 'KeyO', 'KeyP'));
     waves.appendChild(this.button('末波压测', '\\', 'Backslash'));
-
-    // ---- 技能装备
-    //
-    // 每个类别单独成行：自动攻击和护身是单选，发射是多选，主动技依次占 Q/W/E/R 四个槽。
-    // 菜单只展示并转发选择，真正的互斥与容量限制由 SkillLoadout 统一执行。
-    const categories: SkillCategory[] = ['attack', 'projectile', 'guard', 'active'];
-    for (const category of categories) {
-      const rule = SkillCategoryRules[category];
-      const skills = row(parent, this.text.value(rule.nameKey));
-      for (const skill of this.bridge.skills.filter((entry) => entry.category === category)) {
-        const b = this.button(skill.name, '');
-        b.title = skill.cooldown > 0 ? `${skill.note} · 冷却 ${skill.cooldown.toFixed(1)} 秒` : `${skill.note} · 无冷却`;
-        b.addEventListener('click', () => {
-          this.bridge.toggleSkill(skill.id);
-          this.refresh();
-        });
-        this.toggles.push({
-          node: b,
-          on: (state) => state.skillLoadout.equipped.includes(skill.id),
-        });
-        skills.appendChild(b);
-      }
-      if (category === 'attack') skills.appendChild(this.button('切换', 'J', 'KeyJ'));
-    }
-    this.skillNote = el('div', 'menu-note');
-    parent.appendChild(this.skillNote);
-
-    // ---- 药物与符咒
-    //
-    // 只读，不是按钮：这一块回答的是"我手上这几样是干什么的"，用不用得在战场上按数字键。
-    this.itemRow = row(parent, '药物符咒');
-    this.itemNote = el('div', 'menu-note');
-    parent.appendChild(this.itemNote);
 
     // ---- 天气
 

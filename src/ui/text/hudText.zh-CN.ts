@@ -115,6 +115,8 @@ export const HUD_TEXT_ZH_CN: HudMessages = {
   pickupGaleNote: '15 秒内移动速度 +35%，出手频率 +20%',
   pickupGoldenName: '金身符',
   pickupGoldenNote: '10 秒内生命上限 ×6，涨出来的当场补满',
+  pickupMagnetName: '聚灵符',
+  pickupMagnetNote: '15 秒内无限吸取宝石、金币和药符',
   pickupFortuneName: '聚宝符',
   pickupFortuneNote: '本局金币掉落翻倍',
 

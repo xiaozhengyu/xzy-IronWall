@@ -31,7 +31,7 @@ import { play } from './audio/sfx';
 import { installUiClickSound } from './audio/uiClick';
 import { ItemSheet } from './items/renderer';
 import { loadPickupTextures, pickupIcon } from './items/pickupIcons';
-import { ITEM_SLOT_COUNT, pickupById } from './data/pickups';
+import { ITEM_SLOT_COUNT, Pickups, pickupById } from './data/pickups';
 import type { ItemStripEntry } from './ui/itemStrip';
 import { clamp, v2 } from './core/math';
 import { Camera } from './render/camera';
@@ -167,6 +167,39 @@ const menu = new Menu({
   },
   toggleSkill: (id) => battle.toggleSkill(id),
   items: () => heldItems(),
+  developer: import.meta.env.DEV ? {
+    skills: Skills.map((s) => ({
+      id: s.id,
+      name: text.value(s.nameKey),
+      note: text.value(s.noteKey),
+      category: s.category,
+      cooldown: s.cooldown,
+    })),
+    pickups: Pickups.map((pickup) => ({
+      id: pickup.id,
+      name: text.value(pickup.nameKey),
+      note: text.value(pickup.noteKey),
+    })),
+    read: () => ({
+      skillLoadout: battle.skillLoadout.snapshot(),
+      itemSlots: Array.from({ length: ITEM_SLOT_COUNT }, (_, slot) => battle.itemAt(slot)),
+      hp: battle.player.hp,
+      maxHp: battle.player.maxHp,
+      mp: battle.mp,
+      maxMp: battle.maxMp,
+      hpLock: battle.debugHpLocked,
+      mpLock: battle.debugMpLocked,
+      invincible: battle.debugInvincibleEnabled,
+    }),
+    toggleSkill: (id) => battle.toggleSkill(id),
+    resetSkills: () => battle.resetDebugSkills(),
+    grantItems: (id, count) => battle.grantItems([{ id, count }]),
+    setHpLock: (enabled) => battle.setDebugHpLock(enabled),
+    setMpLock: (enabled) => battle.setDebugMpLock(enabled),
+    setInvincible: (enabled) => battle.setDebugInvincible(enabled),
+    fillHp: () => battle.fillDebugHp(),
+    fillMp: () => battle.fillDebugMp(),
+  } : null,
   resume: () => controls.resume(),
   read: () => {
     // 人从脚底到头顶大约 18.3 个世界单位，被相机俯角压掉一截才是屏幕上的高度。
