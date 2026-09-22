@@ -42,6 +42,10 @@ lerna-debug.log*
 #
 # `npm run figures` 生成的，都是从代码算出来的，不该进仓库 —— 改一次参数就全变，
 # 每次提交都会带一堆二进制 diff。要看效果的人自己跑一次就有。
+#
+# 例外是 screenshots/：那是从这一堆里**手挑出来的一份快照**，给 README 当配图用，改名之后
+# 提交。它不跟着 figures 一起更新（也不该），所以和这一条不冲突 —— 一个是每次跑都变的产物，
+# 一个是钉在某个版本上的说明图。
 .preview.mjs
 .bench.mjs
 .preview-*.png

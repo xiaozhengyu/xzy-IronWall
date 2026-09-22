@@ -18,6 +18,7 @@ import { drawFigureStage, spawnStageSkill, STAGE_TILE_RADIUS, type StageSkillSha
 import { SkillStage, skillDemo } from '../src/ui/skillDemo';
 import { FIGURE_GRAIN, FIGURE_HEIGHT, FIGURE_WIDTH, figureAnchor } from '../src/ui/skillFigure';
 import { skillById, type SkillId } from '../src/game/skills';
+import { HUD_TEXT_ZH_CN } from '../src/ui/text/hudText.zh-CN';
 import { heroById } from '../src/data/heroes';
 import { drawCharacter } from '../src/characters/renderer';
 import { Pose, RigSpec } from '../src/characters/rig';
@@ -1974,7 +1975,11 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   });
 
   writePng('.preview-cards.png', sheet);
-  const spans = rows.map((id) => `${skillById(id).name} ${skillDemo(id).loop.toFixed(1)}s`).join('、');
+  // 招式名现在在语言包里（技能表上只剩一个 nameKey），所以这里得自己查一遍。
+  // 这条日志是给人看的，固定读中文那一份 —— 离线出图没有"当前语言"这回事。
+  const spans = rows
+    .map((id) => `${HUD_TEXT_ZH_CN[skillById(id).nameKey]} ${skillDemo(id).loop.toFixed(1)}s`)
+    .join('、');
   console.log(`牌面演示：${rows.length} 招 × ${FRAMES} 帧，采样偏向起手那一头；周期 ${spans}`);
 }
 
