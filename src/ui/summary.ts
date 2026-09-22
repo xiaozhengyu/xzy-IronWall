@@ -5,6 +5,7 @@ import type { HudLocale } from './text/hudText.types';
 import { currentItems } from './currentItems';
 import { Confetti } from './confetti';
 import type { ItemStripEntry } from './itemStrip';
+import type { CombatTextKind, CombatTextSettings } from '../game/profile';
 
 /**
  * 结算画面。一块面板，两种用法：
@@ -77,6 +78,8 @@ export interface SummaryHooks {
   onSfxChange?(on: boolean): void;
   /** 设置那一行开关了音乐。同上。 */
   onMusicChange?(on: boolean): void;
+  /** ESC 页上的战斗飘字开关。 */
+  onCombatTextChange?(kind: CombatTextKind, on: boolean): void;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -128,6 +131,12 @@ export class SummaryScreen {
   private sfxOn = true;
   private musicButtons: HTMLButtonElement[] = [];
   private musicOn = true;
+  private readonly combatTextButtons: Record<CombatTextKind, HTMLButtonElement[]> = {
+    damage: [], heal: [], mana: [], buff: [], level: [],
+  };
+  private combatTextOn: CombatTextSettings = {
+    damage: true, heal: true, mana: true, buff: true, level: true,
+  };
   /** “结束游戏”按过一下了、正等第二下。见 armEnd()。 */
   private endArmed = false;
   /** 赢了那一屏的礼花。输了不放 —— 见 confetti.ts。 */
@@ -382,11 +391,24 @@ export class SummaryScreen {
       this.markMusic();
       this.hooks.onMusicChange?.(this.musicOn);
     }, ['on', 'off']);
+    this.buildCombatTextRow('combatTextDamage', 'damage');
+    this.buildCombatTextRow('combatTextHeal', 'heal');
+    this.buildCombatTextRow('combatTextMana', 'mana');
+    this.buildCombatTextRow('combatTextBuff', 'buff');
+    this.buildCombatTextRow('combatTextLevel', 'level');
 
     this.markLocale();
     this.markSfx();
     this.markMusic();
     return this.settings;
+  }
+
+  private buildCombatTextRow(labelKey: HudTextKey, kind: CombatTextKind): void {
+    this.combatTextButtons[kind] = this.chipRow(labelKey, [['on', ''], ['off', '']], (value) => {
+      this.combatTextOn[kind] = value === 'on';
+      this.markCombatText(kind);
+      this.hooks.onCombatTextChange?.(kind, this.combatTextOn[kind]);
+    }, ['on', 'off']);
   }
 
   /**
@@ -396,7 +418,7 @@ export class SummaryScreen {
    * 不传就用写死的 caption（语言那行的"中文/EN"故意不翻）。
    */
   private chipRow(
-    labelKey: 'language' | 'sound' | 'music',
+    labelKey: HudTextKey,
     values: Array<[string, string]>,
     onPick: (value: string) => void,
     textKeys?: Array<'on' | 'off'>,
@@ -440,6 +462,17 @@ export class SummaryScreen {
     for (const button of this.musicButtons) {
       button.classList.toggle('on', button.dataset.value === (this.musicOn ? 'on' : 'off'));
     }
+  }
+
+  private markCombatText(kind: CombatTextKind): void {
+    for (const button of this.combatTextButtons[kind]) {
+      button.classList.toggle('on', button.dataset.value === (this.combatTextOn[kind] ? 'on' : 'off'));
+    }
+  }
+
+  setCombatText(settings: CombatTextSettings): void {
+    this.combatTextOn = { ...settings };
+    for (const kind of Object.keys(this.combatTextButtons) as CombatTextKind[]) this.markCombatText(kind);
   }
   /** 当前这一档高亮。语言是从 HudText 问的，所以外面换了语言这里也跟得上。 */
   private markLocale(): void {

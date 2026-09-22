@@ -327,6 +327,10 @@
   justify-content: space-between;
 }
 
+.summary-settings-row + .summary-settings-row {
+  margin-top: 6px;
+}
+
 .summary-settings-label {
   font-size: 12px;
   letter-spacing: 0.16em;

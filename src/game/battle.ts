@@ -3,7 +3,7 @@ import { RigSpec } from '../characters/rig';
 import { PALETTE_HERO, type CharacterPalette } from '../characters/palette';
 import { type UnitDef, type UnitPresetId, UnitPresets, unitAppearance } from '../characters/unitDef';
 import { clamp, turnToward } from '../core/math';
-import { DamageNumbers, type DamageNumberLabel } from '../effects/damageNumbers';
+import { DamageNumbers, type DamageNumberLabel, type DamageNumberVisibility } from '../effects/damageNumbers';
 import {
   CRIT_CHANCE_BASIC,
   CRIT_SKILL_MULTIPLIER,
@@ -1250,6 +1250,11 @@ export class Battle {
   /** 生命上限顶到了"无敌"那一档没有。面板要显示成文字，不是一串九。 */
   get invincible(): boolean {
     return this.player.maxHp >= INVINCIBLE_HP;
+  }
+
+  /** 更新玩家的战斗飘字开关；关闭某类时由 DamageNumbers 立即清理已有事件。 */
+  setDamageNumberVisibility(next: DamageNumberVisibility): void {
+    this.damageNumbers.setVisibility(next);
   }
 
   /** 开发者控制台当前锁定的生命值。 */
@@ -3360,6 +3365,7 @@ export class Battle {
     this.damageNumbers.spawn(e.x, e.y, roll.value, {
       crit: roll.crit,
       style: e.boss ? 'boss' : undefined,
+      groupKey: e,
       dirX: dx,
       dirY: dy,
     });

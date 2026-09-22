@@ -18,7 +18,7 @@ import { Heroes } from './data/heroes';
 import type { HeroDef } from './data/types';
 import { SKILL_MAX_LEVEL, expToNextLevel } from './data/balance';
 import { unitAppearance } from './characters/unitDef';
-import { Profile } from './game/profile';
+import { Profile, type CombatTextKind } from './game/profile';
 import { gemsPerCard, resolveHeroStats } from './game/stats';
 import { Skills } from './game/skills';
 import { ACTIVE_SKILL_CODES, SPRINT_SKILL, type ActiveSkillSlot } from './game/skillLoadout';
@@ -427,6 +427,7 @@ function updateMusic(): void {
 }
 
 const battle = new Battle(field);
+battle.setDamageNumberVisibility(profile.combatText);
 const controls = new Controls(app.canvas as HTMLCanvasElement, camera, {
   onKey: (code) => onKeyPressed(code),
   onActiveChange: (active) => {
@@ -1613,6 +1614,13 @@ function applyMusic(on: boolean): void {
   setup.setMusicEnabled(on);
 }
 
+function applyCombatText(kind: CombatTextKind, on: boolean): void {
+  profile.setCombatTextEnabled(kind, on);
+  const settings = profile.combatText;
+  battle.setDamageNumberVisibility(settings);
+  summary.setCombatText(settings);
+}
+
 const summary = new SummaryScreen({
   onResume: () => controls.resume(),
   /*
@@ -1636,11 +1644,13 @@ const summary = new SummaryScreen({
   // 音乐开关：同上。关掉只是把音乐那条总线推到 0，曲子还在后台走 —— 再打开就接着响，
   // 不用重新起播，也就不会从头开始。
   onMusicChange: (on) => applyMusic(on),
+  onCombatTextChange: (kind, on) => applyCombatText(kind, on),
 }, text);
 // 存档里那一档先告诉结算屏，它那两个方块才知道哪个该亮。语言走的是共用的 HudText，
 // 不用再喂一次。
 summary.setSfxEnabled(profile.sfxEnabled);
 summary.setMusicEnabled(profile.musicEnabled);
+summary.setCombatText(profile.combatText);
 
 const setup = new SetupScreen(
   {

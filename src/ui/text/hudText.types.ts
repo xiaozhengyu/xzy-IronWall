@@ -35,6 +35,11 @@ export interface HudMessages {
   language: string;
   sound: string;
   music: string;
+  combatTextDamage: string;
+  combatTextHeal: string;
+  combatTextMana: string;
+  combatTextBuff: string;
+  combatTextLevel: string;
   on: string;
   off: string;
   currencyInfo: string;

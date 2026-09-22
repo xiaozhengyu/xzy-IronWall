@@ -77,12 +77,24 @@ export interface RunRecord {
 }
 
 /** 存档里那一份设置。 */
+export type CombatTextKind = 'damage' | 'heal' | 'mana' | 'buff' | 'level';
+
+export interface CombatTextSettings {
+  damage: boolean;
+  heal: boolean;
+  mana: boolean;
+  buff: boolean;
+  level: boolean;
+}
+
 export interface ProfileSettings {
   locale: HudLocale;
   /** 音效开关。 */
   sfx: boolean;
   /** 音乐开关。和音效分开：常有人只想关掉音乐、留着打击声。 */
   music: boolean;
+  /** 战斗飘字开关。只影响画面反馈，不影响实际战斗数值。 */
+  combatText: CombatTextSettings;
 }
 
 export interface ProfileData {
@@ -157,7 +169,12 @@ function detectLocale(): HudLocale {
  * 存下来之后就是玩家自己的选择，换了浏览器语言也不会把他手动改过的设置推翻。
  */
 function freshSettings(): ProfileSettings {
-  return { locale: detectLocale(), sfx: true, music: true };
+  return {
+    locale: detectLocale(),
+    sfx: true,
+    music: true,
+    combatText: { damage: true, heal: true, mana: true, buff: true, level: true },
+  };
 }
 
 function freshProfile(): ProfileData {
@@ -216,7 +233,12 @@ export class Profile {
       profile.data.mastery ??= {};
       profile.data.supplies ??= {};
       // 设置也是后加的。整份补默认，再把旧存档里已有的字段盖回去。
-      profile.data.settings = { ...freshSettings(), ...(parsed.settings ?? {}) };
+      const defaults = freshSettings();
+      profile.data.settings = { ...defaults, ...(parsed.settings ?? {}) };
+      profile.data.settings.combatText = {
+        ...defaults.combatText,
+        ...(parsed.settings?.combatText ?? {}),
+      };
       for (const hero of Heroes) {
         if (!profile.data.heroes[hero.id]) profile.data.heroes[hero.id] = freshProgress();
         if (!profile.data.records[hero.id]) profile.data.records[hero.id] = freshRecord();
@@ -424,6 +446,16 @@ export class Profile {
   setMusicEnabled(on: boolean): void {
     if (this.data.settings.music === on) return;
     this.data.settings.music = on;
+    this.save();
+  }
+
+  get combatText(): CombatTextSettings {
+    return { ...this.data.settings.combatText };
+  }
+
+  setCombatTextEnabled(kind: CombatTextKind, on: boolean): void {
+    if (this.data.settings.combatText[kind] === on) return;
+    this.data.settings.combatText[kind] = on;
     this.save();
   }
 

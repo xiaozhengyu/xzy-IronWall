@@ -24,7 +24,7 @@ import type { ShapeBatch } from '../render/shapeBatch';
  *   **数字给掀飞让路**。人被掀飞，数字留在挨打的那一点往上飘 —— 跟着尸体飞的数字读作绑在
  *   人身上的标签，而这一下的信息属于"这里发生了什么"，不属于那具正在翻滚的尸体。但"留在
  *   原地"还不够：头顶那一格正是掀飞前半段轨迹扫过的地方，而被打飞的人本身就是这一下最好看
- *   的部分。所以数字往击飞的**反方向**让开一步，再淡入登场（见 BACK_OFF / FADE_IN）。
+ *   的部分。所以数字往击飞的**反方向**让开一大步，再淡入登场（见 BACK_OFF / FADE_IN）。
  *
  * 池子定长、定型数组、一个对象都不分配 —— 一次回旋能同时结算上百人，理由和 Debris 一样。
  */
@@ -324,6 +324,13 @@ const SIGN_INDEX: Record<DamageNumberSign, number> = { none: -1, plus: 0, times:
  */
 const CAPACITY = 96;
 
+/** 同一目标在这个时间窗口内再次受击时，复用同一串数字并累加总伤害。 */
+const MERGE_WINDOW = 0.18;
+/** 普通伤害开始降采样的活跃数量；关键样式不受这两个阈值影响。 */
+const DENSE_NORMAL_THRESHOLD = 20;
+/** 普通伤害完全让路给关键反馈的活跃数量。 */
+const VERY_DENSE_NORMAL_THRESHOLD = 40;
+
 /** 活多久。够看清，又不至于上一轮还挂在天上时下一轮已经打出来了。 */
 const LIFE = 0.78;
 /** 到这个进度才开始化掉。一路变淡的数字有一半时间是看不清的。 */
@@ -338,10 +345,10 @@ const DRIFT = 4;
  * 往击飞的反方向让开多少个世界单位。
  *
  * 人是从落点往外飞的，所以反方向那一侧**一定**是空出来的 —— 这不是赌一个方向，是跟着这一下
- * 自己的方向走。7 个单位约等于三分之一个身位：够把数字从飞行轨迹上挪开，又还贴着挨打的那
+ * 自己的方向走。11 个单位约等于半个身位：够把数字从飞行轨迹和人物堆里挪开，又还贴着挨打的那
  * 个人，不至于读成旁边另一个人头上的数。
  */
-const BACK_OFF = 7;
+const BACK_OFF = 11;
 
 /**
  * 淡入多久，秒。
@@ -356,6 +363,16 @@ const FADE_IN = 0.13;
 
 /** 头顶再往上一点点，别贴着头皮。头顶本身在 18.3（headZ 15.8 + headRadius 2.5）。 */
 const HEAD_Z = 20.5;
+/** 敌人受击数字的专用高位锚点，比人物头顶再抬一截，避免数字压在人堆上。 */
+const DAMAGE_HEAD_Z = HEAD_Z + 9;
+
+/**
+ * 伤害数字的基础字模倍数。
+ *
+ * 它对应默认视野下的可读尺寸，不能跟随相机 grain 变化：grain 是场景缩放，不是 HUD 字号。
+ * 特殊样式仍会在这个基础上放大，见 draw 里的样式倍率。
+ */
+const DAMAGE_GLYPH_BASE = 1;
 
 /** 常规一下：上白下琥珀。竖直渐变是让点阵字读作"打出来的数字"而不是 UI 标签的关键一笔。 */
 const TOP = rgb(255, 250, 232);
@@ -416,6 +433,12 @@ const STYLE_COLORS = [
 const STYLE_INDEX: Record<DamageNumberStyle, number> = {
   damage: 0, crit: 1, heal: 2, mana: 3, buff: 4, boss: 5, level: 6,
 };
+
+function visibilityKindOf(style: DamageNumberStyle): DamageNumberVisibilityKind {
+  if (style === 'crit' || style === 'boss') return 'damage';
+  return style;
+}
+
 /** 描边色。和 PixelSurface 那圈合成描边同一个色温，数字才像和画面烘在一起。 */
 const EDGE = rgb(24, 18, 16);
 
@@ -438,10 +461,18 @@ const digits = new Int32Array(6);
  */
 export type DamageNumberStyle = 'damage' | 'crit' | 'heal' | 'mana' | 'buff' | 'boss' | 'level';
 
+/** 玩家可以独立关闭的战斗飘字类别。暴击和首领伤害归入 damage。 */
+export type DamageNumberVisibilityKind = 'damage' | 'heal' | 'mana' | 'buff' | 'level';
+export type DamageNumberVisibility = Record<DamageNumberVisibilityKind, boolean>;
+
 export interface DamageNumberOptions {
   crit?: boolean;
   /** 不给就按 crit 定（真 = crit，假 = damage）。 */
   style?: DamageNumberStyle;
+  /**
+   * 战斗目标的对象身份。给出后，同一目标在 MERGE_WINDOW 内的伤害会合并；玩家属性飘字不传。
+   */
+  groupKey?: object;
   /** 这个人被掀飞的去向。数字往它的反方向让开一步，见 BACK_OFF。 */
   dirX?: number;
   dirY?: number;
@@ -477,6 +508,7 @@ export class DamageNumbers {
   private readonly life = new Float32Array(CAPACITY);
   private readonly value = new Int32Array(CAPACITY);
   private readonly crit = new Uint8Array(CAPACITY);
+  private readonly groupKey: (object | null)[] = new Array(CAPACITY).fill(null);
   /** 1 = 跟着玩家走，x/y 每帧由锚点加下面那个偏移算出来。 */
   /** 数字前面那个牌子。null = 不挂。用数组而不是定长数组：一局里带牌子的不过几十个。 */
   private readonly label: (string | null)[] = new Array(CAPACITY).fill(null);
@@ -488,6 +520,10 @@ export class DamageNumbers {
 
   private count = 0;
   private followDelay = 0;
+  private denseNormalSequence = 0;
+  private visibility: DamageNumberVisibility = {
+    damage: true, heal: true, mana: true, buff: true, level: true,
+  };
 
   /** 场上还飘着几个。 */
   get alive(): number {
@@ -497,29 +533,53 @@ export class DamageNumbers {
   clear(): void {
     this.count = 0;
     this.followDelay = 0;
+    this.denseNormalSequence = 0;
+    this.groupKey.fill(null);
+  }
+
+  /** 更新玩家的飘字显示设置，并立即移除已经被关闭的类别。 */
+  setVisibility(next: DamageNumberVisibility): void {
+    this.visibility = { ...next };
+    for (let i = this.count - 1; i >= 0; i--) {
+      if (!this.isVisibleStyle(this.crit[i])) this.swapRemove(i);
+    }
   }
 
   /**
    * 在 (x, y) 的头顶弹一个数字出来。
    *
    * @param options.crit      重击：字放大一倍、颜色更烫、活得久一点。
+   * @param options.groupKey  同一目标在短窗口内的战斗命中会合并成一个总数。
    * @param options.dirX/dirY 这个人被掀飞的去向（不用是单位向量，这里自己归一）。给了就往
    *                          它的反方向让开一步，把飞行轨迹让出来；不给就原地起。
    * @param options.z         从多高冒出来，世界单位。默认头顶。
    */
   spawn(x: number, y: number, value: number, options: DamageNumberOptions = {}): void {
-    if (this.count >= CAPACITY) return;
-    const i = this.count++;
     const crit = options.crit ?? false;
+    const style = options.style ?? (crit ? 'crit' : 'damage');
+    if (!this.visibility[visibilityKindOf(style)]) return;
+    const groupKey = options.groupKey ?? null;
+    if (groupKey && this.merge(groupKey, value, style, crit)) return;
+    if (this.dropDenseNormal(style)) return;
+
+    if (this.count >= CAPACITY) {
+      // 池子满时给关键反馈让出最旧的普通数字；如果池子里只有关键反馈，就保留现有内容。
+      if (style === 'damage') return;
+      const normal = this.findOldestNormal();
+      if (normal < 0) return;
+      this.swapRemove(normal);
+    }
+
+    const i = this.count++;
     // 反方向让开。方向是零向量（贴脸打的那种）时不让，随机漂移仍然会把它错开。
     const dx = options.dirX ?? 0;
     const dy = options.dirY ?? 0;
     const len = Math.hypot(dx, dy);
     this.x[i] = len > 1e-4 ? x - (dx / len) * BACK_OFF : x;
     this.y[i] = len > 1e-4 ? y - (dy / len) * BACK_OFF : y;
-    // 回血回蓝那几种从更高一点冒出来：玩家自己身上一直有伤害数字在飘，同一个高度会混进去。
-    const style = options.style ?? (crit ? 'crit' : 'damage');
-    this.z[i] = options.z ?? (STYLE_INDEX[style] >= STYLE_INDEX.heal ? HEAD_Z + 6 : HEAD_Z);
+    // 受击数字从人物上方更远的位置冒出来；玩家自身的回复、回蓝、增益和升级仍走原来的锚点。
+    const enemyDamage = style === 'damage' || style === 'crit' || style === 'boss';
+    this.z[i] = options.z ?? (enemyDamage ? DAMAGE_HEAD_Z : HEAD_Z + 6);
     this.drift[i] = (Math.random() - 0.5) * 2 * DRIFT;
     // Schedule player events in order instead of displaying them on the same frame.
     this.age[i] = options.follow ? -this.followDelay : 0;
@@ -527,6 +587,7 @@ export class DamageNumbers {
     this.life[i] = FADE_IN + LIFE * (crit ? 1.25 : 1) * (0.9 + Math.random() * 0.2);
     this.value[i] = Math.max(0, Math.round(value));
     this.crit[i] = STYLE_INDEX[style];
+    this.groupKey[i] = groupKey;
     const sign = SIGN_INDEX[options.sign ?? 'none'];
     this.sign[i] = sign < 0 ? 255 : sign;
     this.label[i] = options.label ?? null;
@@ -534,6 +595,55 @@ export class DamageNumbers {
     // 时间排队代替随机偏移，每条事件从同一个位置依次升起。
     this.offX[i] = 0;
     this.offY[i] = 0;
+  }
+
+  /** 把同一目标在短窗口内的多次命中合并到已有数字上。 */
+  private merge(groupKey: object, value: number, style: DamageNumberStyle, crit: boolean): boolean {
+    for (let i = this.count - 1; i >= 0; i--) {
+      if (this.groupKey[i] !== groupKey || this.age[i] < 0 || this.age[i] > MERGE_WINDOW) continue;
+      this.value[i] += Math.max(0, Math.round(value));
+      // 合并期间只升级视觉等级：暴击不会被普通命中覆盖，首领样式也不会被降级。
+      if (style === 'boss' || (style === 'crit' && this.crit[i] !== STYLE_INDEX.boss)) {
+        this.crit[i] = STYLE_INDEX[style];
+      }
+      const keepsCritStyle = this.crit[i] === STYLE_INDEX.crit;
+      this.life[i] = Math.max(
+        this.life[i],
+        this.age[i] + FADE_IN + LIFE * (keepsCritStyle || crit ? 1.25 : 1),
+      );
+      return true;
+    }
+    return false;
+  }
+
+  private isVisibleStyle(style: number): boolean {
+    if (style === STYLE_INDEX.damage || style === STYLE_INDEX.crit || style === STYLE_INDEX.boss) {
+      return this.visibility.damage;
+    }
+    if (style === STYLE_INDEX.heal) return this.visibility.heal;
+    if (style === STYLE_INDEX.mana) return this.visibility.mana;
+    if (style === STYLE_INDEX.buff) return this.visibility.buff;
+    if (style === STYLE_INDEX.level) return this.visibility.level;
+    return true;
+  }
+
+  /** 数字过密时只削减普通伤害，关键样式始终尝试入池。 */
+  private dropDenseNormal(style: DamageNumberStyle): boolean {
+    if (style !== 'damage' || this.count < DENSE_NORMAL_THRESHOLD) return false;
+    const sequence = this.denseNormalSequence++;
+    return this.count >= VERY_DENSE_NORMAL_THRESHOLD || sequence % 2 === 0;
+  }
+
+  /** 找到最旧的普通伤害，给暴击、首领和回复类数字腾位置。 */
+  private findOldestNormal(): number {
+    let victim = -1;
+    let oldest = -Infinity;
+    for (let i = 0; i < this.count; i++) {
+      if (this.crit[i] !== STYLE_INDEX.damage || this.age[i] <= oldest) continue;
+      oldest = this.age[i];
+      victim = i;
+    }
+    return victim;
   }
 
   /**
@@ -556,7 +666,10 @@ export class DamageNumbers {
 
   private swapRemove(i: number): void {
     const last = --this.count;
-    if (i === last) return;
+    if (i === last) {
+      this.groupKey[last] = null;
+      return;
+    }
     this.x[i] = this.x[last];
     this.y[i] = this.y[last];
     this.z[i] = this.z[last];
@@ -565,11 +678,13 @@ export class DamageNumbers {
     this.life[i] = this.life[last];
     this.value[i] = this.value[last];
     this.crit[i] = this.crit[last];
+    this.groupKey[i] = this.groupKey[last];
     this.label[i] = this.label[last];
     this.follow[i] = this.follow[last];
     this.sign[i] = this.sign[last];
     this.offX[i] = this.offX[last];
     this.offY[i] = this.offY[last];
+    this.groupKey[last] = null;
   }
 
   /**
@@ -578,9 +693,9 @@ export class DamageNumbers {
    * @param scale       每世界单位多少缓冲像素（grain）
    */
   draw(shapes: ShapeBatch, camX: number, camY: number, rootX: number, rootY: number, scale: number): void {
-    // 一个字模像素占几个缓冲像素。**只取整数**，而且不跟着 grain 连续变：字模像素一旦落在
-    // 半个缓冲像素上，最近邻放大就会把同样粗的笔画放成一粗一细。放到三倍颗粒度才跳一档。
-    const base = Math.max(1, Math.min(4, Math.round(scale / 3)));
+    // 字模像素固定在默认可读尺寸。位置仍然按 grain 投影，但视野放大不能把伤害数字也放大，
+    // 否则数字会覆盖敌群；PixelSurface 会继续负责整帧的最近邻放大。
+    const base = DAMAGE_GLYPH_BASE;
 
     for (let i = 0; i < this.count; i++) {
       const age = this.age[i];

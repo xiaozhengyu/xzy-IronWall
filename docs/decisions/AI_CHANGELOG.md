@@ -33,3 +33,10 @@ Use this format:
 - Summary: Added a DEV-only F1 developer console for immediate skill/item setup, HP/MP locks, resource refill, invincibility, and existing battle debug controls.
 - Impact: Added a dedicated UI component, Battle-owned temporary debug state, direct item grant feedback, skill reset, and reset-safe resource controls without changing Profile data.
 - Validation: `npm run build`; `git diff --check`; browser checks for F1 panel, skill equip, Gathering Charm grant, HP/MP locks, reset cleanup, and empty browser error logs; production bundle marker check.
+
+## 2026-09-22 — damage-number-scale
+
+- Spec: `docs/spec/damage-number-scale/`
+- Summary: Decoupled damage-number glyph size from camera grain, merged rapid hits on the same target, added density-aware culling, moved enemy damage text away from actors, and added persistent player display toggles.
+- Impact: Preserved combat simulation while reducing visual obstruction through smaller, higher, offset, and user-filterable feedback; added independent damage, healing, mana, buff, and level display settings.
+- Validation: `npm run build`; `npm run figures`; `git diff --check`; local game startup smoke check; manual offset and display-toggle checks remain to be performed.
