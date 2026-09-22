@@ -26,7 +26,7 @@ export interface ControlHooks {
 /**
  * 走路有两条路，看向哪儿一条也没有。
  *
- * 走：WASD，或者按住左键朝光标走。两条路说的是同一件事（"我要往那边挪"），键盘优先 ——
+ * 走：方向键，或者按住左键朝光标走。两条路说的是同一件事（"我要往那边挪"），键盘优先 ——
  * 按下方向键的那一刻，手已经明确表态了。翻译成一个方向向量是上层的事（见 main 的 readInput），
  * 这里只管报"键盘指着哪儿"和"左键按着没有"。
  *
@@ -56,7 +56,7 @@ export class Controls {
    */
   private holdBlocked = false;
 
-  /** WASD 折出来的世界方向，长度 0 或 1。复用同一份，见 keyboardMove。 */
+  /** 方向键折出来的世界方向，长度 0 或 1。复用同一份，见 keyboardMove。 */
   private readonly move = { x: 0, y: 0 };
 
   private readonly canvas: HTMLCanvasElement;
@@ -128,6 +128,7 @@ export class Controls {
         if (!event.repeat) hooks.onDebugMenu();
         return;
       }
+      if (event.code.startsWith('Arrow')) event.preventDefault();
       if (!this.keys.has(event.code)) hooks.onKey(event.code);
       this.keys.add(event.code);
       // 空格本身已经不干任何事（自动攻击是常态，不需要手动挥），但仍然要拦：不拦的话它会
@@ -162,7 +163,7 @@ export class Controls {
   }
 
   /**
-   * 这一帧 WASD 指着世界的哪个方向；一个键都没按就是 (0, 0)。返回的是复用的那一份，别长期
+   * 这一帧方向键指着世界的哪个方向；一个键都没按就是 (0, 0)。返回的是复用的那一份，别长期
    * 持有。
    *
    * 世界的 +x 是屏幕右、+y 是屏幕下（见 Camera.worldToScreen），所以 W 是 -y。斜着按要
@@ -174,10 +175,10 @@ export class Controls {
   keyboardMove(): { x: number; y: number } {
     let x = 0;
     let y = 0;
-    if (this.keys.has('KeyW')) y -= 1;
-    if (this.keys.has('KeyS')) y += 1;
-    if (this.keys.has('KeyA')) x -= 1;
-    if (this.keys.has('KeyD')) x += 1;
+    if (this.keys.has('ArrowUp')) y -= 1;
+    if (this.keys.has('ArrowDown')) y += 1;
+    if (this.keys.has('ArrowLeft')) x -= 1;
+    if (this.keys.has('ArrowRight')) x += 1;
     const len = Math.hypot(x, y);
     this.move.x = len > 0 ? x / len : 0;
     this.move.y = len > 0 ? y / len : 0;

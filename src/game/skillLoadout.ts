@@ -11,18 +11,17 @@ import { SKILL_MAX_LEVEL, skillDamageScale, skillMpScale, skillRateScale, skillR
 /**
  * 主动槽与键位一一对应；UI、输入和战斗逻辑都从这里读，避免各写一份顺序。
  *
- * 三格，不是四格。W 归了走路（WASD），而疾走从槽里搬到了 Shift 上 —— 于是能自由配的槽位
- * 一个没少：原来是四格扣掉钉死的疾走，剩三格能配，现在就是这三格。
+ * 四格，键位是 Q/W/E/R。疾走独立钉在 Shift 上，不占主动槽。
  */
-export const ACTIVE_SKILL_KEYS = ['Q', 'E', 'R'] as const;
-export const ACTIVE_SKILL_CODES = ['KeyQ', 'KeyE', 'KeyR'] as const;
-export type ActiveSkillSlot = 0 | 1 | 2;
+export const ACTIVE_SKILL_KEYS = ['Q', 'W', 'E', 'R'] as const;
+export const ACTIVE_SKILL_CODES = ['KeyQ', 'KeyW', 'KeyE', 'KeyR'] as const;
+export type ActiveSkillSlot = 0 | 1 | 2 | 3;
 
 /**
  * 疾走。**不占主动槽**，键位是 Shift，四个角色都一样，装不上也卸不掉。
  *
  * 它是走位本身，不是一个配招选择。而且跑步的键位必须永远是同一个 —— 跟着配招变的话，手就
- * 没法记。所以它既不进牌库，也不进 Q/E/R 那三格：一直都在，一直在 Shift 上。
+ * 没法记。所以它既不进牌库，也不进 Q/W/E/R 那四格：一直都在，一直在 Shift 上。
  */
 export const SPRINT_SKILL: SkillId = 'sprint';
 
@@ -82,7 +81,7 @@ export class SkillLoadout {
   attackSkill: SkillId = 'sweep';
   guardSkill: SkillId | null = null;
   readonly projectileSkills = new Set<SkillId>();
-  readonly activeSkillSlots: (SkillId | null)[] = [null, null, null];
+  readonly activeSkillSlots: (SkillId | null)[] = [null, null, null, null];
 
   private readonly cooldowns = cooldownTable();
 
@@ -180,7 +179,7 @@ export class SkillLoadout {
       case 'guard':
         return this.guardSkill === id;
       case 'active':
-        // 疾走不在那三格里，可它一直都装着（Shift 永远能按）。不特判的话，它会被读作"没装"
+        // 疾走不在那四格里，可它一直都装着（Shift 永远能按）。不特判的话，它会被读作"没装"
         // —— 于是抽牌时它算成一张可抽的新牌，调试菜单里也显示成卸掉了。
         return id === SPRINT_SKILL || this.activeSkillSlots.includes(id);
     }
@@ -239,7 +238,7 @@ export class SkillLoadout {
     for (let i = 0; i < this.activeSkillSlots.length; i++) this.activeSkillSlots[i] = null;
     this.setEquipped(attack, true);
     if (guard) this.setEquipped(guard, true);
-    // 疾走不用装：它不在这三格里，也不参与抽牌 —— 换谁上场、抽到什么，跑步都在 Shift 上。
+    // 疾走不用装：它不在这四格里，也不参与抽牌 —— 换谁上场、抽到什么，跑步都在 Shift 上。
     this.resetCooldowns();
     this.resetLevels();
   }

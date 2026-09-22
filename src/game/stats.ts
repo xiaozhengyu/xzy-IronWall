@@ -146,7 +146,7 @@ export function resolveEnemyStats(
  *                      才凑齐。
  *   那时候有多少灵石   spawnsThroughWave 乘 GEMS_PER_SPAWN。前者是纯数据，后者是离线量出来
  *                      的换算，见 balance.ts。
- *   要抽多少次牌       CARD_PICKS_FOR_FULL_BUILD：八个技能各从 1 级顶到 5 级，三十二次。
+ *   要抽多少次牌       CARD_PICKS_FOR_FULL_BUILD：九个技能各从 1 级顶到 5 级，三十六次。
  *
  * 加一张图、改一张出兵表、或者以后主动槽从四个开到五个，这个数都会自己跟着走，不用再调。
  */

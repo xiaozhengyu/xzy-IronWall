@@ -287,17 +287,17 @@ export const WAVE_EXP_PER_WAVE = 0.15;
 export const SKILL_MAX_LEVEL = 5;
 
 /**
- * 一套完整配置有几个技能：4 个主动（含疾走）、1 个自动攻击、2 个发射、1 个护身。
+ * 一套完整配置有几个技能：5 个主动（含疾走）、1 个自动攻击、2 个发射、1 个护身。
  *
  * 它决定"一局要抽多少次牌"，所以以后加槽位（比如主动开到五格）必须同步改这里，否则卡牌的
  * 节奏会慢慢跟不上技能的数量。
  */
-export const BUILD_SKILL_COUNT = 8;
+export const BUILD_SKILL_COUNT = 9;
 
 /**
- * 一局开始时手上有几个技能：一个自动攻击技，加一个钉在 R 上的疾走。
+ * 一局开始时手上有几个技能：一个自动攻击技，加一个钉在 Shift 上的疾走。
  *
- * 剩下的六个（三个主动、两个发射、一个护身）都要靠抽牌拿，所以"抽满一套"要算上这六张
+ * 剩下的七个（四个主动、两个发射、一个护身）都要靠抽牌拿，所以"抽满一套"要算上这七张
  * "获取"牌，不只是升级那部分。
  */
 export const BUILD_SKILL_STARTING = 2;
@@ -305,7 +305,7 @@ export const BUILD_SKILL_STARTING = 2;
 /**
  * 把一整套配置堆齐并顶满，一共要抽多少次牌。
  *
- * 两笔账：先把缺的六个技能一张一张抽到手，再把八个技能各从 1 级升到 5 级。
+ * 两笔账：先把缺的七个技能一张一张抽到手，再把九个技能各从 1 级升到 5 级。
  */
 export const CARD_PICKS_FOR_FULL_BUILD =
   (BUILD_SKILL_COUNT - BUILD_SKILL_STARTING) + BUILD_SKILL_COUNT * (SKILL_MAX_LEVEL - 1);
