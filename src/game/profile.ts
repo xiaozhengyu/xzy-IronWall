@@ -95,6 +95,8 @@ export interface ProfileSettings {
   music: boolean;
   /** 战斗飘字开关。只影响画面反馈，不影响实际战斗数值。 */
   combatText: CombatTextSettings;
+  /** 小地图显示开关。 */
+  minimap: boolean;
 }
 
 export interface ProfileData {
@@ -174,6 +176,7 @@ function freshSettings(): ProfileSettings {
     sfx: true,
     music: true,
     combatText: { damage: true, heal: true, mana: true, buff: true, level: true },
+    minimap: true,
   };
 }
 
@@ -456,6 +459,16 @@ export class Profile {
   setCombatTextEnabled(kind: CombatTextKind, on: boolean): void {
     if (this.data.settings.combatText[kind] === on) return;
     this.data.settings.combatText[kind] = on;
+    this.save();
+  }
+
+  get minimapVisible(): boolean {
+    return this.data.settings.minimap;
+  }
+
+  setMinimapVisible(on: boolean): void {
+    if (this.data.settings.minimap === on) return;
+    this.data.settings.minimap = on;
     this.save();
   }
 

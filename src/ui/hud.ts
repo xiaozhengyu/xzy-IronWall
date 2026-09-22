@@ -102,8 +102,7 @@ export class Hud {
   private readonly vitals = document.createElement('div');
   private readonly progression = document.createElement('div');
   private readonly minimapDock = document.createElement('div');
-  /** 左上角那行淡字。见 build 里那段说明。 */
-  private readonly pauseHint = document.createElement('div');
+  private readonly currencyDock = document.createElement('div');
   private readonly minimapElement = document.createElement('div');
   private readonly currencyValues = new Map<'gold' | 'energy', HTMLSpanElement>();
   private readonly quickbarResizeObserver: ResizeObserver;
@@ -165,23 +164,8 @@ export class Hud {
     this.playerInfo.mountSections(this.vitals, this.progression);
     this.currencyInfo.content.appendChild(this.progression);
 
-    /*
-     * 左上角那行淡字：按 ESC 暂停。
-     *
-     * 它接替的是刚被拿掉的那两个按钮。按钮本来就没人按 —— 打起来的时候没人会把鼠标挪到
-     * 屏幕角上去点一个 42 像素的图标，而它们一直占着小地图上方那一条。但"能暂停"这件事
-     * 还是得有个地方说，否则新玩家只能靠猜。
-     *
-     * 做成水印而不是按钮，因为它要说的话只有第一局有用：读过一次就再也不需要了，而一个
-     * 按钮会永远占着那块地方。淡到几乎看不见，正好是"找的时候找得到、不找的时候不碍事"。
-     * aria-hidden：它是给眼睛看的提示，读屏走的是各自控件上的 aria-label。
-     */
-    this.pauseHint.className = 'hud-pause-hint';
-    this.pauseHint.setAttribute('aria-hidden', 'true');
-    this.text.bindText(this.pauseHint, 'pauseHint');
-    this.root.appendChild(this.pauseHint);
-
     this.minimapDock.className = 'hud-minimap-dock';
+    this.currencyDock.className = 'hud-currency-dock';
     this.minimapElement.className = 'hud-minimap';
     this.setMinimapSize(options.minimapSize ?? MINIMAP_SETTINGS.size);
     this.minimap = new Minimap(options.minimapZoom ?? MINIMAP_SETTINGS.zoom);
@@ -197,8 +181,9 @@ export class Hud {
     this.minimapLayer.appendChild(this.minimap.canvas);
 
     this.minimapElement.append(frame, this.minimapLayer);
-    this.minimapDock.append(this.minimapElement, this.currencyInfo.root);
-    this.root.appendChild(this.minimapDock);
+    this.minimapDock.append(this.minimapElement);
+    this.currencyDock.append(this.currencyInfo.root);
+    this.root.append(this.minimapDock, this.currencyDock);
     const cycle = options.gemsPerCycle ?? GEM_PROGRESS_SETTINGS.gemsPerCycle;
     this.gemsPerCycle = Number.isFinite(cycle) ? Math.max(1, Math.floor(cycle)) : GEM_PROGRESS_SETTINGS.gemsPerCycle;
     const sideOverhang = options.gemProgressSideOverhang ?? GEM_PROGRESS_SETTINGS.sideOverhang;
@@ -310,6 +295,11 @@ export class Hud {
     this.minimapDock.style.width = size;
   }
 
+  /** 玩家设置里的小地图开关；隐藏时 draw 会跳过 Canvas 绘制。 */
+  setMinimapVisible(on: boolean): void {
+    this.minimapDock.hidden = !on;
+  }
+
   /**
    * 备战界面期间收起来。
    *
@@ -402,7 +392,7 @@ export class Hud {
         battle.skillCooldown(definition.id), battle.skillCooldownDuration(definition.id),
         battle.skillLevel(definition.id));
     }
-    this.minimap.draw(field, battle, camera);
+    if (!this.minimapDock.hidden) this.minimap.draw(field, battle, camera);
     if (battle.collectedCoins !== this.lastCollectedCoins) {
       const goldValue = this.currencyValues.get('gold');
       if (goldValue) goldValue.textContent = String(battle.collectedCoins);

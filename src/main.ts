@@ -290,6 +290,7 @@ await app.init({
 });
 gameViewport.appendChild(app.canvas);
 const hud = new Hud(gameViewport, { text });
+hud.setMinimapVisible(profile.minimapVisible);
 
 const scene = new Scene(app.renderer, camera);
 app.stage.addChild(scene.view);
@@ -1621,6 +1622,12 @@ function applyCombatText(kind: CombatTextKind, on: boolean): void {
   summary.setCombatText(settings);
 }
 
+function applyMinimap(on: boolean): void {
+  profile.setMinimapVisible(on);
+  hud.setMinimapVisible(on);
+  summary.setMinimapVisible(on);
+}
+
 const summary = new SummaryScreen({
   onResume: () => controls.resume(),
   /*
@@ -1645,12 +1652,14 @@ const summary = new SummaryScreen({
   // 不用重新起播，也就不会从头开始。
   onMusicChange: (on) => applyMusic(on),
   onCombatTextChange: (kind, on) => applyCombatText(kind, on),
+  onMinimapChange: (on) => applyMinimap(on),
 }, text);
 // 存档里那一档先告诉结算屏，它那两个方块才知道哪个该亮。语言走的是共用的 HudText，
 // 不用再喂一次。
 summary.setSfxEnabled(profile.sfxEnabled);
 summary.setMusicEnabled(profile.musicEnabled);
 summary.setCombatText(profile.combatText);
+summary.setMinimapVisible(profile.minimapVisible);
 
 const setup = new SetupScreen(
   {

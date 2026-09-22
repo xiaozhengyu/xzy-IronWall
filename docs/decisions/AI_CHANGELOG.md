@@ -40,3 +40,10 @@ Use this format:
 - Summary: Decoupled damage-number glyph size from camera grain, merged rapid hits on the same target, added density-aware culling, moved enemy damage text away from actors, and added persistent player display toggles.
 - Impact: Preserved combat simulation while reducing visual obstruction through smaller, higher, offset, and user-filterable feedback; added independent damage, healing, mana, buff, and level display settings.
 - Validation: `npm run build`; `npm run figures`; `git diff --check`; local game startup smoke check; manual offset and display-toggle checks remain to be performed.
+
+## 2026-09-22 — minimap-display
+
+- Spec: `docs/spec/minimap-display/`
+- Summary: Moved the minimap to the upper-left HUD, separated it from the upper-right resource panel, removed the persistent pause hint, and added a persistent player visibility toggle.
+- Impact: Preserved minimap markers and zoom behavior while allowing the minimap Canvas draw call to be skipped when hidden.
+- Validation: `npm run build`; `npm run figures`; `git diff --check`; manual HUD position, toggle, and persistence checks remain to be performed.

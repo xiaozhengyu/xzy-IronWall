@@ -80,6 +80,8 @@ export interface SummaryHooks {
   onMusicChange?(on: boolean): void;
   /** ESC 页上的战斗飘字开关。 */
   onCombatTextChange?(kind: CombatTextKind, on: boolean): void;
+  /** ESC 页上的小地图显示开关。 */
+  onMinimapChange?(on: boolean): void;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -131,6 +133,8 @@ export class SummaryScreen {
   private sfxOn = true;
   private musicButtons: HTMLButtonElement[] = [];
   private musicOn = true;
+  private minimapButtons: HTMLButtonElement[] = [];
+  private minimapOn = true;
   private readonly combatTextButtons: Record<CombatTextKind, HTMLButtonElement[]> = {
     damage: [], heal: [], mana: [], buff: [], level: [],
   };
@@ -391,6 +395,11 @@ export class SummaryScreen {
       this.markMusic();
       this.hooks.onMusicChange?.(this.musicOn);
     }, ['on', 'off']);
+    this.minimapButtons = this.chipRow('minimapDisplay', [['on', ''], ['off', '']], (value) => {
+      this.minimapOn = value === 'on';
+      this.markMinimap();
+      this.hooks.onMinimapChange?.(this.minimapOn);
+    }, ['on', 'off']);
     this.buildCombatTextRow('combatTextDamage', 'damage');
     this.buildCombatTextRow('combatTextHeal', 'heal');
     this.buildCombatTextRow('combatTextMana', 'mana');
@@ -400,6 +409,7 @@ export class SummaryScreen {
     this.markLocale();
     this.markSfx();
     this.markMusic();
+    this.markMinimap();
     return this.settings;
   }
 
@@ -462,6 +472,17 @@ export class SummaryScreen {
     for (const button of this.musicButtons) {
       button.classList.toggle('on', button.dataset.value === (this.musicOn ? 'on' : 'off'));
     }
+  }
+
+  private markMinimap(): void {
+    for (const button of this.minimapButtons) {
+      button.classList.toggle('on', button.dataset.value === (this.minimapOn ? 'on' : 'off'));
+    }
+  }
+
+  setMinimapVisible(on: boolean): void {
+    this.minimapOn = on;
+    this.markMinimap();
   }
 
   private markCombatText(kind: CombatTextKind): void {
