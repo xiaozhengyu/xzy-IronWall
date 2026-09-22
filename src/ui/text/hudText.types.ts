@@ -236,6 +236,7 @@ export interface HudMessages {
 
   // ------------------------------------------------------------------ 三选一属性牌
   cardPicker: string;
+  cardSelectionProgress: string;
   cardAttack: string;
   cardAttackDetail: string;
   cardAttackSpeed: string;

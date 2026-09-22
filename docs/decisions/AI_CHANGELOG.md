@@ -47,3 +47,17 @@ Use this format:
 - Summary: Moved the minimap to the upper-left HUD, separated it from the upper-right resource panel, removed the persistent pause hint, and added a persistent player visibility toggle.
 - Impact: Preserved minimap markers and zoom behavior while allowing the minimap Canvas draw call to be skipped when hidden.
 - Validation: `npm run build`; `npm run figures`; `git diff --check`; manual HUD position, toggle, and persistence checks remain to be performed.
+
+## 2026-09-22 — wave-card-reward
+
+- Spec: `docs/spec/wave-card-reward/`
+- Summary: Added a wave-completion reward flow with nine visible cards and three immediate selections, while preserving the existing spirit-stone three-card, one-choice flow.
+- Impact: Wave completion now pauses the game for a 3×3 card choice; wave and spirit-stone rewards queue sequentially, exhausted pools use gold fillers, and selected cards cannot be chosen twice.
+- Validation: `npm run build`; `npm run figures`; `npm run bench`; `git diff --check`; local browser smoke test verified wave 1 → wave 2, nine-card rendering, 0/3 → 1/3 → 2/3 selection progress, immediate skill grants, and queued spirit-stone cards. Follow-up CSS tuning shortened wave cards so the 3×3 panel clears the fixed current-items strip.
+
+## 2026-09-22 — boss-scale-map-size
+
+- Spec: `docs/spec/boss-scale-map-size/`
+- Summary: Enlarged all boss renderings, added a readable minion-to-boss clearance, and expanded every map to three times its previous width and height.
+- Impact: Bosses remain visually distinct in dense waves while preserving combat stats; larger normalized maps provide more traversal space without changing wave budgets or camera view size.
+- Validation: `npm run build`; `npm run figures`; `npm run bench`; `git diff --check`; manual boss spacing, map-edge traversal, and minimap-bound checks remain to be performed.

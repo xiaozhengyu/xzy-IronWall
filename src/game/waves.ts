@@ -43,6 +43,8 @@ export class WaveDirector {
   private surgeLeft = 0;
   /** 刚进新的一波。battle 读一次就清，用来记爆兵的天花板。 */
   private started = false;
+  /** 波次到点推进了一次。UI 读一次就清，用来发放波次奖励。 */
+  private waveCleared = false;
   /** 欠着几个首领。见 takeBossDue。 */
   private bossDue = 0;
   /** 最后一波已经到点了。到点之后还会按末波继续出兵（after: 'hold'），但该放的首领已经放完了。 */
@@ -74,6 +76,7 @@ export class WaveDirector {
     this.cleared = 0;
     this.pendingSurge = 0;
     this.pendingDensity = 0;
+    this.waveCleared = false;
     /*
      * 首领那两笔账也得清。
      *
@@ -146,6 +149,13 @@ export class WaveDirector {
     return started;
   }
 
+  /** 刚打完一波吗。UI 读一次就清；调试跳波次不会制造这个脉冲。 */
+  takeWaveCleared(): boolean {
+    const cleared = this.waveCleared;
+    this.waveCleared = false;
+    return cleared;
+  }
+
   /**
    * 取本次能放的人数，上限由外面给（场上还容得下几个）。
    *
@@ -209,6 +219,7 @@ export class WaveDirector {
     this.cleared = at;
     this.pendingSurge = 0;
     this.pendingDensity = 0;
+    this.waveCleared = false;
     this.enterWave();
   }
 
@@ -228,6 +239,7 @@ export class WaveDirector {
      */
     if (!this.lastWaveDone) this.bossDue += this.wave.bosses;
     this.cleared++;
+    this.waveCleared = true;
     if (this.waveAt + 1 >= this.waveCount) {
       // 打完最后一波。'hold' 就留在原地继续按它出，'restart' 回到第一波。
       if (this.spec.after === 'restart') {

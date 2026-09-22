@@ -103,9 +103,9 @@ function frozen(): boolean {
  */
 const profile = Profile.load();
 
-/** 场地：正方形，边长 1200 个世界单位 —— 一个人 19 单位高，所以是六十三个人宽。 */
-const FIELD_W = 1200;
-const FIELD_H = 1200;
+/** 场地：默认图边长 3600 个世界单位 —— 地图尺寸统一扩大为原来的三倍。 */
+const FIELD_W = 3600;
+const FIELD_H = 3600;
 const FIELD_SEED = 20260902;
 
 /**
@@ -690,6 +690,7 @@ app.ticker.add((ticker) => {
   // 后台、断点、掉帧都会，夹一下省得人一口气瞬移出去。
   const dt = Math.min(ticker.deltaMS / 1000, 1 / 20);
   battle.update(dt, readInput(), viewOf());
+  if (battle.takeWaveCleared()) hud.queueWaveCards();
   flushSoundEvents();
   hud.update(dt);
   draw();

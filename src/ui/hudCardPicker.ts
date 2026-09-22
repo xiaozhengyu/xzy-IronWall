@@ -20,7 +20,7 @@ import './hudCardPicker.css';
 /**
  * 一张牌的内容，外加选中它之后**真的发生什么**。
  *
- * 加上 bonus / skill 这两样之前，这块界面是纯摆设：抽三张、点掉，一个数都不改。现在属性牌
+ * 加上 bonus / skill 这两样之前，这块界面是纯摆设：抽牌、点掉，一个数都不改。现在属性牌
  * 给一份本局有效的加成（Battle.addRunBonus），技能牌解锁一个这个角色还没有的主动技 —— 后者
  * 是"主动技能要在游戏里获得"这条规则唯一的落地点，另一条路是以后的商店。
  */
@@ -74,25 +74,30 @@ const STAT_CARDS: StatCard[] = [
   { key: 'mpRegen', icon: HUD_ICON_URLS.potion, nameKey: 'cardMpRegen', detailKey: 'cardMpRegenDetail' },
 ];
 
-/** 一轮摆几张牌。 */
-const CARD_COUNT = 3;
+/** 两种奖励模式的牌面与选择额度。 */
+const GEM_CARD_COUNT = 3;
+const GEM_PICK_COUNT = 1;
+const WAVE_CARD_COUNT = 9;
+const WAVE_PICK_COUNT = 3;
+
+export type HudCardMode = 'gem' | 'wave';
 
 /**
- * 出场动画时长。取的是最长的那条 —— 选中卡牌浮上去的 hud-card-taken；没选的两张
+ * 出场动画时长。取的是最长的那条 —— 选中卡牌浮上去的 hud-card-taken；没选的牌
  * 140ms 就退完了。和 hudCardPicker.css 里的时长是一对，改一处要改两处。
  */
 const EXIT_MS = 200;
 
 /**
- * 从候选里接着抽，抽到 out 有 upTo 张为止。**三张之间既不重样、也不撞图**。
+ * 从候选里接着抽，抽到 out 有 upTo 张为止。当前牌组优先做到既不重样、也不撞图。
  *
- * 续摆而不是一次抽完：三格里要先给技能牌留一格，剩下的才从全部货架里抽。
+ * 续摆而不是一次抽完：牌组里要先给技能牌留一格，剩下的才从全部货架里抽。
  *
  * 光靠"从池子里取走"是不够的：那只保证不抽到同一条记录，而不同的记录仍然可能共用一张图。
  * 玩家读牌先看图 —— 两张一样的图摆在一起，第一反应是"这一轮出重复了"，哪怕名字不同。所以
  * 这里额外按 icon 去一遍重。
  *
- * 去重之后可能凑不满三张（牌库快抽空的时候）。那就有多少给多少：少一张牌比摆一张重复的强。
+ * 去重之后可能凑不满目标张数（牌库快抽空的时候）。波次牌组会用金币牌补齐，灵石牌组则保留旧规则。
  */
 function take(pool: HudCardOffer[], upTo: number, out: HudCardOffer[], icons: Set<string>): void {
   const rest = pool.filter((offer) => !out.some((had) => had.key === offer.key));
@@ -105,10 +110,9 @@ function take(pool: HudCardOffer[], upTo: number, out: HudCardOffer[], icons: Se
 }
 
 /**
- * 灵石收满后弹出的三选一卡牌。
+ * 灵石或波次奖励弹出的卡牌选择层。
  *
- * **这一版只有界面**：抽牌、显示、点掉，选中不改任何数值。弹出期间世界是停住的
- * （main.ts 的 ticker 跳过 update），先把版式和信息量摆出来看效果，接玩法是下一步。
+ * 选中会通过 hooks 立即改变本局状态。弹出期间世界是停住的（main.ts 的 ticker 跳过 update）。
  */
 /**
  * 这块界面要问外面一件事、告诉外面两件事：还能解锁哪些技能，以及玩家选了属性牌还是技能牌。
@@ -173,9 +177,13 @@ export class HudCardPicker {
 
   private readonly frame = new HudFrame({ className: 'hud-card-panel' });
   private readonly row = document.createElement('div');
+  private readonly selectionStatus = document.createElement('span');
   /** 牌底下那一行"我现在有什么"。 */
   private readonly cards: HTMLButtonElement[] = [];
   private offers: HudCardOffer[] = [];
+  private picksRequired = GEM_PICK_COUNT;
+  private picksMade = 0;
+  private readonly selected = new Set<number>();
   /** 出场动画跑完才真正藏起来；这期间不再接受选择。 */
   private closing = 0;
   /**
@@ -208,12 +216,14 @@ export class HudCardPicker {
     this.root.setAttribute('aria-label', this.text.value('cardPicker'));
 
     this.row.className = 'hud-card-row';
-    for (let i = 0; i < CARD_COUNT; i++) {
+    this.selectionStatus.className = 'hud-text hud-text--pixel hud-card-selection-status';
+    for (let i = 0; i < WAVE_CARD_COUNT; i++) {
       const card = this.createCard(i);
       this.cards.push(card);
       this.row.appendChild(card);
     }
 
+    this.frame.content.appendChild(this.selectionStatus);
     this.frame.content.appendChild(this.row);
     this.root.appendChild(this.frame.root);
   }
@@ -222,13 +232,18 @@ export class HudCardPicker {
     return !this.root.hidden;
   }
 
-  /** 抽三张并弹出。已经开着就不再抽，免得后一次收满把玩家正在看的牌换掉。 */
-  show(): void {
+  /** 按奖励模式抽牌并弹出。已经开着就不再抽，避免替换玩家正在看的牌。 */
+  show(mode: HudCardMode = 'gem'): void {
     if (this.open) return;
     this.cancelClose();
+    this.picksRequired = mode === 'wave' ? WAVE_PICK_COUNT : GEM_PICK_COUNT;
+    this.picksMade = 0;
+    this.selected.clear();
     this.figures.length = 0;
-    this.offers = this.roll();
+    this.offers = this.roll(mode);
     for (let i = 0; i < this.cards.length; i++) this.fill(this.cards[i], this.offers[i]);
+    this.updateSelectionStatus();
+    this.root.dataset.mode = mode;
     // 和结算那块共用同一个节点，所以两处的位置天然重合（见 currentItems.ts）。
     currentItems.show('cards', this.hooks?.heldItems() ?? []);
     this.root.hidden = false;
@@ -281,6 +296,9 @@ export class HudCardPicker {
     this.blurCards();
     this.root.hidden = true;
     this.root.dataset.phase = '';
+    this.root.dataset.mode = '';
+    this.selected.clear();
+    this.picksMade = 0;
     currentItems.hide('cards');
   }
 
@@ -300,8 +318,13 @@ export class HudCardPicker {
    * 返回是否吃掉了这一下按键，调用方据此决定要不要继续走原来的逻辑。
    */
   choose(index: number): boolean {
-    if (!this.open || this.closing || index < 0 || index >= this.offers.length) return false;
+    if (!this.open || this.closing || index < 0 || index >= this.offers.length
+      || this.selected.has(index)) return false;
+    const card = this.cards[index];
+    if (!card || card.hidden || card.disabled) return false;
     const offer = this.offers[index];
+    this.selected.add(index);
+    this.picksMade++;
     this.round++;
     if (offer.gold !== undefined) this.hooks?.onGoldCard(offer.gold);
     else if (offer.bonus) {
@@ -309,11 +332,13 @@ export class HudCardPicker {
       this.hooks?.onStatCard(offer.bonus);
     } else if (offer.skill && offer.obtain) this.hooks?.onObtainSkill(offer.skill);
     else if (offer.skill) this.hooks?.onUpgradeSkill(offer.skill);
-    // 这一版没有效果可以结算，选中就只剩下收场。选中那张单独标一下，出场时的动作和
-    // 另外两张不一样。
-    for (let i = 0; i < this.cards.length; i++) {
-      this.cards[i].classList.toggle('hud-card--taken', i === index);
-    }
+    card.disabled = true;
+    card.classList.add('hud-card--picked');
+    this.updateSelectionStatus();
+    // 波次奖励要连续选三张；灵石奖励仍然选中一张就结束。
+    if (this.picksMade < this.picksRequired) return true;
+    // 选中的牌单独标一下，出场时的动作和剩下的牌不一样。
+    for (const selectedIndex of this.selected) this.cards[selectedIndex].classList.add('hud-card--taken');
     this.root.dataset.phase = 'out';
     this.hooks?.onDismiss?.();
     // 动画跑完再藏。open 在这期间仍然是 true，所以世界会多停这 200ms —— 正好让牌浮出去。
@@ -335,7 +360,7 @@ export class HudCardPicker {
   }
 
   /**
-   * 抽三张。货架上有三种东西，上架规则各不相同：
+   * 按模式抽牌。货架上有三种东西，上架规则各不相同：
    *
    *   **属性牌** —— 每一项一局最多拿 STAT_CARD_CAP 张，拿满就下架。不封顶的话，
    *   一局三十多张牌可以全砸在攻击力上，而那不是一个构筑，是一个乘法。
@@ -345,17 +370,18 @@ export class HudCardPicker {
    *
    *   **升级牌** —— 已经在用、还没满级的招。从第一轮就在。
    *
-   * **只要还有技能牌，三格里就留一格给它。**
+   * **只要还有技能牌，牌组里就留一格给它。**
    *
    * 最要紧的是头两轮：那时货架上只有八张属性牌加一张自动攻击技的升级，不留格的话
    * 那一张升级只有三成三的机会露面 —— 也就是说有三分之二的开局玩家根本没得选，
-   * 只能在三张属性牌里挑一张。而头两轮不上新招的全部意义就是"先把本命那一招推上去"。
+   * 只能在属性牌里挑一张。而头两轮不上新招的全部意义就是"先把本命那一招推上去"。
    * 留一格之后，每一轮都至少有一张招式牌。
    *
-   * 什么都没了（招全拿全满、属性也封顶）就摆一张金币牌。只摆一张：这一轮已经没有选择了，
-   * 摆三张一模一样的牌只是把"没得选"写成了三遍。
+   * 什么都没了（招全拿全满、属性也封顶）就摆金币牌。灵石模式保留旧的单张金币牌，
+   * 波次模式则重复金币牌直到填满九格。
    */
-  private roll(): HudCardOffer[] {
+  private roll(mode: HudCardMode): HudCardOffer[] {
+    const cardCount = mode === 'wave' ? WAVE_CARD_COUNT : GEM_CARD_COUNT;
     const stats: HudCardOffer[] = STAT_CARDS
       .filter((c) => (this.statTaken.get(c.key) ?? 0) < STAT_CARD_CAP)
       .map((c) => {
@@ -406,13 +432,19 @@ ${this.text.value('cardSkillUpgrade', {
     });
 
     const skills = [...obtain, ...upgrade];
-    if (stats.length === 0 && skills.length === 0) return [this.goldOffer()];
+    if (stats.length === 0 && skills.length === 0) {
+      return mode === 'wave'
+        ? Array.from({ length: cardCount }, () => this.goldOffer())
+        : [this.goldOffer()];
+    }
 
     const out: HudCardOffer[] = [];
     const icons = new Set<string>();
-    // 先给技能牌留一格，剩下两格从全部货架里抽。
+    // 先给技能牌留一格，剩下的从全部货架里抽。
     take(skills, 1, out, icons);
-    take([...stats, ...skills], CARD_COUNT, out, icons);
+    take([...stats, ...skills], cardCount, out, icons);
+    // 波次模式必须固定摆满九张；货架耗尽时用金币牌补位，不改变已有卡牌规则。
+    while (mode === 'wave' && out.length < cardCount) out.push(this.goldOffer());
     return out;
   }
 
@@ -467,13 +499,15 @@ ${this.text.value('cardSkillUpgrade', {
 
   private fill(card: HTMLButtonElement, offer: HudCardOffer | undefined): void {
     card.hidden = !offer;
+    card.disabled = !offer;
+    card.classList.remove('hud-card--picked', 'hud-card--taken');
     if (!offer) return;
     (card.querySelector('.hud-card-icon') as HTMLImageElement).src = offer.icon;
 
     /*
      * 技能牌底下铺一层演示（见 skillDemo.ts），属性牌没有 —— "攻击力 +15%" 没有形状可言。
      *
-     * 每次重建而不是缓存：一轮才三张牌，而同一格上一轮是什么招下一轮就不是了，
+     * 每次重建而不是缓存：每轮牌数和内容都可能变化，而同一格上一轮是什么招下一轮就不是了，
      * 留着的话还得判一遍"还是不是同一招"。
      */
     const stage = card.querySelector('.hud-card-stage') as HTMLElement;
@@ -502,5 +536,12 @@ ${this.text.value('cardSkillUpgrade', {
       detail.appendChild(document.createTextNode(line));
     });
     card.setAttribute('aria-label', `${offer.name}：${offer.detail.replace('\n', '，')}`);
+  }
+
+  private updateSelectionStatus(): void {
+    this.selectionStatus.textContent = this.text.value('cardSelectionProgress', {
+      selected: this.picksMade,
+      total: this.picksRequired,
+    });
   }
 }

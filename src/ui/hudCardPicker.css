@@ -1,5 +1,5 @@
 /**
- * 灵石收满后弹出的三选一卡牌。
+ * 灵石或波次奖励弹出的卡牌选择层。
  *
  * 整块挂在 .hud 里，跟着同一个 --hud-scale 缩放，所以这里的尺寸全是 1920×1080 的设计 px。
  *
@@ -38,6 +38,7 @@
 .hud-card-panel > .hud-frame-content {
   display: grid;
   justify-items: center;
+  gap: 16px;
   padding: 40px;
 }
 
@@ -65,6 +66,41 @@
   background: linear-gradient(180deg, rgba(30, 27, 20, 0.96), rgba(10, 11, 14, 0.96));
   box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.8), 0 4px 10px rgba(0, 0, 0, 0.6);
   cursor: inherit;
+}
+
+/* 波次奖励一次摆九张：三列三行，压低牌面和演示区，让整组仍能放进 16:9 画幅。 */
+.hud-card-picker[data-mode='wave'] .hud-card-panel {
+  width: 1320px;
+}
+
+.hud-card-picker[data-mode='wave'] .hud-card-panel > .hud-frame-content {
+  padding: 28px;
+}
+
+.hud-card-picker[data-mode='wave'] .hud-card-row {
+  gap: 12px;
+}
+
+.hud-card-picker[data-mode='wave'] .hud-card {
+  /* 当前物品栏固定在窗口底边，波次牌组要在它上方收住；压低每张牌比挪动整组更稳定。 */
+  aspect-ratio: 1.95 / 1;
+  gap: 5px;
+  padding: 8px 10px 12px;
+}
+
+.hud-card-picker[data-mode='wave'] .hud-card-stage {
+  width: 150px;
+  height: 92px;
+}
+
+.hud-card-picker[data-mode='wave'] .hud-card-icon {
+  width: 78px;
+  height: 78px;
+}
+
+.hud-card-picker[data-mode='wave'] .hud-card-stage--figure .hud-card-icon {
+  width: 30px;
+  height: 30px;
 }
 
 .hud-card[hidden] {
@@ -96,7 +132,7 @@
  * 小格子里它只能缩成一圈贴身的光边，而那是另一件事（见 skillDemo.ts 的 STAGE_SQUEEZE）。
  * 格子大一圈之后，人回到原来那个大小，罩子整个也在框里。
  *
- * 两种牌用同一个盒子是为了让三张牌的**名字排在同一行**：盒子一高一矮的话，属性牌的名字
+ * 两种牌用同一个盒子是为了让同一轮牌的**名字排在同一行**：盒子一高一矮的话，属性牌的名字
  * 会比技能牌高出六十多像素，一排看过去是散的。
  *
  * 略比正方形高一点：骠骑将军骑马，从马蹄到盔顶比步兵高出六个多世界单位，方格子里他的头
@@ -143,7 +179,7 @@
 
 /*
  * 角标。压在牌的右上角，跨在边框上 —— 牌面里面已经排满了，而这一个要的是
- * "扫一眼三张牌就知道哪一张是新的"，它得在轮廓上。
+ * "扫一眼牌组就知道哪一张是新的"，它得在轮廓上。
  *
  * 两块牌子都是**浅底深字**，和 HUD 其余地方正好反过来：.hud-text 那条硬黑描边是给
  * 深底浅字用的，落在这种小牌子上只会糊，所以显式关掉（兜底那条的特异性是 0，
@@ -221,10 +257,41 @@
   text-align: center;
 }
 
+.hud-card-selection-status {
+  color: #f4ce72;
+  font-size: calc(13px * var(--hud-font-scale, 1));
+  letter-spacing: 0.08em;
+  text-align: center;
+}
+
+.hud-card--picked {
+  border-color: rgba(139, 250, 255, 0.75);
+  background: linear-gradient(180deg, rgba(27, 53, 55, 0.96), rgba(10, 20, 22, 0.96));
+  box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.7), 0 0 12px rgba(139, 250, 255, 0.25);
+  cursor: default;
+  filter: saturate(0.75);
+}
+
+.hud-card--picked:hover,
+.hud-card--picked:focus-visible {
+  border-color: rgba(139, 250, 255, 0.75);
+  background: linear-gradient(180deg, rgba(27, 53, 55, 0.96), rgba(10, 20, 22, 0.96));
+  box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.7), 0 0 12px rgba(139, 250, 255, 0.25);
+}
+
+.hud-card-picker[data-mode='wave'] .hud-card-name {
+  font-size: calc(11px * var(--hud-font-scale, 1));
+}
+
+.hud-card-picker[data-mode='wave'] .hud-card-detail {
+  font-size: calc(8px * var(--hud-font-scale, 1));
+  line-height: 1.25;
+}
+
 /* ---------------------------------------------------------------- 进出场 */
 
 /**
- * 三张牌错开 60ms 依次落位，比整排一起弹出来更像"发牌"。
+ * 牌面错开 60ms 依次落位，比整排一起弹出来更像"发牌"。
  * 出场 200ms 走完 —— 玩家已经做完选择了，再慢就是在挡路。
  */
 @keyframes hud-card-scrim-in {
@@ -247,7 +314,7 @@
   to { opacity: 1; transform: none; }
 }
 
-/** 没选的两张往下退开、让路。 */
+/** 没选的牌往下退开、让路。 */
 @keyframes hud-card-out {
   from { opacity: 1; transform: none; }
   to { opacity: 0; transform: translateY(14px) scale(0.94); }
@@ -255,7 +322,7 @@
 
 /**
  * 选中的那张先顶一下再往上浮走：起手有个短暂的放大和描边发亮，让"就是这张"看得清楚，
- * 然后整张升出面板。和另外两张往下沉的方向相反，一眼就分得出谁被选中了。
+ * 然后整张升出面板。和没选的牌往下沉的方向相反，一眼就分得出谁被选中了。
  */
 @keyframes hud-card-taken {
   0% {
@@ -318,7 +385,7 @@
 
 .hud-card-picker[data-phase='out'] .hud-card--taken {
   animation: hud-card-taken 200ms cubic-bezier(0.25, 0.8, 0.3, 1) both;
-  /* 压在另外两张上面。压不过面板的金边（那是 .hud-frame::after，另一个层级），
+  /* 压在其他牌上面。压不过面板的金边（那是 .hud-frame::after，另一个层级），
      所以升幅收在 -52px 以内，浮到快出框时它也已经淡透了。 */
   z-index: 1;
 }
@@ -335,6 +402,6 @@
 /*
  * 牌底下那一行"我现在有什么"。
  *
- * 压暗一档、和牌之间留一条分隔线：它是**参考**，不是第四张牌。玩家这时候在三张牌之间做决定，
+ * 压暗一档、和牌之间留一条分隔线：它是**参考**，不是额外一张牌。玩家这时候在牌组之间做决定，
  * 这一行只是把"我手上已经有什么"摆在他眼皮底下，不该抢走那个决定的注意力。
  */

@@ -223,6 +223,7 @@ export const HUD_TEXT_EN: HudMessages = {
 
   // ---------------------------------------------------------------- 三选一属性牌
   cardPicker: 'Level-up cards',
+  cardSelectionProgress: '{selected}/{total} chosen',
   cardAttack: 'Attack',
   cardAttackDetail: 'All damage +{value}%',
   cardAttackSpeed: 'Attack rate',

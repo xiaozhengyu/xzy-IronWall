@@ -95,8 +95,10 @@ export class Hud {
 
   /** 灵石收满是否弹卡牌。菜单里可以关掉，关掉就是接这个功能之前的样子。 */
   cardsEnabled = true;
-  /** 门槛过了、但还没找到机会弹的牌。一次只记一张，弹完下一张自然会再攻下来。 */
-  private cardsPending = false;
+  /** 灵石门槛过了、但还没找到机会弹的牌。 */
+  private gemCardsPending = false;
+  /** 波次完成了、但还没找到机会弹的牌。一次只记一张，因为一帧最多完成一波。 */
+  private waveCardsPending = false;
 
   private readonly combatPanel = new HudFrame({ className: 'hud-combat-panel' });
   private readonly vitals = document.createElement('div');
@@ -290,6 +292,11 @@ export class Hud {
     this.cooldownInfo.update(dt);
   }
 
+  /** 由主循环在 Battle 更新后调用；波次事件不从 HUD 自己猜，避免调试跳波误发奖励。 */
+  queueWaveCards(): void {
+    if (this.cardsEnabled) this.waveCardsPending = true;
+  }
+
   /** CSS 长度或百分比，例如 '22.5%'、'240px'。 */
   setMinimapSize(size: string): void {
     this.minimapDock.style.width = size;
@@ -319,7 +326,8 @@ export class Hud {
    * 已经打了一会儿。
    */
   setGemsPerCycle(gems: number): void {
-    this.cardsPending = false;
+    this.gemCardsPending = false;
+    this.waveCardsPending = false;
     this.cards.hide();
     this.hurtFlash.clear();
     this.cooldownInfo.clearEffects();
@@ -416,19 +424,25 @@ export class Hud {
       }
       this.gemProgress.setValue(total - this.gemFloor, this.gemNext - this.gemFloor,
         total > this.lastCollectedGems && !popped);
-      if (this.cardsEnabled && popped && battle.player.alive) this.cardsPending = true;
+      if (this.cardsEnabled && popped && battle.player.alive) this.gemCardsPending = true;
       this.lastCollectedGems = total;
     }
     // 攻下的牌先记着，等手里那招放完再弹（见 Battle.sustaining）。这一句在收灵石那个
     // 分支**外面**：欠着的牌要等的是松手，而松手那一帧未必恰好又收到一颗灵石。
     // 死亡当帧可能仍收到灵石，或恰好结束持续施法；丢弃待选牌，让倒地和结算继续。
     if (!battle.player.alive) {
-      this.cardsPending = false;
+      this.gemCardsPending = false;
+      this.waveCardsPending = false;
       if (this.cards.open) this.cards.hide();
     }
-    if (this.cardsPending && this.cardsEnabled && battle.player.alive && !battle.sustaining) {
-      this.cardsPending = false;
-      this.cards.show();
+    if (this.cardsEnabled && battle.player.alive && !battle.sustaining && !this.cards.open) {
+      if (this.waveCardsPending) {
+        this.waveCardsPending = false;
+        this.cards.show('wave');
+      } else if (this.gemCardsPending) {
+        this.gemCardsPending = false;
+        this.cards.show('gem');
+      }
     }
   }
 }

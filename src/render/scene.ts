@@ -130,6 +130,8 @@ const DEPTH_AEGIS = 16;
 
 /** 脚下那圈光比他的身体大多少，世界单位。 */
 const BOSS_RING_MARGIN = 5;
+/** 所有首领的统一视觉放大，不改变战斗碰撞和属性。 */
+const BOSS_RENDER_SCALE = 1.35;
 /** 圈压在他自己那一行之下一点，否则会盖在他脚上。 */
 const BOSS_RING_LIFT = 0.2;
 
@@ -355,7 +357,7 @@ export class Scene {
        */
       if (e.alive && e.boss) {
         this.drawBossRing(e);
-        this.drawCharacterAt(e, true);
+        this.drawCharacterAt(e, true, false, null, BOSS_RENDER_SCALE);
       } else {
         this.drawCharacterAt(e);
       }
@@ -1044,7 +1046,7 @@ export class Scene {
   private drawBossRing(c: Character): void {
     const at = this.camera.worldToScreen(c.x, c.y);
     const grain = this.camera.grain;
-    const r = (c.radius + BOSS_RING_MARGIN) * grain;
+    const r = (c.radius + BOSS_RING_MARGIN) * BOSS_RENDER_SCALE * grain;
     const depth = Math.round(at.y) * Projector.DEPTH_PER_ROW - BOSS_RING_LIFT;
     this.shapes.ellipse(
       v2(at.x, at.y), r, r * Projection.groundSquash, 0, rgba(255, 96, 72, 46), depth,
@@ -1055,17 +1057,23 @@ export class Scene {
     );
   }
 
-  private drawCharacterAt(c: Character, rim = false, hot = false, ironBreath: number | null = null): void {
+  private drawCharacterAt(
+    c: Character,
+    rim = false,
+    hot = false,
+    ironBreath: number | null = null,
+    modelScale = 1,
+  ): void {
     const at = this.camera.worldToScreen(c.x, c.y);
     const grain = this.camera.grain;
-    if (rim) this.drawRim(c, at, grain, hot, ironBreath);
-    const p = new Projector(at, c.facing, Projection.groundSquash, grain);
+    if (rim) this.drawRim(c, at, grain, hot, ironBreath, modelScale);
+    const p = new Projector(at, c.facing, Projection.groundSquash, grain * modelScale);
     const palette = ironBreath === null
       ? c.palette
       // 夹在 0.55：再往上整个人就白成一片，轮廓和武器都读不出来了。铁布衫的峰值是 0.26，
       // 用药那一下是 0.45，两者都在这条线以下 —— 夹一下只是不让以后新的来源越界。
       : brightenPalette(c.palette, Math.min(0.55, 0.1 + ironBreath * 0.16), IRON_BODY_GLOW);
-    // rim 只有玩家会传，所以这一条同时也是"玩家不降档"。
+    // 玩家和首领都会传 rim，所以这两类关键目标都不走敌人的平涂档。
     drawCharacter(this.shapes, c.pose, p, palette, c.def, {
       hurt: c.hurt,
       lift: c.lift,
@@ -1075,7 +1083,7 @@ export class Scene {
   }
 
   /**
-   * 玩家身上那圈轮廓光。
+   * 关键目标身上那圈轮廓光。
    *
    * 几百个人挤在一起时，颜色解决不了"我在哪儿"——眼睛先看到的是密度不是色相。轮廓光解决的
    * 是这个：一圈比场上任何东西都亮的边，余光扫过就能捕捉到，不需要看清。
@@ -1084,17 +1092,25 @@ export class Scene {
    * 深度压在他自己身后 —— 于是只有偏出去的那一圈露在外面。这和 PixelSurface 给全体单位描
    * 暗边用的是同一个手法，区别只是这一份是逐角色的、亮的。
    *
-   * 只给玩家画。代价是四份完整的人物图元（约二百八十个），对一个人可以接受，对场上一千人
-   * 不行 —— 也没必要，人海里需要被一眼找到的只有一个。
+   * 只给玩家和首领画。代价是四份完整的人物图元；首领每波只有少量，和场上一千个杂兵相比
+   * 仍然可控。
    */
-  private drawRim(c: Character, at: Vec2, grain: number, hot = false, ironBreath: number | null = null): void {
+  private drawRim(
+    c: Character,
+    at: Vec2,
+    grain: number,
+    hot = false,
+    ironBreath: number | null = null,
+    modelScale = 1,
+  ): void {
     // 冲刺时换一档更厚更亮的边。
     //
     // 冲刺是这个游戏里唯一一次"玩家自己高速位移"，而高速位移在俯视角下最容易读丢 —— 画面
     // 里几百个人都在动，凭什么看出哪一下是我冲出去的。把常驻那圈轮廓光加厚加亮就够了：
     // 不用另做一套特效，玩家看到的是"我本来就在发光，冲的时候更亮"，是同一件东西的两档。
     const iron = ironBreath !== null;
-    const off = Math.max(1, Math.round(grain * (hot ? 0.7 : iron ? 0.54 : 0.34)));
+    const renderGrain = grain * modelScale;
+    const off = Math.max(1, Math.round(renderGrain * (hot ? 0.7 : iron ? 0.54 : 0.34)));
     const palette = hot
       ? HERO_DASH_PALETTE
       : iron
@@ -1110,7 +1126,7 @@ export class Scene {
         v2(at.x + dx * off, at.y + dy * off),
         c.facing,
         Projection.groundSquash,
-        grain,
+        renderGrain,
         depthRow,
       );
       drawCharacter(this.shapes, c.pose, p, palette, c.def, { lift: c.lift, silhouette: true });

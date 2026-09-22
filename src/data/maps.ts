@@ -96,7 +96,7 @@ export interface GameMapDef {
 }
 
 /**
- * 演武荒原：一直在用的那块测试场地（1200×1200，种子 20260902）。
+ * 演武荒原：一直在用的那块测试场地（3600×3600，种子 20260902）。
  *
  * 它同时是启动时烘好的那一份 —— 开局直接进这张图不用重烘地面。所以它的三个数一个都不能改，
  * 改了就得连 main.ts 里的 FIELD_W / FIELD_H / FIELD_SEED 一起改。
@@ -120,8 +120,8 @@ const provingGround: GameMapDef = {
   ],
   objectiveKey: 'mapProvingObjective',
 
-  width: 1200,
-  height: 1200,
+  width: 3600,
+  height: 3600,
   seed: 20260902,
   layout: DEFAULT_LAYOUT,
   template: DEFAULT_SPAWN_TEMPLATE,
@@ -133,7 +133,7 @@ const provingGround: GameMapDef = {
 /**
  * 黑石隘口：一条南北向的窄谷。
  *
- * 地图是竖的（1100×1600），树墙加厚到 18%，两侧再各探进来一大片林子把中段掐细 —— 走位空间
+ * 地图是竖的（3300×4800），树墙加厚到 18%，两侧再各探进来一大片林子把中段掐细 —— 走位空间
  * 只有演武荒原的一半上下。配上一整队重步兵和戟兵，这张图问的是"顶不顶得住"。
  *
  * 一条土路从北贯到南：那既是唯一一条走得开的通道，也是玩家在这张图上唯一的地标。
@@ -156,8 +156,8 @@ const blackstonePass: GameMapDef = {
   ],
   objectiveKey: 'mapPassObjective',
 
-  width: 1100,
-  height: 1600,
+  width: 3300,
+  height: 4800,
   seed: 41207,
   layout: {
     dirt: [
@@ -193,7 +193,7 @@ const blackstonePass: GameMapDef = {
 };
 
 /**
- * 赤沙荒原：最大最空的一张（1600×1600），树墙薄到 6%。
+ * 赤沙荒原：最大最空的一张（4800×4800），树墙薄到 6%。
  *
  * 骑兵的地方。开阔意味着两件事同时成立：敌人有地方加速冲过来，玩家也有地方跑。这张图的
  * 打法是不停地移动，站桩会被三面围住。
@@ -219,8 +219,8 @@ const redSandSteppe: GameMapDef = {
   ],
   objectiveKey: 'mapSteppeObjective',
 
-  width: 1600,
-  height: 1600,
+  width: 4800,
+  height: 4800,
   seed: 778301,
   layout: {
     dirt: [
@@ -235,7 +235,7 @@ const redSandSteppe: GameMapDef = {
     // 只有一片探进来的林子。多了就不叫荒原了。
     groves: [{ x: 0.9, y: 0.6, r: 0.09 }],
     // 8%：比演武荒原（11%）薄一截，但不能再薄了 —— 走位边界固定退到 64 个单位
-    // （Field.edgeMargin），树墙得比它厚，人贴到底的时候身后才还有树。1600 × 0.08 = 128，
+    // （Field.edgeMargin），树墙得比它厚，人贴到底的时候身后才还有树。4800 × 0.08 = 384，
     // 正好留一倍余量。
     border: 0.08,
   },
@@ -255,7 +255,7 @@ const redSandSteppe: GameMapDef = {
 };
 
 /**
- * 白岭雪原：默认下雪的一张（1400×1400）。
+ * 白岭雪原：默认下雪的一张（4200×4200）。
  *
  * 出兵表里弓手和骑射合计占到一半，是"被箭磨死"的那一张。地形上给了对策：三片探进场内的
  * 林子和一大片冻湖把开阔地切碎，躲得进去。
@@ -280,8 +280,8 @@ const whiteRidgeSnowfield: GameMapDef = {
   ],
   objectiveKey: 'mapSnowObjective',
 
-  width: 1400,
-  height: 1400,
+  width: 4200,
+  height: 4200,
   seed: 20261, // 小种子：noise 里 seed 是直接乘进相位的，量级换一档，成团的样子就完全是另一份
   layout: {
     dirt: [

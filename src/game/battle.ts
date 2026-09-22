@@ -413,14 +413,17 @@ const CROWD_SPACING = 1.5;
 /** 允许调到的上限。 */
 const MAX_CROWD_SPACING = 2.2;
 
-/** 场上最胖的人。格子边长和探测半径都按他算最坏情况。 */
-const MAX_BULK = 1.34;
+/** 场上最胖的人。格子边长和探测半径都按首领的实际体格算最坏情况。 */
+const MAX_BULK = 1.5;
 /** 最胖那位的站位半径。 */
 const MAX_SPACING = RigSpec.torsoHalfWidth * MAX_BULK;
 
+/** 杂兵和首领之间额外留出的可读缓冲，单位是世界单位；首领之间不使用这条缓冲。 */
+const BOSS_CLEARANCE = 18;
+
 /** 当前间距下，分离的最大交互距离 —— 也就是格子边长的下限。 */
 const cellSizeFor = (spacing: number): number =>
-  Math.ceil(RigSpec.torsoHalfWidth * MAX_BULK * 2 * spacing);
+  Math.ceil(RigSpec.torsoHalfWidth * MAX_BULK * 2 * spacing + BOSS_CLEARANCE);
 
 
 
@@ -788,6 +791,15 @@ type EnemyMover = Pick<Character,
   'x' | 'y' | 'facing' | 'def' | 'speed' | 'walkSpeed' | 'crowdPace' |
   'sideBias' | 'radius' | 'spacing' | 'alive' | 'stats' | 'expValue' | 'boss' | 'stun'
 >;
+
+/** 两个敌人的最小可读距离。只给杂兵—首领 pair 加额外缓冲，首领之间沿用普通规则。 */
+const crowdDistance = (
+  spacingA: number,
+  bossA: boolean,
+  spacingB: number,
+  bossB: boolean,
+  crowdSpacing: number,
+): number => (spacingA + spacingB) * crowdSpacing + (bossA !== bossB ? BOSS_CLEARANCE : 0);
 
 /** 只缓存邻居让路决策；朝向、速度、移动和碰撞仍逐帧计算。 */
 interface CrowdDecision {
@@ -2094,6 +2106,11 @@ export class Battle {
     };
   }
 
+  /** 取走一次波次完成脉冲。UI 用它触发波次奖励，调试跳波不走这条路。 */
+  takeWaveCleared(): boolean {
+    return this.waves.takeWaveCleared();
+  }
+
   /** 换出兵模板（换地图）。会立刻从第一波重新开始，不动场上已有的人。 */
   setSpawnTemplate(template: SpawnTemplate): void {
     this.waves.setTemplate(template);
@@ -2504,7 +2521,7 @@ export class Battle {
       const r = reserved[i];
       if (enemies.length >= this.maxEnemies) break;
       if (!this.inActiveArea(r.x, r.y, view, RESTORE_MARGIN)) continue;
-      if (!this.spotFree(r.x, r.y, r.def, initialCount)) continue;
+      if (!this.spotFree(r.x, r.y, r.def, r.boss, initialCount)) continue;
 
       const e = new Character(r.def, r.palette, r.walkSpeed, r.sideBias);
       e.stats = r.stats;
@@ -2533,7 +2550,7 @@ export class Battle {
    * 只给恢复用。出怪那条路不查这个 —— 出怪点在视野外的空地上，撞上了由分离顺手推开就行；
    * 而恢复是往**人堆里**放，放错了就是两个人叠在一起从画面外走出来。
    */
-  private spotFree(x: number, y: number, def: UnitDef, initialCount: number): boolean {
+  private spotFree(x: number, y: number, def: UnitDef, boss: boolean, initialCount: number): boolean {
     const { field, grid, enemies, player, crowdSpacing } = this;
     // 尺寸只由 def 推出来（见 Character 的 radius / spacing），所以不必先造一个人再来问。
     // 这条路每帧会为每个还没放回去的预留走一次，白造的 Character 会连带 Pose 和 Animator。
@@ -2546,12 +2563,12 @@ export class Battle {
 
     for (let i = initialCount; i < enemies.length; i++) {
       const other = enemies[i];
-      const min = (spacing + other.spacing) * crowdSpacing;
+      const min = crowdDistance(spacing, boss, other.spacing, other.boss, crowdSpacing);
       if ((other.x - x) ** 2 + (other.y - y) ** 2 < min * min) return false;
     }
 
     // 最坏情况下够得着的距离：对面是场上最胖的那位。按它开查询窗口，格子数才与间距无关。
-    const reach = (spacing + MAX_SPACING) * crowdSpacing;
+    const reach = (spacing + MAX_SPACING) * crowdSpacing + BOSS_CLEARANCE;
     const span = Math.max(1, Math.ceil(reach / grid.cellSize));
     const cx = grid.colOf(x);
     const cy = grid.rowOf(y);
@@ -2567,7 +2584,7 @@ export class Battle {
         for (let k = grid.begin(gx, gy); k < end; k++) {
           const other = enemies[items[k]];
           if (!other.alive) continue;
-          const min = (spacing + other.spacing) * crowdSpacing;
+          const min = crowdDistance(spacing, boss, other.spacing, other.boss, crowdSpacing);
           const dx = other.x - x;
           const dy = other.y - y;
           if (dx * dx + dy * dy < min * min) return false;
@@ -4666,7 +4683,7 @@ export class Battle {
     const { movementGrid: grid, movers: enemies, crowdSpacing, player } = this;
     const self = enemies[i];
     const items = grid.indices;
-    const maxLook = (self.spacing + MAX_SPACING) * crowdSpacing * SLOT_LOOKAHEAD;
+    const maxLook = ((self.spacing + MAX_SPACING) * crowdSpacing + BOSS_CLEARANCE) * SLOT_LOOKAHEAD;
     const span = Math.max(1, Math.ceil(maxLook / grid.cellSize));
     const cx = grid.colOf(self.x);
     const cy = grid.rowOf(self.y);
@@ -4693,7 +4710,7 @@ export class Battle {
           const dy = other.y - self.y;
           const along = dx * dirX + dy * dirY;
           if (along <= 0) continue;
-          const touch = (self.spacing + other.spacing) * crowdSpacing;
+          const touch = crowdDistance(self.spacing, self.boss, other.spacing, other.boss, crowdSpacing);
           const look = touch * SLOT_LOOKAHEAD;
           if (along >= look) continue;
           const lateral = dx * -dirY + dy * dirX;
@@ -4753,7 +4770,7 @@ export class Battle {
             if (!b.alive) continue;
             const dx = b.x - a.x;
             const dy = b.y - a.y;
-            const min = (a.spacing + b.spacing) * this.crowdSpacing;
+            const min = crowdDistance(a.spacing, a.boss, b.spacing, b.boss, this.crowdSpacing);
             const d2 = dx * dx + dy * dy;
             if (d2 >= min * min || d2 < 1e-6) continue;
             const d = Math.sqrt(d2);

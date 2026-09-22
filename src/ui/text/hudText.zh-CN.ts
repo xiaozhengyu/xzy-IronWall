@@ -213,6 +213,7 @@ export const HUD_TEXT_ZH_CN: HudMessages = {
 
   // ---------------------------------------------------------------- 三选一属性牌
   cardPicker: '升级卡牌',
+  cardSelectionProgress: '已选择 {selected}/{total} 张',
   cardAttack: '攻击力',
   cardAttackDetail: '所有伤害 +{value}%',
   cardAttackSpeed: '攻击频率',
