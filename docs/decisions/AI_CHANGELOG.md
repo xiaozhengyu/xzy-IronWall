@@ -13,6 +13,13 @@ Use this format:
 - Validation: <commands and manual scenarios>
 ```
 
+## 2026-09-23 — ui-redesign
+
+- Spec: `docs/spec/ui-redesign/`
+- Summary: Split battlefield and hero selection into two steps; added category tabs to the shop; separated cumulative and latest-run history; widened pause/result panels; changed wave cards to readable horizontal tiles while preserving nine options and three picks.
+- Impact: Setup state now retains its step and selections after shop visits; DOM preview bounds continue to position Pixi-rendered map, hero, and foe stages. Current-item descriptions refresh with locale changes. No combat balance, purchase prices, or reward counts changed.
+- Validation: `npm run build`; `git diff --check`; browser preview covered setup navigation, shop categories/return state, bilingual copy, pause settings, current-item strip, and nine-card three-pick selection at a 1034×582 game stage. The embedded browser could not be resized to 1366×768 or 1920×1080 during this pass.
+
 ## 2026-09-22 — keyboard-controls
 
 - Spec: `docs/spec/keyboard-controls/`

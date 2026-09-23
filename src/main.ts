@@ -1203,12 +1203,17 @@ function drawSetupScreen(dt: number): void {
   const map = setup.currentMap;
   if (dt > 0) {
     advancePreview(dt);
-    updateFoes(dt);
+    if (!setup.heroStepActive) updateFoes(dt);
     // 天气得自己走：积雪和地面湿度是慢慢累出来的，没人推它就永远停在 0，切了雪地图也不会白。
     field.weather.update(dt);
   }
 
-  const stages: StageFigure[] = [heroStageFigure(), ...foeStageFigures()];
+  if (setup.heroStepActive) {
+    scene.drawStages(field, [heroStageFigure()]);
+    return;
+  }
+
+  const stages = foeStageFigures();
   const rect = mapRect();
   if (rect.w <= 0 || rect.h <= 0) {
     scene.drawStages(field, stages);
@@ -1545,7 +1550,7 @@ function enterMap(hero: HeroDef, map: GameMapDef, weather: WeatherKind): void {
  * 商店。三个货架都读写同一份存档，买完当场写盘（Profile 里每一条 buy 都自己 save）。
  *
  * 买完不用通知别人：根基在进图那一刻才读（enterMap 里把 rootBonus 交给 Battle），师承同理，
- * 补给也是那一刻才发。选人界面上那一排属性数字要跟着变，所以关商店时重新 show 一下选人界面。
+ * 补给也是那一刻才发。将领页上的属性、技能和随身补给要跟着变，返回时只刷新显示数据，保留备战步骤。
  */
 const shop = new ShopScreen({
   view: () => ({
@@ -1559,8 +1564,8 @@ const shop = new ShopScreen({
   buySupply: (id, price) => profile.buySupply(id, price),
   onClose: () => {
     shop.hide();
-    // 买完根基之后那排属性和六边形都变了，重新搭一遍。
-    setup.show();
+    // 刷新买完后的属性/技能/补给信息，同时保留从哪一步打开商店。
+    setup.refreshAfterShop();
     // 这一下是两次换屏（关商店 + 重搭选人界面），但只该听见一声 —— 交给 gap 合。
     sceneChanged();
   },
@@ -1654,6 +1659,7 @@ const summary = new SummaryScreen({
   onMusicChange: (on) => applyMusic(on),
   onCombatTextChange: (kind, on) => applyCombatText(kind, on),
   onMinimapChange: (on) => applyMinimap(on),
+  heldItems: () => heldItems(),
 }, text);
 // 存档里那一档先告诉结算屏，它那两个方块才知道哪个该亮。语言走的是共用的 HudText，
 // 不用再喂一次。

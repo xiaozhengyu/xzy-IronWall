@@ -82,6 +82,8 @@ export interface SummaryHooks {
   onCombatTextChange?(kind: CombatTextKind, on: boolean): void;
   /** ESC 页上的小地图显示开关。 */
   onMinimapChange?(on: boolean): void;
+  /** Current item strip in the active locale, used when language changes while this panel is open. */
+  heldItems?(): readonly ItemStripEntry[];
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -165,6 +167,7 @@ export class SummaryScreen {
       this.markLocale();
       if (!this.root.hidden && this.lastShow) {
         this.applyTexts(this.lastShow.mode, this.lastShow.stats);
+        currentItems.show('summary', this.hooks.heldItems?.() ?? this.lastShow.stats.items);
       }
     });
     // 这三个按钮的字绑在文案上：语言按钮就在这一屏，换完必须当场变。
@@ -223,6 +226,7 @@ export class SummaryScreen {
   show(mode: SummaryMode, stats: SummaryStats): void {
     this.cancelClose();
     this.root.hidden = false;
+    this.root.dataset.mode = mode;
     this.lastShow = { mode, stats };
     this.applyTexts(mode, stats);
 
@@ -307,15 +311,18 @@ export class SummaryScreen {
     card.appendChild(head);
     card.appendChild(el('div', 'summary-rule'));
 
-    // 胜负大字摆在分割线下面、战况上面：读完它再往下看数据，顺序和玩家关心的顺序一致。
-    card.appendChild(this.verdict);
-    card.appendChild(this.lead);
+    const content = el('div', 'summary-content');
+    const narrative = el('div', 'summary-narrative');
+    // 胜负大字在战况上方：先读结果，再看收获和统计。
+    narrative.append(this.verdict, this.lead);
+    content.appendChild(narrative);
 
     // ---- 收集物：这一屏的主角
     const loot = el('div', 'summary-loot');
     loot.appendChild(this.lootItem('coin', 'statGold', this.coins));
     loot.appendChild(this.lootItem('gem', 'statGems', this.gems));
-    card.appendChild(loot);
+    const detail = el('div', 'summary-detail');
+    detail.appendChild(loot);
 
     // ---- 其余战况
     const stats = el('div', 'summary-stats');
@@ -328,9 +335,11 @@ export class SummaryScreen {
     this.stats.loot = this.stat(stats, 'statLoot');
     this.stats.exp = this.stat(stats, 'statExp');
     this.stats.level = this.stat(stats, 'statLevel');
-    card.appendChild(stats);
+    detail.appendChild(stats);
 
-    card.appendChild(this.note);
+    detail.appendChild(this.note);
+    content.appendChild(detail);
+    card.appendChild(content);
 
     this.resumeButton.addEventListener('click', () => this.hooks.onResume());
     /*

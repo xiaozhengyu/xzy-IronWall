@@ -203,6 +203,14 @@ export interface HudMessages {
   setupStart: string;
   setupEntering: string;
   setupLead: string;
+  setupStepBattlefield: string;
+  setupStepHero: string;
+  setupChooseBattlefield: string;
+  setupNextHero: string;
+  setupChangeBattlefield: string;
+  setupBackBattlefield: string;
+  setupWeatherSummary: string;
+  setupObjectiveSummary: string;
   setupGrowth: string;
   setupEnvironment: string;
   setupTerrain: string;

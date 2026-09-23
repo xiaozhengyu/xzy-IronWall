@@ -144,6 +144,7 @@ export class HistoryScreen {
      */
     const played = r.runs > 0;
     const num = (value: number) => (played ? `${value}` : '—');
+    const sections = el('div', 'history-sections');
 
     const cell = (parent: HTMLElement, key: string, value: string, wide = false) => {
       const box = el('div', `history-cell${wide ? ' history-cell--wide' : ''}`);
@@ -152,8 +153,9 @@ export class HistoryScreen {
       parent.appendChild(box);
     };
 
-    // ---- 累计
-    this.body.appendChild(el('div', 'history-head', this.text.value('historyTotal')));
+    // ---- 累计数据
+    const totalSection = el('section', 'history-section history-section--total');
+    totalSection.appendChild(el('div', 'history-head', this.text.value('historyTotal')));
     const total = el('div', 'history-grid');
     // 胜率摆第一个、占两格：这一屏所有的数里只有它是一个**评价**，别的都是计数。
     // 它自己带着"几胜几局"，所以不再单开一格写战斗次数 —— 九个格子正好三行。
@@ -172,9 +174,11 @@ export class HistoryScreen {
     cell(total, this.text.value('historyBestWave'), num(r.bestWave));
     cell(total, this.text.value('statGold'), num(r.coins));
     cell(total, this.text.value('statGems'), num(r.gems));
-    this.body.appendChild(total);
+    totalSection.appendChild(total);
+    sections.appendChild(totalSection);
 
     // ---- 最近一场
+    const recentSection = el('section', 'history-section history-section--recent');
     const last = r.last;
     const head = el('div', 'history-head');
     head.appendChild(el('span', undefined, this.text.value('historyLastRun')));
@@ -183,7 +187,7 @@ export class HistoryScreen {
         // 存档里那个 map 存的是文案 key；本地化之前的旧档存的是当时那一版的中文，原样显示。
         ? `${this.text.valueOrRaw(last.map)} · ${ago(last.at, this.text)}`
         : this.text.value('historyNeverPlayed')));
-    this.body.appendChild(head);
+    recentSection.appendChild(head);
 
     const one = el('div', 'history-grid');
     const verdict = el('div',
@@ -199,7 +203,9 @@ export class HistoryScreen {
     cell(one, this.text.value('historyWave'), last ? `${last.wave} / ${last.waves}` : '—');
     cell(one, this.text.value('statGold'), last ? `${last.coins}` : '—');
     cell(one, this.text.value('statGems'), last ? `${last.gems}` : '—');
-    this.body.appendChild(one);
+    recentSection.appendChild(one);
+    sections.appendChild(recentSection);
+    this.body.appendChild(sections);
   }
 
   private build(): void {

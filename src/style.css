@@ -1,6 +1,18 @@
 :root {
   color-scheme: dark;
 
+  /* Shared game UI palette: menus, overlays, and the in-run HUD use the same material hierarchy. */
+  --ui-ink: #0b0d12;
+  --ui-panel: #12151c;
+  --ui-panel-raised: #171b24;
+  --ui-border: #2b3242;
+  --ui-gold: #c8a45c;
+  --ui-ivory: #f0e6d2;
+  --ui-text: #cdd5e4;
+  --ui-muted: #7f8ba3;
+  --ui-danger: #c0483a;
+  --ui-focus: #e2c273;
+
   /*
    * 画幅的**最小尺寸**，也是这一套界面的设计尺寸：960 × 540，正好是渲染缓冲那一张
    * （main.ts 的 VIEW_WIDTH / VIEW_HEIGHT）。
@@ -60,7 +72,7 @@ body,
   height: var(--stage-h);
   aspect-ratio: 16 / 9;
   overflow: hidden;
-  background: #0b0d12;
+  background: var(--ui-ink);
   outline: 1px solid rgba(198, 212, 174, 0.16);
   box-shadow: 0 0 70px rgba(0, 0, 0, 0.72);
 }

@@ -11,14 +11,11 @@ import {
 } from '../data/shop';
 
 /**
- * 商店。三个货架，三种花钱的形状（见 data/shop.ts 顶上那段）。
- *
- * 为什么三档摆在同一屏而不是三个标签页：它们是**互相竞争**的。玩家手里的钱只有一笔，这一局
- * 打完的六百枚是买一张狂暴符、还是攒着凑根基的第一级，这个取舍才是商店真正在问的问题。分成
- * 三页之后每一页各自看起来都很便宜，而那个取舍就看不见了。
- *
- * 图标全部借现有的那几张（技能图、HUD 小图标）——先让它跑起来，之后统一换。
+ * 商店。类别切换减少同屏商品数量；金币余额和各卡价格一直可见，三类购买仍共用同一笔金币。
+ * 图标复用现有技能图和 HUD 小图标，让相同属性在商店与战斗奖励里保持一致。
  */
+
+type ShopCategory = 'roots' | 'mastery' | 'supplies';
 
 export interface ShopView {
   coins: number;
@@ -76,7 +73,9 @@ export class ShopScreen {
   private readonly hooks: ShopHooks;
   private readonly text: HudText;
   private readonly purse = el('span', 'shop-purse');
+  private readonly tabs = el('nav', 'shop-tabs');
   private readonly body = el('div', 'shop-body');
+  private category: ShopCategory = 'roots';
 
   constructor(hooks: ShopHooks, text: HudText) {
     this.hooks = hooks;
@@ -111,16 +110,46 @@ export class ShopScreen {
   private refresh(): void {
     const view = this.hooks.view();
     this.purse.textContent = String(view.coins);
+    this.refreshTabs();
     this.body.replaceChildren();
+    if (this.category === 'roots') {
+      this.body.append(this.shelf('shelfRoots', 'shelfRootsNote'), this.rootGrid(view));
+    } else if (this.category === 'mastery') {
+      this.body.append(this.shelf('shelfMastery', 'shelfMasteryNote'), this.masteryGrid(view));
+    } else {
+      this.body.append(this.shelf('shelfSupply', 'shelfSupplyNote'), this.supplyGrid(view));
+    }
+  }
 
-    // ---- 根基
-    this.body.appendChild(this.shelf('shelfRoots', 'shelfRootsNote'));
-    // 根基恰好六项，排成三列是两行整的；四列的话第二行会空出两格。
-    const roots = el('div', 'shop-grid shop-grid--three');
+  private refreshTabs(): void {
+    const categories: { id: ShopCategory; key: HudTextKey }[] = [
+      { id: 'roots', key: 'shelfRoots' },
+      { id: 'mastery', key: 'shelfMastery' },
+      { id: 'supplies', key: 'shelfSupply' },
+    ];
+    this.tabs.replaceChildren();
+    for (const category of categories) {
+      const active = category.id === this.category;
+      const button = el('button', `shop-tab${active ? ' on' : ''}`, this.text.value(category.key));
+      button.type = 'button';
+      button.setAttribute('role', 'tab');
+      button.setAttribute('aria-selected', String(active));
+      button.tabIndex = active ? 0 : -1;
+      button.addEventListener('click', () => {
+        if (this.category === category.id) return;
+        this.category = category.id;
+        this.refresh();
+      });
+      this.tabs.appendChild(button);
+    }
+  }
+
+  private rootGrid(view: ShopView): HTMLElement {
+    const grid = el('div', 'shop-grid shop-grid--three');
     for (const def of Roots) {
       const owned = view.root(def.key);
       const price = rootPrice(def, owned);
-      roots.appendChild(this.card({
+      grid.appendChild(this.card({
         icon: ROOT_ICONS[def.key],
         name: this.text.value(def.nameKey),
         note: owned > 0
@@ -133,16 +162,16 @@ export class ShopScreen {
         buy: () => this.hooks.buyRoot(def.key, price ?? 0),
       }));
     }
-    this.body.appendChild(roots);
+    return grid;
+  }
 
-    // ---- 师承
-    this.body.appendChild(this.shelf('shelfMastery', 'shelfMasteryNote'));
-    const mastery = el('div', 'shop-grid');
+  private masteryGrid(view: ShopView): HTMLElement {
+    const grid = el('div', 'shop-grid');
     for (const id of masterySkills()) {
       const owned = view.mastery(id);
       const price = masteryPrice(owned);
       const skill = skillById(id);
-      mastery.appendChild(this.card({
+      grid.appendChild(this.card({
         iconNode: createSkillIcon(id, 'shop-icon'),
         name: this.text.value(skill.nameKey),
         note: this.text.value('masteryStartLevel', { level: startLevelOf(owned) }),
@@ -153,16 +182,16 @@ export class ShopScreen {
         buy: () => this.hooks.buyMastery(id, price ?? 0),
       }));
     }
-    this.body.appendChild(mastery);
+    return grid;
+  }
 
-    // ---- 补给
-    this.body.appendChild(this.shelf('shelfSupply', 'shelfSupplyNote'));
-    const supplies = el('div', 'shop-grid');
+  private supplyGrid(view: ShopView): HTMLElement {
+    const grid = el('div', 'shop-grid');
     for (const def of Supplies) {
       const item = pickupById(def.id);
       if (!item) continue;
       const owned = view.supply(def.id);
-      supplies.appendChild(this.card({
+      grid.appendChild(this.card({
         icon: pickupIcon(def.id),
         name: this.text.value(item.nameKey),
         note: this.text.value(item.noteKey),
@@ -170,12 +199,12 @@ export class ShopScreen {
         max: SUPPLY_MAX,
         price: owned >= SUPPLY_MAX ? null : def.price,
         coins: view.coins,
-        // 补给是可以反复买的，所以格子上写"屯了几个"，不是"买到第几级"。
+        // 补给可重复购买，卡片上显示持有数量而非等级。
         stack: true,
         buy: () => this.hooks.buySupply(def.id, def.price),
       }));
     }
-    this.body.appendChild(supplies);
+    return grid;
   }
 
   private shelf(nameKey: HudTextKey, noteKey: HudTextKey): HTMLElement {
@@ -257,6 +286,8 @@ export class ShopScreen {
     head.appendChild(right);
     card.appendChild(head);
     card.appendChild(el('div', 'shop-rule'));
+    this.tabs.setAttribute('role', 'tablist');
+    card.appendChild(this.tabs);
     card.appendChild(this.body);
   }
 }

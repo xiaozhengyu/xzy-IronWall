@@ -10,27 +10,13 @@ import { StatHex, type StatAxis } from './statHex';
 import { HudText, type HudLocale, type HudTextKey } from './text/hudText';
 
 /**
- * 备战界面：一屏之内选人、选图、开打。
+ * 备战界面分两步：先选战场与天气，再选将领并开局。
  *
- * 原来这里是两步（先选角色、再选地图，顶上一条步骤指示）。合成一屏之后，"我带谁、去哪儿、
- * 会遇到什么"三件事同时在眼前，改任何一样另外两样都不用重新走一遍。代价是每一栏都窄了，
- * 所以三块画布内容（人物、地图、敌人）都压到了各自栏里最省地方的位置。
+ * 地图页给地图预览和任务信息留出主要空间；将领页用横向名单、人物舞台和属性区展示当前选择。
+ * 选择状态由这个 DOM 界面持有，游戏数据和状态切换仍通过 SetupBridge 交给 main.ts。
  *
- * **doc/游戏流程.txt 写的仍然是两步流程**，和这里对不上 —— 合并是后来定的，那份文档还没跟上。
- *
- * 三栏各管一件事：
- *
- *   左  带谁去。列表在上，选中的那个人在下面的台子上自己走、跑、挥、放招（脚本，见
- *       main.ts 的 advancePreview），技能和属性做成小标签压在台子下面。
- *   中  去哪儿。上面是真实地图（可拖可缩，画在画布上），下面一条横向地图列表。
- *   右  会遇到什么。地图概况、天气、这张图上的敌人，最下面是开始。
- *
- * 界面只做三件事：把目录摆出来、记住选了谁、把"开始"喊回去。它不认识 Battle 也不认识
- * Field —— 角色最终变成 battle.setPreset 的一个下标、地图最终变成一份 Field 参数，那两件事
- * 都在 main.ts 里完成（见 SetupBridge）。
- *
- * 用 DOM 而不是画进画布，理由和暂停面板同一条：这里全是十几号字，而画布上的东西要先被量化
- * 到像素格子里再最近邻放大。画进画布的只有人、地图和敌人 —— 那些本来就该吃像素网格。
+ * DOM 负责排版与文字；人物、地图和敌军预览仍由 Pixi 绘制，并按 DOM 实际边界定位。DOM 与画布
+ * 不能各自维护一份尺寸，否则窗口变化时预览会和面板错位。
  */
 
 /**
@@ -179,20 +165,29 @@ export class SetupScreen {
   private heroIndex = 0;
   private mapIndex = 0;
   private weather: WeatherKind = 'clear';
+  private step: 'battlefield' | 'hero' = 'battlefield';
   /** 已经按下开始，界面锁住。 */
   private entering = false;
 
-  // ---- 左栏
+  // ---- 两步备战页
+  private readonly battlefieldPage = el('section', 'setup-page setup-page--battlefield');
+  private readonly heroPage = el('section', 'setup-page setup-page--hero');
+  private readonly battlefieldStepLabel = el('span', 'setup-route-step');
+  private readonly heroStepLabel = el('span', 'setup-route-step');
+  private readonly mapSummaryThumb = el('div', 'setup-map-summary-thumb');
+  private readonly mapSummaryName = el('span', 'setup-map-summary-name');
+  private readonly mapSummaryWeather = el('span', 'setup-map-summary-weather');
+  private readonly mapSummaryObjective = el('span', 'setup-map-summary-objective');
+  private readonly mapNextButton = el('button', 'setup-main');
+  private readonly heroBackButton = el('button', 'setup-back');
+
+  // ---- 角色选择
   private readonly heroList = el('div', 'setup-list');
-  /**
-   * 人物台。**一个像素的底色都不能有** —— 人画在画布上，这块 div 盖在画布之上，给它任何
-   * 底色或边框，看到的都是"人被一块颜色挡住了"。它在这里只负责占地方，好让渲染那边量出
-   * 台子该画在哪儿。
-   */
+  /** 人物台由画布绘制；布局盒保持透明，渲染循环按 DOM 实际尺寸定位。 */
   readonly heroStage = el('div', 'setup-stage');
   private readonly heroTags = el('div', 'setup-tags');
 
-  // ---- 中栏
+  // ---- 地图选择
   /**
    * 地图那个框。**建一次就一直用**，不跟着重建 —— 拖动和滚轮的监听挂在它身上。框里没有图：
    * 地图画在画布上（见 Scene.drawMapView），这个框只负责占位、描边和装点位。
@@ -214,6 +209,7 @@ export class SetupScreen {
    */
   readonly foeSlots: HTMLElement[] = [];
   private readonly foeBox = el('div', 'setup-foes');
+  private readonly foeTitle = el('h3', 'setup-block-k');
   private readonly startButton = el('button', 'setup-main');
   /**
    * 开始按钮底下那一排：这一局会带进去的补给。
@@ -274,7 +270,11 @@ export class SetupScreen {
     return this.weather;
   }
 
-  /** 要不要在画布上画那三块东西（人物台、地图、敌人）。进战场那一层盖上时就不画了。 */
+  get heroStepActive(): boolean {
+    return this.step === 'hero';
+  }
+
+  /** 是否显示备战页的画布预览；进入战场遮罩盖上时停止绘制。 */
   get showsStages(): boolean {
     return !this.entering && !this.root.hidden;
   }
@@ -285,6 +285,7 @@ export class SetupScreen {
     this.root.dataset.phase = '';
     void this.root.offsetWidth;
     this.root.dataset.phase = 'in';
+    this.step = 'battlefield';
     this.entering = false;
     this.entryVeil.hidden = true;
     this.startButton.disabled = false;
@@ -297,12 +298,12 @@ export class SetupScreen {
     this.bridge.onMapChange(this.currentMap);
   }
 
-  /**
-   * 把四块面板按当前选择重画一遍。
-   *
-   * 单独抽出来是给换语言用的：那时候该变的只有字，而 show() 还会重播入场动画、把天气
-   * 重置回这张图的默认档 —— 玩家只是点了一下语言按钮，不该把他刚选的东西弄没。
-   */
+  /** 商店关闭后刷新存档派生的显示数据，但保留当前步骤和地图/天气/将领选择。 */
+  refreshAfterShop(): void {
+    if (!this.root.hidden) this.rebuild();
+  }
+
+  /** 语言变化或选择变化时刷新两个步骤里的动态内容，不重置当前步骤和用户选择。 */
   /**
    * 顶栏右侧那三个开关：语言、音效、音乐。
    *
@@ -401,7 +402,29 @@ export class SetupScreen {
     this.buildHeroDetail();
     this.buildMapStrip();
     this.buildMapDetail();
+    this.refreshMapSummary();
     this.refreshSummary();
+    this.updateStep();
+  }
+
+  private setStep(step: 'battlefield' | 'hero'): void {
+    if (this.entering || this.step === step) return;
+    this.step = step;
+    this.updateStep();
+  }
+
+  private updateStep(): void {
+    this.root.dataset.step = this.step;
+    this.battlefieldStepLabel.textContent = `1 · ${this.text.value('setupStepBattlefield')}`;
+    this.heroStepLabel.textContent = `2 · ${this.text.value('setupStepHero')}`;
+    this.battlefieldStepLabel.parentElement?.setAttribute('aria-label', this.text.value('setupLead'));
+    this.battlefieldPage.hidden = this.step !== 'battlefield';
+    this.heroPage.hidden = this.step !== 'hero';
+    this.battlefieldStepLabel.classList.toggle('on', this.step === 'battlefield');
+    this.battlefieldStepLabel.classList.toggle('done', this.step === 'hero');
+    this.heroStepLabel.classList.toggle('on', this.step === 'hero');
+    this.battlefieldStepLabel.setAttribute('aria-current', this.step === 'battlefield' ? 'step' : 'false');
+    this.heroStepLabel.setAttribute('aria-current', this.step === 'hero' ? 'step' : 'false');
   }
 
   hide(): void {
@@ -410,7 +433,7 @@ export class SetupScreen {
   }
 
 
-  // ---------------------------------------------------------------- 左栏：带谁去
+  // ---------------------------------------------------------------- 将领选择
 
   private buildHeroList(): void {
     this.heroList.replaceChildren();
@@ -456,12 +479,7 @@ export class SetupScreen {
     this.bridge.onHeroChange(this.currentHero);
   }
 
-  /**
-   * 台子下面那排小标签：技能和属性。
-   *
-   * 做成标签而不是右栏那种成块的说明，是因为这一栏还要装列表和台子，纵向没有第三块的位置。
-   * 一句话的技能说明挂在 title 上，想看的人停一下就有。
-   */
+  /** 当前将领的简介、技能、等级与属性，集中显示在预览舞台旁。 */
   private buildHeroDetail(): void {
     const hero = this.currentHero;
     this.heroTags.replaceChildren();
@@ -543,7 +561,7 @@ export class SetupScreen {
     this.heroTags.appendChild(statBox);
   }
 
-  // ---------------------------------------------------------------- 中栏：去哪儿
+  // ---------------------------------------------------------------- 战场选择
 
   /**
    * 地图底下那条横向列表。
@@ -577,6 +595,7 @@ export class SetupScreen {
     this.weather = this.currentMap.weather;
     this.buildMapStrip();
     this.buildMapDetail();
+    this.refreshMapSummary();
     this.refreshSummary();
     // buildMapDetail 已经把这张图的敌人框摆好了，渲染那边这时候才量得到位置。
     this.bridge.onMapChange(this.currentMap);
@@ -613,7 +632,7 @@ export class SetupScreen {
     for (let i = pins.length; i < this.pinNodes.length; i++) this.pinNodes[i].hidden = true;
   }
 
-  // ---------------------------------------------------------------- 右栏：会遇到什么
+  // ---------------------------------------------------------------- 战场信息与敌军预览
 
   private buildMapDetail(): void {
     const map = this.currentMap;
@@ -666,7 +685,23 @@ export class SetupScreen {
     if (this.entering || kind === this.weather) return;
     this.weather = kind;
     for (const button of this.weatherButtons) button.node.classList.toggle('on', button.kind === kind);
+    this.refreshMapSummary();
     this.bridge.onWeatherChange(kind);
+  }
+
+  private refreshMapSummary(): void {
+    const map = this.currentMap;
+    this.mapSummaryThumb.replaceChildren();
+    const image = this.bridge.mapImage(map);
+    if (image) this.mapSummaryThumb.appendChild(image);
+    this.mapSummaryName.textContent = this.text.value(map.nameKey);
+    const weather = WEATHERS.find((entry) => entry.kind === this.weather);
+    this.mapSummaryWeather.textContent = this.text.value('setupWeatherSummary', {
+      weather: weather ? this.text.value(weather.nameKey) : '',
+    });
+    this.mapSummaryObjective.textContent = this.text.value('setupObjectiveSummary', {
+      objective: this.text.value(map.objectiveKey),
+    });
   }
 
   private refreshSummary(): void {
@@ -760,19 +795,18 @@ export class SetupScreen {
 
     const body = el('div', 'setup-body');
 
-    // ---- 左：带谁去
-    const colLeft = el('div', 'setup-col l');
-    colLeft.appendChild(this.heroList);
-    colLeft.appendChild(this.heroStage);
-    colLeft.appendChild(this.heroTags);
-    body.appendChild(colLeft);
+    const route = el('nav', 'setup-route');
+    route.setAttribute('aria-label', this.text.value('setupLead'));
+    route.append(this.battlefieldStepLabel, this.heroStepLabel);
+    body.appendChild(route);
 
-    // ---- 中：去哪儿
-    const colMid = el('div', 'setup-col m');
+    // ---- 第一步：地图、环境与目标
+    const mapLayout = el('div', 'setup-map-layout');
+    const mapColumn = el('div', 'setup-map-column');
     this.mapFrame.appendChild(this.mapPins);
     const mapBox = el('div', 'setup-map-box');
     mapBox.appendChild(this.mapFrame);
-    colMid.appendChild(mapBox);
+    mapColumn.appendChild(mapBox);
 
     const legend = el('div', 'setup-legend');
     legend.appendChild(el('span', 'setup-legend-i start'));
@@ -786,31 +820,79 @@ export class SetupScreen {
     const mapHint = el('span', 'setup-legend-t');
     this.text.bindText(mapHint, 'setupMapHint');
     legend.appendChild(mapHint);
-    colMid.appendChild(legend);
+    mapColumn.appendChild(legend);
 
     const strip = el('div', 'setup-strip');
     strip.appendChild(this.stripArrow('‹', -1));
     strip.appendChild(this.mapStrip);
     strip.appendChild(this.stripArrow('›', 1));
-    colMid.appendChild(strip);
-    body.appendChild(colMid);
+    mapColumn.appendChild(strip);
+    mapLayout.appendChild(mapColumn);
 
-    // ---- 右：会遇到什么
-    const colRight = el('div', 'setup-col r');
-    colRight.appendChild(this.mapInfo);
+    const mapAside = el('aside', 'setup-map-aside');
+    mapAside.appendChild(this.mapInfo);
     const foeSection = el('div', 'setup-foe-section');
-    const foeTitle = el('h3', 'setup-block-k');
-    this.text.bindText(foeTitle, 'setupFoes');
-    foeSection.appendChild(foeTitle);
+    this.text.bindText(this.foeTitle, 'setupFoes');
+    foeSection.appendChild(this.foeTitle);
     foeSection.appendChild(this.foeBox);
-    colRight.appendChild(foeSection);
-    const foot = el('div', 'setup-foot');
-    foot.appendChild(this.summary);
+    mapAside.appendChild(foeSection);
+    mapLayout.appendChild(mapAside);
+    this.battlefieldPage.appendChild(mapLayout);
+
+    const mapFooter = el('div', 'setup-step-footer');
+    const mapFooterNote = el('span', 'setup-step-note');
+    this.text.bindText(mapFooterNote, 'setupChooseBattlefield');
+    mapFooter.appendChild(mapFooterNote);
+    this.text.bindText(this.mapNextButton, 'setupNextHero');
+    this.mapNextButton.type = 'button';
+    this.mapNextButton.addEventListener('click', () => this.setStep('hero'));
+    mapFooter.appendChild(this.mapNextButton);
+    this.battlefieldPage.appendChild(mapFooter);
+    body.appendChild(this.battlefieldPage);
+
+    // ---- 第二步：队伍与将领
+    const heroMapSummary = el('div', 'setup-map-summary');
+    heroMapSummary.appendChild(this.mapSummaryThumb);
+    const mapCopy = el('div', 'setup-map-summary-copy');
+    mapCopy.appendChild(this.mapSummaryName);
+    mapCopy.appendChild(this.mapSummaryWeather);
+    mapCopy.appendChild(this.mapSummaryObjective);
+    heroMapSummary.appendChild(mapCopy);
+    const changeMapButton = el('button', 'setup-map-change');
+    this.text.bindText(changeMapButton, 'setupChangeBattlefield');
+    changeMapButton.type = 'button';
+    changeMapButton.addEventListener('click', () => this.setStep('battlefield'));
+    heroMapSummary.appendChild(changeMapButton);
+    this.heroPage.appendChild(heroMapSummary);
+
+    const heroChoice = el('section', 'setup-hero-choice');
+    const heroChoiceTitle = el('h2', 'setup-section-title');
+    this.text.bindText(heroChoiceTitle, 'setupStepHero');
+    heroChoice.appendChild(heroChoiceTitle);
+    heroChoice.appendChild(this.heroList);
+    this.heroPage.appendChild(heroChoice);
+
+    const heroLayout = el('div', 'setup-hero-layout');
+    const heroDetailPanel = el('div', 'setup-hero-detail-panel');
+    heroDetailPanel.appendChild(this.heroTags);
+    heroLayout.appendChild(heroDetailPanel);
+    const heroStagePanel = el('div', 'setup-hero-stage-panel');
+    heroStagePanel.appendChild(this.heroStage);
+    heroLayout.appendChild(heroStagePanel);
+    this.heroPage.appendChild(heroLayout);
+
+    const heroFooter = el('div', 'setup-step-footer setup-step-footer--hero');
+    this.text.bindText(this.heroBackButton, 'setupBackBattlefield');
+    this.heroBackButton.type = 'button';
+    this.heroBackButton.addEventListener('click', () => this.setStep('battlefield'));
+    heroFooter.appendChild(this.heroBackButton);
+    const heroFooterInfo = el('div', 'setup-hero-footer-info');
+    heroFooterInfo.append(this.summary, this.carryBox);
+    heroFooter.appendChild(heroFooterInfo);
     this.startButton.addEventListener('click', () => this.start());
-    foot.appendChild(this.startButton);
-    foot.appendChild(this.carryBox);
-    colRight.appendChild(foot);
-    body.appendChild(colRight);
+    heroFooter.appendChild(this.startButton);
+    this.heroPage.appendChild(heroFooter);
+    body.appendChild(this.heroPage);
 
     this.root.appendChild(body);
 

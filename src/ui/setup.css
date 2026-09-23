@@ -23,7 +23,7 @@
   font-family: ui-monospace, 'Cascadia Mono', Consolas, 'Microsoft YaHei', monospace;
   font-size: 13px;
   line-height: 1.5;
-  color: #cdd5e4;
+  color: var(--ui-text);
   user-select: none;
   /*
    * 整框的高度。要和画布对齐的元素按它取尺寸，而不是写死像素 —— 画布是一张固定 960×540 的
@@ -917,6 +917,387 @@
   height: 16px;
   margin: 0 4px;
   background: #2c3444;
+}
+
+/* ---------------------------------------------------------------- 两步备战流程 */
+
+.setup-top {
+  align-items: center;
+  min-height: 54px;
+  padding: 8px 18px;
+}
+
+.setup-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 16px 14px;
+}
+
+.setup-route {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 0 4px 8px;
+  border-bottom: 1px solid rgba(202, 164, 91, 0.2);
+}
+
+.setup-route-step {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 2px 12px;
+  color: #7f8ba3;
+  font-size: 13px;
+  letter-spacing: 0.05em;
+}
+
+.setup-route-step::after {
+  content: '';
+  position: absolute;
+  right: -6px;
+  width: 8px;
+  height: 8px;
+  border-top: 1px solid #596276;
+  border-right: 1px solid #596276;
+  transform: rotate(45deg);
+}
+
+.setup-route-step:last-child::after {
+  display: none;
+}
+
+.setup-route-step.on {
+  color: var(--ui-ivory);
+  background: rgba(200, 164, 92, 0.12);
+  box-shadow: inset 0 -2px #c8a45c;
+}
+
+.setup-route-step.done {
+  color: #d8c9a4;
+}
+
+.setup-page {
+  flex: 1;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.setup-map-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(280px, 0.85fr);
+  gap: 14px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.setup-map-column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.setup-map-box {
+  align-items: center;
+  padding: 6px;
+  background: rgba(7, 10, 13, 0.32);
+  border: 1px solid #232a38;
+}
+
+.setup-map-frame {
+  width: 100%;
+  height: auto;
+  border-color: rgba(200, 164, 92, 0.4);
+}
+
+.setup-map-aside {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.setup-map-aside .setup-col-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.setup-map-aside .setup-foe-section {
+  flex: none;
+  padding: 0 4px;
+}
+
+.setup-map-aside .setup-foes {
+  justify-content: space-around;
+  gap: 4px;
+}
+
+.setup-map-aside .setup-foe-frame {
+  width: clamp(58px, calc(var(--frame-h) * 0.09), 92px);
+  height: clamp(58px, calc(var(--frame-h) * 0.09), 92px);
+}
+
+.setup-step-footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 56px;
+  padding: 8px 12px 8px 18px;
+  background: rgba(11, 13, 18, 0.94);
+  border: 1px solid var(--ui-border);
+}
+
+.setup-step-note {
+  color: #8c97aa;
+  font-size: 12px;
+}
+
+.setup-step-footer .setup-main {
+  flex: 0 0 auto;
+  min-width: min(280px, 36%);
+  padding: 11px 20px;
+}
+
+.setup-page--hero {
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.setup-map-summary {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 7px 10px;
+  background: rgba(11, 13, 18, 0.88);
+  border: 1px solid var(--ui-border);
+}
+
+.setup-map-summary-thumb {
+  width: 92px;
+  aspect-ratio: 20 / 11;
+  overflow: hidden;
+  background: #090c10;
+}
+
+.setup-map-summary-thumb canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.setup-map-summary-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.setup-map-summary-name {
+  overflow: hidden;
+  color: var(--ui-ivory);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setup-map-summary-weather,
+.setup-map-summary-objective {
+  overflow: hidden;
+  color: #8c97aa;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setup-map-change,
+.setup-back {
+  flex: none;
+  padding: 9px 14px;
+  color: #dfe6f3;
+  font: inherit;
+  background: #1b2130;
+  border: 1px solid #39435a;
+  cursor: inherit;
+}
+
+.setup-map-change:hover,
+.setup-back:hover {
+  border-color: #c8a45c;
+  color: #f0e6d2;
+}
+
+.setup-hero-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.setup-section-title {
+  margin: 0;
+  color: #9aa6bd;
+  font-size: 12px;
+  font-weight: normal;
+  letter-spacing: 0.14em;
+}
+
+.setup-hero-choice .setup-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.setup-hero-choice .setup-item {
+  min-height: 64px;
+  padding: 7px 10px;
+  border-color: #30384a;
+}
+
+.setup-hero-choice .setup-item.on {
+  border-color: #c8a45c;
+  box-shadow: inset 3px 0 #c8a45c;
+}
+
+.setup-hero-choice .setup-face {
+  width: 46px;
+  height: 46px;
+}
+
+.setup-hero-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: 16px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.setup-hero-detail-panel {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 16px;
+  background: rgba(11, 13, 18, 0.92);
+  border: 1px solid var(--ui-border);
+}
+
+.setup-hero-detail-panel .setup-tags {
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.setup-hero-detail-panel .setup-tags-head {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.setup-hero-detail-panel .setup-tags-k {
+  font-size: 18px;
+}
+
+.setup-hero-detail-panel .setup-tags-v {
+  white-space: normal;
+}
+
+.setup-hero-detail-panel .setup-chips {
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.setup-hero-detail-panel .setup-chip {
+  padding: 4px 7px;
+}
+
+.setup-hero-detail-panel .setup-stats {
+  gap: 5px 16px;
+  margin-top: 8px;
+  padding-top: 8px;
+  font-size: 13px;
+}
+
+.setup-hero-detail-panel .setup-stat-box {
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.setup-hero-detail-panel .setup-stat-box .stat-hex {
+  width: clamp(116px, calc(var(--frame-h) * 0.15), 168px);
+}
+
+.setup-hero-stage-panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.setup-hero-stage-panel .setup-stage {
+  flex: 1;
+}
+
+.setup-step-footer--hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(220px, 28%);
+}
+
+.setup-hero-footer-info {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.setup-hero-footer-info .setup-summary {
+  text-align: left;
+}
+
+.setup-hero-footer-info .setup-carry {
+  flex: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.setup-step-footer--hero .setup-main {
+  min-width: 0;
+  width: 100%;
+}
+
+@media (max-width: 1100px) {
+  .setup-map-layout {
+    grid-template-columns: minmax(0, 1.35fr) minmax(250px, 0.85fr);
+    gap: 10px;
+  }
+
+  .setup-hero-layout {
+    gap: 10px;
+  }
+
+  .setup-step-footer--hero {
+    grid-template-columns: auto minmax(0, 1fr) minmax(190px, 28%);
+    gap: 8px;
+  }
+}
+
+.setup button:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
 }
 
 /* 顶栏底下那行会自己消失的提示。压在三栏之上，不参与布局，所以它出现和消失都不会推动别的。 */
