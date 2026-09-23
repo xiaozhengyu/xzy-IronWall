@@ -448,6 +448,9 @@ const BOSS_KIND = 'elite' as const;
 
 /** 首领挨一下定在原地多久，秒。只停脚不停手（见 Character.stun）。 */
 const BOSS_HIT_STUN = 0.14;
+const SKY_ARROW_TARGET_X_INSET = 0.78;
+const SKY_ARROW_TARGET_Y_INSET = 0.72;
+const SKY_ARROW_TARGET_SAMPLE_COUNT = 16;
 
 /** 玩家头顶那几串字从多高冒出来。比头再高一截，别和身边满地的伤害数字混在一起。 */
 const PLAYER_FLOAT_Z = 34;
@@ -1191,7 +1194,7 @@ export class Battle {
     scale: number;
   } | null = null;
 
-  /** 穿云箭：升空后在第 0.8 秒选定当前视口内的落点，再从天而降。Scene 只读这个状态来画箭。 */
+  /** 穿云箭：升空后在第 0.8 秒按敌人密度选定落点，再从天而降。Scene 只读这个状态来画箭。 */
   skyArrow: {
     age: number;
     targetX: number;
@@ -4044,6 +4047,54 @@ export class Battle {
    * 字面意思。基础攻击和 instant 类技能仍然走老路：它们的范围只有十几个单位，一帧之内到达，
    * 分不分帧看不出来。
    */
+  private skyArrowTarget(
+    box: { x: number; y: number; halfW: number; halfH: number },
+    radius: number,
+  ): { x: number; y: number } {
+    const halfW = box.halfW * SKY_ARROW_TARGET_X_INSET;
+    const halfH = box.halfH * SKY_ARROW_TARGET_Y_INSET;
+    const eligible = this.enemies.filter((enemy) => enemy.alive
+      && Math.abs(enemy.x - box.x) <= halfW
+      && Math.abs(enemy.y - box.y) <= halfH);
+
+    if (eligible.length === 0) {
+      return {
+        x: box.x + (Math.random() * 2 - 1) * halfW,
+        y: box.y + (Math.random() * 2 - 1) * halfH,
+      };
+    }
+
+    // 少量敌人锚点即可代表屏内分布；对每个锚点按实际爆炸边界统计附近存活敌人。
+    // 候选数固定封顶，避免满屏敌人时退化成两两比较所有敌人。
+    const pool = eligible.slice();
+    const sampleCount = Math.min(SKY_ARROW_TARGET_SAMPLE_COUNT, pool.length);
+    const candidates: { x: number; y: number; weight: number }[] = [];
+    let totalWeight = 0;
+    for (let i = 0; i < sampleCount; i++) {
+      const selected = i + Math.floor(Math.random() * (pool.length - i));
+      [pool[i], pool[selected]] = [pool[selected], pool[i]];
+      const anchor = pool[i];
+      let nearby = 0;
+      for (const enemy of this.enemies) {
+        if (!enemy.alive) continue;
+        const dx = enemy.x - anchor.x;
+        const dy = enemy.y - anchor.y;
+        const hitRadius = radius + enemy.radius;
+        if (dx * dx + dy * dy <= hitRadius * hitRadius) nearby++;
+      }
+      candidates.push({ x: anchor.x, y: anchor.y, weight: nearby });
+      totalWeight += nearby;
+    }
+
+    let roll = Math.random() * totalWeight;
+    for (const candidate of candidates) {
+      roll -= candidate.weight;
+      if (roll < 0) return { x: candidate.x, y: candidate.y };
+    }
+    const last = candidates[candidates.length - 1];
+    return last ? { x: last.x, y: last.y } : { x: box.x, y: box.y };
+  }
+
   private advanceSkills(dt: number, view: BattleView): void {
     const { player } = this;
 
@@ -4072,10 +4123,9 @@ export class Battle {
       const before = arrow.age;
       arrow.age += dt;
       if (before < 0.8 && arrow.age >= 0.8) {
-        // 稍留边距，避免箭头与回旋环被屏幕边缘截断。
-        const box = view.spawn;
-        arrow.targetX = box.x + (Math.random() * 2 - 1) * box.halfW * 0.78;
-        arrow.targetY = box.y + (Math.random() * 2 - 1) * box.halfH * 0.72;
+        const target = this.skyArrowTarget(view.spawn, arrow.radius);
+        arrow.targetX = target.x;
+        arrow.targetY = target.y;
       }
       // 0.8 秒呼应用户要求；后续 0.28 秒是可见的俯冲与落地窗口。
       if (arrow.age >= 1.08) {

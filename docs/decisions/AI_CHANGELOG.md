@@ -20,6 +20,13 @@ Use this format:
 - Impact: Setup state now retains its step and selections after shop visits; DOM preview bounds continue to position Pixi-rendered map, hero, and foe stages. Current-item descriptions refresh with locale changes. No combat balance, purchase prices, or reward counts changed.
 - Validation: `npm run build`; `git diff --check`; browser preview covered setup navigation, shop categories/return state, bilingual copy, pause settings, current-item strip, and nine-card three-pick selection at a 1034×582 game stage. The embedded browser could not be resized to 1366×768 or 1920×1080 during this pass.
 
+## 2026-09-23 — sky-arrow-targeting
+
+- Spec: `docs/spec/sky-arrow-targeting/`
+- Summary: Replaced Sky Arrow's unconditional random landing with a one-time, enemy-density-weighted anchor selection at the existing 0.8-second mark; retained the random safe-area fallback when no living enemies are eligible.
+- Impact: Sampled anchors are weighted by living enemies within the existing impact radius. The chosen point remains fixed during descent, and the existing 1.08-second impact timing and `castRing` damage behavior are unchanged.
+- Validation: `npm run build`; `npm run bench`; `git diff --check`. Manual in-game dense/empty-area casts remain to be observed.
+
 ## 2026-09-22 — keyboard-controls
 
 - Spec: `docs/spec/keyboard-controls/`
