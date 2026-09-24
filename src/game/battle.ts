@@ -198,6 +198,8 @@ const SLOT_LOOKAHEAD = 1.5;
 const SIDESTEP = 0.9;
 const SIDESTEP_SPEED = 0.12;
 const SIDESTEP_NEAR = 45;
+/** 小兵为首领让路时的移动比例，避免普通绕行速度过慢。 */
+const BOSS_YIELD_PACE = 0.7;
 
 /** 大到打不完，当"无敌"用。不使用 Infinity：省得血量参与运算的地方冒出 NaN。 */
 export const INVINCIBLE_HP = 999999;
@@ -814,6 +816,7 @@ interface CrowdDecision {
   crowdSpacing: number;
   room: number;
   side: number;
+  yielding: boolean;
 }
 
 /**
@@ -4586,48 +4589,39 @@ export class Battle {
           e.stats.attackRange * 0.8,
           (player.spacing + e.spacing) * this.crowdSpacing,
         );
-        if (dist > stop && e.stun <= 0) {
-          // 落远了就跑起来。
-          //
-          // 玩家走 32、冲刺 60，敌人只有 20~33 —— 不提速的话，光是按住左键前进就能把整队甩在
-          // 身后，割草游戏最要紧的那份"杀不完"的压迫感直接没了。
-          //
-          // 倍率 1.8 是按"走路甩不掉、冲刺能甩掉"倒推的：20~33 乘 1.8 得 36~59.4，全都快过
-          // 走路的 32，又全都慢过冲刺的 60。于是冲刺是一张真能用的脱身牌，散步不是。离线跑
-          // 九十秒、同屏上限 90：击杀 351 → 422（走）、365 → 453（冲刺）。
-          //
-          // 用一段斜坡而不是一个阈值：硬切会让卡在线上的人每帧在走和跑之间跳，而动画器是按
-          // speed 混合步态的，跳档一眼看得出来。走斜坡的话，追上来的人自己就变成跑的姿势。
-          const chase = clamp((dist - CHASE_NEAR) / (CHASE_FAR - CHASE_NEAR), 0, 1);
-          const want = e.walkSpeed * (1 + (CHASE_BOOST - 1) * chase);
-
-          // 找空位：正前方被占了就沿切线绕过去。room 是"还能直着走多少"，0 表示完全被堵。
-          //
-          // 包括远处无骨架的数据；共用邻居表才能在进入视口前就排好队、绕开前方的人。
-          // 近处按三组轮流查询邻居；远处本来已是 10 Hz，轮到移动时直接决策。
-          let room: number;
-          let side: number;
+        let room = 1;
+        let side: number = e.sideBias;
+        let yielding = false;
+        if (e.stun <= 0 && dist > 1e-6 && (!e.boss || dist > stop)) {
           if (near) {
             const decision = this.crowdDecision(i, dx / dist, dy / dist, dist, stop);
             room = decision.room;
             side = decision.side;
+            yielding = decision.yielding;
           } else {
             room = this.slotAhead(i, dx / dist, dy / dist, dist);
             side = this.slotSide;
+            yielding = this.slotYielding;
           }
+        }
 
-          // 越是被堵住越慢，而且越靠后越慢。直行那一份按 room 走全速；绕行那一份先打个折，
-          // 再按离玩家多远衰减 —— 见 SIDESTEP_SPEED 上那段。
+        if (e.stun <= 0 && (dist > stop || yielding)) {
+          // 玩家走 32、冲刺 60，敌人只有 20~33：追击仍沿用原有斜坡提速，保持走路可甩、冲刺可脱身。
+          const chase = clamp((dist - CHASE_NEAR) / (CHASE_FAR - CHASE_NEAR), 0, 1);
+          const want = e.walkSpeed * (1 + (CHASE_BOOST - 1) * chase);
+          const moveRoom = yielding ? 0 : room;
+
+          // 普通绕行会随离玩家距离衰减；为首领让路不能衰减，否则小兵可能只缓慢挪动，仍挡住通道。
           const shuffle = SIDESTEP_SPEED * clamp(SIDESTEP_NEAR / dist, 0, 1);
-          // 快到站位时再乘一段减速，把"走"和"站定"之间那个硬开关抹平 —— 见 APPROACH_BAND。
           const approach = clamp((dist - stop) / APPROACH_BAND, 0, 1);
-          // 目标速度不直接用，先滑过去 —— 见 PACE_TAU。
-          const wantPace = (room + (1 - room) * shuffle) * approach;
+          const wantPace = yielding
+            ? BOSS_YIELD_PACE
+            : (moveRoom + (1 - moveRoom) * shuffle) * approach;
           e.crowdPace += (wantPace - e.crowdPace) * (1 - Math.exp(-moveDt / PACE_TAU));
           const pace = e.crowdPace;
 
-          let mx = (dx / dist) * room + (-dy / dist) * side * SIDESTEP * (1 - room);
-          let my = (dy / dist) * room + (dx / dist) * side * SIDESTEP * (1 - room);
+          let mx = (dx / dist) * moveRoom + (-dy / dist) * side * SIDESTEP * (1 - moveRoom);
+          let my = (dy / dist) * moveRoom + (dx / dist) * side * SIDESTEP * (1 - moveRoom);
           const mlen = Math.hypot(mx, my);
           if (mlen > 1e-6) {
             mx /= mlen;
@@ -4691,6 +4685,8 @@ export class Battle {
 
   /** slotAhead 顺带算出来的绕行方向：+1 往左，-1 往右。 */
   private slotSide = 1;
+  /** slotAhead 当前是否判断出普通敌人应为首领让出追击通道。 */
+  private slotYielding = false;
 
   private crowdDecision(i: number, dirX: number, dirY: number, dist: number, stop: number): CrowdDecision {
     const e = this.movers[i];
@@ -4698,7 +4694,7 @@ export class Battle {
     if (!decision) {
       decision = {
         group: this.crowdDecisionGroup++ % CROWD_DECISION_GROUPS,
-        stale: true, dirX, dirY, crowdSpacing: this.crowdSpacing, room: 1, side: e.sideBias,
+        stale: true, dirX, dirY, crowdSpacing: this.crowdSpacing, room: 1, side: e.sideBias, yielding: false,
       };
       this.crowdDecisions.set(e, decision);
     }
@@ -4710,6 +4706,7 @@ export class Battle {
         decision.crowdSpacing !== this.crowdSpacing) {
       decision.room = this.slotAhead(i, dirX, dirY, dist);
       decision.side = this.slotSide;
+      decision.yielding = this.slotYielding;
       decision.stale = false;
       decision.dirX = dirX;
       decision.dirY = dirY;
@@ -4719,7 +4716,7 @@ export class Battle {
   }
 
   /**
-   * 第 i 个敌人朝 (dirX, dirY) 还能直着走多少，0..1；顺带把该往哪边绕写进 slotSide。
+   * 第 i 个敌人朝 (dirX, dirY) 还能直着走多少，0..1；顺带写入绕行方向和首领让路状态。
    *
    * 只给**比我更靠近玩家**的人让路。所有人都朝同一个点收拢，路径必然两两交叉，没有优先权
    * 的话"别撞上别人"会退化成"谁都别动"；按到玩家的距离排先后天然无环 —— 最里圈那个永远
@@ -4744,6 +4741,9 @@ export class Battle {
 
     let room = 1;
     let side = 1;
+    let yielding = false;
+    let yieldingBossDistance2 = Number.POSITIVE_INFINITY;
+    const selfDistance2 = distToPlayer * distToPlayer;
     for (let gy = y0; gy <= y1; gy++) {
       for (let gx = x0; gx <= x1; gx++) {
         const end = grid.end(gx, gy);
@@ -4754,10 +4754,38 @@ export class Battle {
           if (!other.alive) continue;
           const ox = other.x - player.x;
           const oy = other.y - player.y;
-          if (ox * ox + oy * oy >= distToPlayer * distToPlayer) continue;
+          const otherDistance2 = ox * ox + oy * oy;
 
           const dx = other.x - self.x;
           const dy = other.y - self.y;
+
+          // 普通小兵要给从后方追来的首领让出通道。首领面朝玩家，投影到它的追击轴上判断
+          // 小兵是否在前方走廊内；若居中就用固定 sideBias 选边，避免逐帧左右翻转。
+          if (!self.boss && other.boss && otherDistance2 > selfDistance2) {
+            const bossDirX = Math.cos(other.facing);
+            const bossDirY = Math.sin(other.facing);
+            const bossAlong = -dx * bossDirX - dy * bossDirY;
+            const bossLateral = dx * bossDirY - dy * bossDirX;
+            const touch = crowdDistance(self.spacing, self.boss, other.spacing, other.boss, crowdSpacing);
+            const look = touch * SLOT_LOOKAHEAD;
+            if (bossAlong > 0 && bossAlong < look && Math.abs(bossLateral) < touch) {
+              const bossDistance2 = dx * dx + dy * dy;
+              if (bossDistance2 < yieldingBossDistance2) {
+                yieldingBossDistance2 = bossDistance2;
+                yielding = true;
+                room = 0;
+                const lateralFromBossLane = dx * dirY - dy * dirX;
+                side = Math.abs(lateralFromBossLane) > touch * 0.1
+                  ? (lateralFromBossLane > 0 ? 1 : -1)
+                  : self.sideBias;
+              }
+            }
+          }
+
+          // 普通人群避让只看比自己更靠近玩家的单位；后方首领已由上面的优先通道规则处理。
+          if (otherDistance2 >= selfDistance2) continue;
+          // 首领不会为杂兵改道；杂兵会在自己的更新中侧移，碰撞收尾也只修正杂兵的位置。
+          if (self.boss && !other.boss) continue;
           const along = dx * dirX + dy * dirY;
           if (along <= 0) continue;
           const touch = crowdDistance(self.spacing, self.boss, other.spacing, other.boss, crowdSpacing);
@@ -4778,6 +4806,7 @@ export class Battle {
       }
     }
     this.slotSide = side;
+    this.slotYielding = yielding;
     return room;
   }
 
@@ -4824,13 +4853,27 @@ export class Battle {
             const d2 = dx * dx + dy * dy;
             if (d2 >= min * min || d2 < 1e-6) continue;
             const d = Math.sqrt(d2);
-            const push = (min - d) * 0.5;
-            const nx = (dx / d) * push;
-            const ny = (dy / d) * push;
-            a.x -= nx;
-            a.y -= ny;
-            b.x += nx;
-            b.y += ny;
+            const overlap = min - d;
+            if (a.boss !== b.boss) {
+              // Boss 有通行优先级：只修正普通敌人的位置，不把首领往回推。
+              const nx = (dx / d) * overlap;
+              const ny = (dy / d) * overlap;
+              if (a.boss) {
+                b.x += nx;
+                b.y += ny;
+              } else {
+                a.x -= nx;
+                a.y -= ny;
+              }
+            } else {
+              const push = overlap * 0.5;
+              const nx = (dx / d) * push;
+              const ny = (dy / d) * push;
+              a.x -= nx;
+              a.y -= ny;
+              b.x += nx;
+              b.y += ny;
+            }
           }
         }
       }

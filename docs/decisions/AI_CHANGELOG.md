@@ -13,6 +13,13 @@ Use this format:
 - Validation: <commands and manual scenarios>
 ```
 
+## 2026-09-24 — boss-minion-yield
+
+- Spec: `docs/spec/boss-minion-yield/`
+- Summary: Added temporary lateral yielding for minions in an approaching boss's lane and made boss/minion separation move only the minion.
+- Impact: Bosses ignore ordinary minions as movement blockers; yielding ends after the minion clears the lane. Boss/boss and minion/minion spacing, combat stats, attacks, and wave rules are unchanged. Terrain can still constrain sidesteps because general pathfinding remains out of scope.
+- Validation: `npm run build`; `npm run figures`; `npm run bench`; `$env:WAVE='8'; npm run bench`; `git diff --check`. In-game observation of a controlled boss passing through a minion lane remains pending.
+
 ## 2026-09-24 — elite-health-bars
 
 - Spec: `docs/spec/elite-health-bars/`
