@@ -82,8 +82,10 @@ export class BloodstainLayer {
     if (this.patchWidth <= 0 || this.patchHeight <= 0) return;
     for (const chunk of this.chunks.values()) {
       if (!chunk.hasPixels) continue;
-      const worldX = -this.mapWidth * 0.5 + chunk.x * CHUNK_SIZE * this.patchWidth;
-      const worldY = -this.mapHeight * 0.5 + chunk.y * CHUNK_SIZE * this.patchHeight;
+      // Terrain and GroundSurface use map coordinates from (0, 0) to (width, height).
+      // Keep the chunk origin in that same coordinate system.
+      const worldX = chunk.x * CHUNK_SIZE * this.patchWidth;
+      const worldY = chunk.y * CHUNK_SIZE * this.patchHeight;
       chunk.sprite.width = chunk.width * this.patchWidth * scale;
       chunk.sprite.height = chunk.height * this.patchHeight * Projection.groundSquash * scale;
       chunk.sprite.position.set(
@@ -94,10 +96,9 @@ export class BloodstainLayer {
   }
 
   private stamp(mark: BloodstainMark, dirty: Set<BloodstainChunk>): void {
-    if (mark.x < -this.mapWidth * 0.5 || mark.x >= this.mapWidth * 0.5
-      || mark.y < -this.mapHeight * 0.5 || mark.y >= this.mapHeight * 0.5) return;
-    const centerX = Math.floor((mark.x + this.mapWidth * 0.5) / this.patchWidth);
-    const centerY = Math.floor((mark.y + this.mapHeight * 0.5) / this.patchHeight);
+    if (mark.x < 0 || mark.x >= this.mapWidth || mark.y < 0 || mark.y >= this.mapHeight) return;
+    const centerX = Math.floor(mark.x / this.patchWidth);
+    const centerY = Math.floor(mark.y / this.patchHeight);
     let seed = mark.seed >>> 0;
     const random = (): number => {
       seed = (Math.imul(seed || 1, 1_664_525) + 1_013_904_223) >>> 0;

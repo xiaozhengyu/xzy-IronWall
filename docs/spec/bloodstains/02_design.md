@@ -10,7 +10,7 @@ Battle exposes a run/reset revision. When Scene observes a new revision, it clea
 
 Render stains as visible crimson hard-edged pixel splatters above ground detail and static ground scatter (brushes, rocks, and logs), but below trees, camp props, pickups, and characters. Use normal alpha compositing with a lighter red palette and moderate opacity; do not multiply near-black RGB values into the ground, which makes the marks read as black. Scene renders ground footsteps, fine terrain detail, and ground scatter into a dedicated mesh, then places the stain chunk sprites, then the normal world-entity mesh. Map coordinates are translated into the same texture-space resolution as the baked ground. A sparse grid of fixed-size transparent RGBA chunks stores the accumulated pixels. A frame batches stamps per dirty chunk and uploads only changed chunks; no marks are redrawn as ShapeBatch primitives each frame, and there is no arbitrary mark-count cap that would violate the run-long persistence requirement.
 
-The layer is bound to the active field dimensions. Out-of-map kill positions are ignored. Clearing a run zeros allocated chunk pixels and clears queued events; chunk storage may be reused for the next run.
+The layer is bound to the active field dimensions and uses the same top-left-origin map coordinates as `Terrain` and `GroundSurface`: x/y are in `[0, width) × [0, height)`. Out-of-map kill positions are ignored. Clearing a run zeros allocated chunk pixels and clears queued events; chunk storage may be reused for the next run.
 
 ## Settings and Localization
 

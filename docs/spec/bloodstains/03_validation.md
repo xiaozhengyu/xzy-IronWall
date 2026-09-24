@@ -15,6 +15,7 @@
 | Lethal hit | Kill one enemy, then wait for its corpse to sink | A pixel bloodstain remains at the kill position after the body disappears. |
 | Ground-detail occlusion | Kill enemies near grass, bushes, rocks, and logs, then let the scene redraw | Stains remain visible above ground scatter while still being behind trees, props, pickups, and characters. |
 | Blood color | Kill enemies on dirt and grass | Stains read as crimson red, not black, while the ground remains visible through the edges. |
+| Full map coverage | Kill enemies in the map center, right half, bottom half, and near all four borders | Every in-map kill produces a stain; no half-map coordinate region is silently discarded. |
 | Nonlethal hit | Hit an enemy without killing it | No persistent stain appears. |
 | Knockback | Kill an enemy with a strong launch | The stain stays ground-anchored at the fatal-hit position and does not travel with the corpse. |
 | Multiple kills | Kill a dense group, then move away and return | Each kill adds a stain; prior stains remain visible without duplicate stamps on redraw. |
@@ -34,4 +35,4 @@
 
 ## Evidence
 
-Automated checks passed after the ground-scatter order fix: build, figures, default benchmark (0.54 ms total CPU), wave-8 benchmark (0.93 ms total CPU), and diff check. Manual in-game kill placement, ground-scatter occlusion, settings toggle, and result/reset lifecycle checks remain; the local browser was previously opened to setup but Computer Use could not proceed to the battle screen.
+Automated checks passed after the map-coordinate fix: build, figures, default benchmark (0.48 ms total CPU), wave-8 benchmark (0.87 ms total CPU), and diff check. Manual in-game kill placement, full-map coverage, ground-scatter occlusion, settings toggle, and result/reset lifecycle checks remain; the local browser was previously opened to setup but Computer Use could not proceed to the battle screen.
