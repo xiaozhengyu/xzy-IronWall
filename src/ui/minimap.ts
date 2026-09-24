@@ -154,6 +154,8 @@ export class Minimap {
       );
     }
 
+    this.drawTopology(field, mapX, mapY, scale);
+
     // 场地边界。拉近后它自然移出圆形裁剪区，不会额外占画面。
     ctx.strokeStyle = 'rgba(225, 205, 137, 0.45)';
     ctx.lineWidth = 1;
@@ -192,6 +194,46 @@ export class Minimap {
     ctx.fillStyle = this.vignette;
     ctx.fillRect(0, 0, size, size);
     ctx.restore();
+  }
+
+  /** Major authored blockers keep the minimap's route silhouette readable at overview scale. */
+  private drawTopology(
+    field: Field,
+    mapX: (worldX: number) => number,
+    mapY: (worldY: number) => number,
+    scale: number,
+  ): void {
+    const ctx = this.context;
+    for (const obstacle of field.topology.obstacles) {
+      const x = mapX(obstacle.x);
+      const y = mapY(obstacle.y);
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(obstacle.rotation);
+      ctx.fillStyle = obstacle.kind === 'fence' ? 'rgba(105, 75, 45, 0.9)' : 'rgba(85, 82, 71, 0.9)';
+      ctx.strokeStyle = 'rgba(22, 28, 22, 0.75)';
+      ctx.lineWidth = Math.max(1, scale * 8);
+      if (obstacle.shape === 'circle') {
+        ctx.beginPath();
+        ctx.arc(0, 0, obstacle.radius * scale, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      } else {
+        ctx.fillRect(
+          -obstacle.width * scale * 0.5,
+          -obstacle.height * scale * 0.5,
+          obstacle.width * scale,
+          obstacle.height * scale,
+        );
+        ctx.strokeRect(
+          -obstacle.width * scale * 0.5,
+          -obstacle.height * scale * 0.5,
+          obstacle.width * scale,
+          obstacle.height * scale,
+        );
+      }
+      ctx.restore();
+    }
   }
 
   /**

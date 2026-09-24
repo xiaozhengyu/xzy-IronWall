@@ -44,6 +44,7 @@ import { Terrain } from '../src/world/terrain';
 import { Weather } from '../src/world/weather';
 import { Props } from '../src/world/props';
 import { Collectibles } from '../src/world/collectibles';
+import { PROVING_GROUND } from '../src/data/maps/provingGround';
 
 // ---------------------------------------------------------------- 极小的栅格化器
 
@@ -571,8 +572,8 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
  * 水塘、林地的位置和比例）最直接的办法，比在游戏里走一圈快得多。
  */
 {
-  const FIELD_W = 1200;
-  const FIELD_H = 1200;
+  const FIELD_W = PROVING_GROUND.world.width;
+  const FIELD_H = PROVING_GROUND.world.height;
   const terrain = new Terrain(FIELD_W, FIELD_H, 20260902);
 
   const weather = new Weather();
@@ -1990,36 +1991,42 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
 // 那张图不再是烘好的缩略图，而是**战场本身**：地面走游戏里那张底图，草石、树、营地走
 // Terrain/Props 自己的绘制，和打仗时同一批函数。这一张验的是三档缩放各自读不读得出来。
 //
-//   左   整幅。一屏 1200 个世界单位，只有底图 —— 一棵树在这个尺度下不到一个像素，画出来
-//        只是给林地加噪点，而底图本来就把林地烘成了深一档的绿。
+//   左   整幅 3600×3600 的地图。整幅保留简化树冠轮廓，检查区域关系和道路连续性。
 //   中   一屏 400 个单位，过了细节的门槛（500），草石和树都铺上了。
 //   右   一屏 139 个单位，也就是出货那一档（3.1），和真打起来看到的一样。
 {
-  const FIELD_W = 1200;
-  const FIELD_H = 1200;
+  const FIELD_W = PROVING_GROUND.world.width;
+  const FIELD_H = PROVING_GROUND.world.height;
   const FRAME_W = 432;
   const FRAME_H = 238;
 
-  const field = new Field(FIELD_W, FIELD_H, 20260902);
+  const field = new Field(
+    FIELD_W,
+    FIELD_H,
+    PROVING_GROUND.world.seed,
+    PROVING_GROUND.world.layout,
+    PROVING_GROUND.world.landmarks,
+    PROVING_GROUND.world.topology,
+  );
   for (let i = 0; i < Field.BAKE_SLICES; i++) field.bakeSlice(i);
   const baked = field.terrain.bakeGround(field.weather);
 
-  const cell = (grain: number, camX: number, camY: number): Canvas => {
-    const canvas = new Canvas(FRAME_W, FRAME_H, [11, 13, 18]);
+  const cell = (grain: number, camX: number, camY: number, frameW = FRAME_W, frameH = FRAME_H): Canvas => {
+    const canvas = new Canvas(frameW, frameH, [11, 13, 18]);
     // 底图：和 GroundSurface.layout 同一笔换算 —— 整张纹理铺在 (宽 × grain) 上，最近邻取样。
-    const rootX = FRAME_W / 2;
-    const rootY = FRAME_H / 2;
+    const rootX = frameW / 2;
+    const rootY = frameH / 2;
     const originX = rootX - camX * grain;
     const originY = rootY - camY * Projection.groundSquash * grain;
     const patchW = (FIELD_W / baked.texWidth) * grain;
     const patchH = ((FIELD_H * Projection.groundSquash) / baked.texHeight) * grain;
-    for (let py = 0; py < FRAME_H; py++) {
-      for (let px = 0; px < FRAME_W; px++) {
+    for (let py = 0; py < frameH; py++) {
+      for (let px = 0; px < frameW; px++) {
         const tx = Math.floor((px - originX) / patchW);
         const ty = Math.floor((py - originY) / patchH);
         if (tx < 0 || ty < 0 || tx >= baked.texWidth || ty >= baked.texHeight) continue;
         const b = (ty * baked.texWidth + tx) * 4;
-        const o = (py * FRAME_W + px) * 3;
+        const o = (py * frameW + px) * 3;
         canvas.data[o] = baked.data[b];
         canvas.data[o + 1] = baked.data[b + 1];
         canvas.data[o + 2] = baked.data[b + 2];
@@ -2027,19 +2034,21 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
     }
 
     // 细节层：只在一屏窄于 500 个世界单位时铺，和 Scene 里 MAP_DETAIL_SPAN 那一条一致。
-    const spanX = (FRAME_W * 0.5) / grain;
-    const spanY = (FRAME_H * 0.5) / (grain * Projection.groundSquash);
+    const spanX = (frameW * 0.5) / grain;
+    const spanY = (frameH * 0.5) / (grain * Projection.groundSquash);
+    const shapes = new ShapeBatch();
+    const sink = new ShapeSink();
     if (spanX * 2 <= 500) {
-      const shapes = new ShapeBatch();
-      const sink = new ShapeSink();
       field.terrain.drawDetail(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
       field.terrain.drawScatter(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
       field.terrain.drawTrees(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
-      field.props.draw(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
-      console.log(`  一屏 ${Math.round(spanX * 2)} 单位：图元 ${shapes.primitiveCount}`);
-      shapes.flushToMesh(sink, FRAME_W, FRAME_H);
-      for (const shape of sink.shapes) canvas.fillPolygon(shape);
+    } else {
+      field.terrain.drawOverview(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
     }
+    field.props.draw(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
+    console.log(`  一屏 ${Math.round(spanX * 2)} 单位：图元 ${shapes.primitiveCount}`);
+    shapes.flushToMesh(sink, frameW, frameH);
+    for (const shape of sink.shapes) canvas.fillPolygon(shape);
     return canvas;
   };
 
@@ -2051,5 +2060,9 @@ console.log(`每帧图元数约 ${Math.round(total / (presets.length * facings.l
   sheet.blit(cell(FRAME_W / 400, camp.x, camp.y), FRAME_W + GUTTER, 0);
   sheet.blit(cell(3.1, camp.x, camp.y), (FRAME_W + GUTTER) * 2, 0);
   writePng('.preview-mapview.png', sheet.upscale(2));
+  const overviewW = 960;
+  const overviewH = Math.round(overviewW * Projection.groundSquash);
+  const overviewGrain = overviewW / FIELD_W;
+  writePng('.preview-proving-ground-overview.png', cell(overviewGrain, FIELD_W * 0.5, FIELD_H * 0.5, overviewW, overviewH).upscale(2));
   console.log('地图视图：整幅 / 一屏 400 单位 / 出货那一档（3.1）');
 }

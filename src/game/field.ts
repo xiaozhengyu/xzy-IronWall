@@ -5,7 +5,12 @@ import { Props } from '../world/props';
 import { DEFAULT_LAYOUT, Terrain, type TerrainLayout } from '../world/terrain';
 import { Weather } from '../world/weather';
 import type { Character } from './character';
-import type { MapLandmark, ResolvedMapLandmark } from '../data/mapTypes';
+import type {
+  MapLandmark,
+  MapTopology,
+  ResolvedMapLandmark,
+  ResolvedMapTopology,
+} from '../data/mapTypes';
 
 /**
  * 打仗的那块地：地形、天气、营地、烘好的地面、留在地上的脚印。
@@ -22,6 +27,7 @@ export class Field {
   readonly weather: Weather;
   readonly props: Props;
   readonly landmarks: readonly ResolvedMapLandmark[];
+  readonly topology: ResolvedMapTopology;
   readonly start: { x: number; y: number };
   /**
    * 地面分两层，分界线是"变得有多快"。
@@ -68,6 +74,7 @@ export class Field {
     seed: number,
     layout: TerrainLayout = DEFAULT_LAYOUT,
     authoredLandmarks: readonly MapLandmark[] = [],
+    authoredTopology: MapTopology = { regions: [], passages: [], obstacles: [], decorations: [] },
   ) {
     this.width = width;
     this.height = height;
@@ -79,6 +86,28 @@ export class Field {
       x: landmark.x * width,
       y: landmark.y * height,
     }));
+    this.topology = {
+      regions: authoredTopology.regions.map((region) => ({
+        ...region,
+        x: region.x * width,
+        y: region.y * height,
+      })),
+      passages: authoredTopology.passages.map((passage) => ({
+        ...passage,
+        x: passage.x * width,
+        y: passage.y * height,
+      })),
+      obstacles: authoredTopology.obstacles.map((obstacle) => ({
+        ...obstacle,
+        x: obstacle.x * width,
+        y: obstacle.y * height,
+      })),
+      decorations: authoredTopology.decorations.map((decoration) => ({
+        ...decoration,
+        x: decoration.x * width,
+        y: decoration.y * height,
+      })),
+    };
     const start = this.landmarks.find((landmark) => landmark.kind === 'start');
     this.start = start ? { x: start.x, y: start.y } : { x: width * 0.5, y: height * 0.5 };
 
@@ -88,6 +117,8 @@ export class Field {
     // 营地：帐篷和篝火。和树的区别在于**摆**还是**长** —— 树按噪声撒在林地里，营地是人选的
     // 位置，所以它是一个显式列表。
     this.props = new Props();
+    this.props.placeObstacles(this.topology.obstacles);
+    this.props.placeDecorations(this.topology.decorations);
     if (this.landmarks.some((landmark) => landmark.kind === 'campfire')) {
       this.props.placeAuthored(this.terrain, this.landmarks);
     } else {

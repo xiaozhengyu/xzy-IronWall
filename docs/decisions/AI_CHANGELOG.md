@@ -13,6 +13,13 @@ Use this format:
 - Validation: <commands and manual scenarios>
 ```
 
+## 2026-09-24 — proving-ground-topology
+
+- Spec: `docs/spec/proving-ground-topology/`
+- Summary: Added authored Proving Grounds regions, passages, hard obstacles, visual-only camp decorations, collision integration, overview tree clusters, and region-biased wave spawn selection. After comparing the first in-game screenshots with the approved target, reduced dirt coverage, reshaped paths and pond banks, adjusted tree/rock scale, added shore reeds, and changed the south ring to standing pillars.
+- Impact: The single playable map now has a central arena, outer loop, side spaces, static route blockers, readable camp/boss landmarks, and wave-specific directional pressure, with a closer palette and silhouette match to the target. Existing water traversal, enemy AI, terrain baking, and population budgets remain unchanged.
+- Validation: First implementation passed `npm run build`, `npm run figures`, default/wave-8 benchmarks, `git diff --check`, and a browser setup/start-wave smoke. Current obstacle/visual correction passed `npm run build` and `npm run figures`; updated default/wave-8 benchmarks and live in-game screenshot comparison remain pending.
+
 ## 2026-09-24 — map-roster-reduction
 
 - Spec: `docs/spec/map-roster-reduction/`

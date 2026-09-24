@@ -300,10 +300,10 @@ export const HUD_TEXT_EN: HudMessages = {
   // ---------------------------------------------------------------- 地图
   mapProvingName: 'Proving Grounds',
   mapProvingTag: 'Woodland',
-  mapProvingBlurb: 'A flat clearing walled in on all four sides by trees, with a few ponds and worn dirt paths through the middle.',
-  mapProvingTerrain: 'Mostly grass, a few thickets and ponds, a dirt road across the centre',
+  mapProvingBlurb: 'Winding dirt tracks connect the central arena to a camp, a grove gap, the east pond, and a southern stone ring.',
+  mapProvingTerrain: 'Grass clearings, winding dirt paths, an east pond, and woodland groves',
   mapProvingWeather: 'Clear; rain and snow can be switched on mid-run',
-  mapProvingSight: 'Open all round; only thickets and the tree wall block your view',
+  mapProvingSight: 'The center is open; grove belts and the outer tree wall break sightlines',
   mapProvingObjective: 'Hold off the waves that keep coming.',
   mapProvingBossName: 'Elite Commander',
   mapBossPending: 'not in the wave table yet',

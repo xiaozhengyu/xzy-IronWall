@@ -311,6 +311,7 @@ let field = new Field(
   initialMap.world.seed,
   initialMap.world.layout,
   initialMap.world.landmarks,
+  initialMap.world.topology,
 );
 scene.attachField(field);
 bootDone += TERRAIN_WEIGHT;
@@ -342,6 +343,7 @@ function fieldOf(map: GameMapDef): Field {
       map.world.seed,
       map.world.layout,
       map.world.landmarks,
+      map.world.topology,
     );
     // 分片烘是为了让加载条走得起来，这里没有条可走，一片一片连着烘完就行。
     for (let i = 0; i < Field.BAKE_SLICES; i++) made.bakeSlice(i);

@@ -2164,7 +2164,7 @@ export class Battle {
   private spawnTimer = 0;
   /** 按模板发号施令的那个人：只管"这一秒该放几个、放什么"，落点仍在这个文件里算。 */
   private readonly waves = new WaveDirector(DEFAULT_SPAWN_TEMPLATE);
-  private spawnProfile: MapSpawnProfile = { noSpawnZones: [], anchors: [] };
+  private spawnProfile: MapSpawnProfile = { noSpawnZones: [], anchors: [], waveBias: [] };
   private bossKind: BossKindId = 'elite';
   /** 爆兵允许把场上堆到多少人。开波那一刻记一次，见 localSpawnRoom。 */
   private surgeCeiling = 0;
@@ -2447,6 +2447,7 @@ export class Battle {
     const anchors = this.spawnProfile.anchors;
     if (anchors.length > 0) {
       const pattern = this.waves.wave.spawnPattern;
+      const bias = this.spawnProfile.waveBias[this.waves.waveNumber - 1];
       const dir = this.player.moveDir;
       const moving = this.player.speed > PLAYER_RUN_SPEED * 0.15;
       const weighted = anchors.map((anchor) => {
@@ -2463,7 +2464,8 @@ export class Battle {
         } else if (pattern === 'final') {
           patternWeight = 1.1;
         }
-        return { anchor, angle, weight: Math.max(0.01, anchor.weight * patternWeight) };
+        const regionWeight = bias?.regionWeights[anchor.regionId] ?? 1;
+        return { anchor, angle, weight: Math.max(0.01, anchor.weight * regionWeight * patternWeight) };
       });
       const total = weighted.reduce((sum, entry) => sum + entry.weight, 0);
       let roll = Math.random() * total;

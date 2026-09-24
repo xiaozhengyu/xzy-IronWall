@@ -19,6 +19,7 @@ import { ShapeBatch, type PrimitiveSink } from '../src/render/shapeBatch';
 import { ellipseSegments, unitCircle } from '../src/render/ellipseFan';
 import { drawCharacter } from '../src/characters/renderer';
 import type { Rgba } from '../src/render/color';
+import { PROVING_GROUND } from '../src/data/maps/provingGround';
 
 /** 冒充 PrimitiveMesh：干同样的定型数组写入，不碰 Pixi。 */
 class CountingSink implements PrimitiveSink {
@@ -120,9 +121,17 @@ function stamp(name: string): void {
   pmark0 = pc;
 }
 
-const field = new Field(1200, 1200, 20260902);
+const field = new Field(
+  PROVING_GROUND.world.width,
+  PROVING_GROUND.world.height,
+  PROVING_GROUND.world.seed,
+  PROVING_GROUND.world.layout,
+  PROVING_GROUND.world.landmarks,
+  PROVING_GROUND.world.topology,
+);
 for (let i = 0; i < Field.BAKE_SLICES; i++) field.bakeSlice(i);
 const battle = new Battle(field);
+battle.setMapEncounter(PROVING_GROUND.encounter);
 const camera = new Camera();
 camera.viewWidth = 960;
 camera.viewHeight = 540;

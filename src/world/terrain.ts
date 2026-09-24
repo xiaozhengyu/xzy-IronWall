@@ -27,11 +27,11 @@ import { type Weather, shadowed } from './weather';
  * 角落打光的三段色带）。用连续渐变铺的地面垫在他们下面会像另一种媒介；用三档台阶铺的
  * 地面读起来和他们是同一张画。
  */
-const GRASS_RAMP: Rgba[] = [rgb(54, 82, 45), rgb(73, 103, 59), rgb(97, 131, 68)];
-const DIRT_RAMP: Rgba[] = [rgb(99, 84, 56), rgb(126, 106, 72), rgb(152, 132, 96)];
+const GRASS_RAMP: Rgba[] = [rgb(56, 87, 45), rgb(76, 110, 54), rgb(105, 141, 69)];
+const DIRT_RAMP: Rgba[] = [rgb(112, 88, 52), rgb(147, 117, 69), rgb(177, 148, 98)];
 const FOREST_RAMP: Rgba[] = [rgb(33, 56, 37), rgb(45, 74, 47), rgb(61, 94, 58)];
 /** 暗的一端是池心的深水，不是阴影 —— 水靠深度读，不靠光。 */
-const WATER_RAMP: Rgba[] = [rgb(42, 70, 84), rgb(56, 88, 92), rgb(76, 108, 101)];
+const WATER_RAMP: Rgba[] = [rgb(28, 88, 124), rgb(40, 116, 150), rgb(63, 145, 172)];
 
 const TUFT_LIGHT = rgb(116, 152, 78);
 const TUFT_BASE = rgb(44, 66, 39);
@@ -200,7 +200,7 @@ const DETAIL_SPACING = 14;
  * 树的间距。比细节格宽得多，因为树是地标不是纹理：林子要密到能挡住视线，又要疏到能看见
  * 里面站着的人。
  */
-const TREE_SPACING = 38;
+const TREE_SPACING = 66;
 type TreePlacement = Readonly<{ x: number; y: number; roll: number; species: TreeSpecies }>;
 
 /**
@@ -213,7 +213,7 @@ type TreePlacement = Readonly<{ x: number; y: number; roll: number; species: Tre
 const BUSH_SPACING = 13;
 const BOULDER_SPACING = 80;
 const LOG_SPACING = 62;
-const TREE_HEIGHT = 30;
+const TREE_HEIGHT = 58;
 /** 树干挡路的半径。人能走进树冠下面，但撞得到树干。 */
 const TRUNK_RADIUS = TREE_HEIGHT * 0.075;
 
@@ -243,17 +243,25 @@ const BORDER_FRACTION = 0.11;
  * 那是一条边有多圆，和场地多大无关。
  */
 export interface TerrainLayout {
+  /** Scale terrain's procedural light/dark variation for maps whose reference uses flatter color blocks. */
+  surfaceVariation?: number;
   /** 土地：场院、踩出来的路口。圆角矩形，因为有直边的地读作**人为的**。 */
   dirt: { x: number; y: number; hw: number; hh: number; r: number }[];
+  /** 不规则椭圆场地。归一化中心和半径；羽化宽度是半径比例。 */
+  clearings?: { x: number; y: number; rx: number; ry: number; feather: number }[];
+  /** 折线路径。点位归一化，宽度和羽化使用世界单位。 */
+  paths?: { points: readonly { x: number; y: number }[]; width: number; feather: number }[];
   /** 水塘。空数组就是这张图上没有水。每一处自带一圈岸（自动加宽出来的一层土）。 */
   ponds: { x: number; y: number; hw: number; hh: number; r: number }[];
+  /** 不规则水湾；多个相交的形状形成自然岸线。 */
+  pondBlobs?: { x: number; y: number; rx: number; ry: number; phase: number }[];
   /** 往场内探的林子。它们的作用是把树墙的内缘啃出缺口，别摆太大。 */
   groves: { x: number; y: number; r: number }[];
   /** 四边树墙的厚度，占场地短边的比例。见 BORDER_FRACTION。 */
   border: number;
 }
 
-/** 演武荒原那一份 —— 也就是接这个结构之前写死在 generate 里的那几个数。 */
+/** 通用预览与小型离线场景使用的默认地形布局。 */
 export const DEFAULT_LAYOUT: TerrainLayout = {
   dirt: [
     // 左上角一块场院
@@ -470,6 +478,17 @@ export class Terrain {
     const ponds = this.layout.ponds.map((p) => ({
       x: w * p.x, y: h * p.y, hw: w * p.hw, hh: h * p.hh, r: p.r,
     }));
+    const clearingBlobs = (this.layout.clearings ?? []).map((p) => ({
+      x: w * p.x, y: h * p.y, rx: w * p.rx, ry: h * p.ry, feather: p.feather,
+    }));
+    const pondBlobs = (this.layout.pondBlobs ?? []).map((p) => ({
+      x: w * p.x, y: h * p.y, rx: w * p.rx, ry: h * p.ry, phase: p.phase,
+    }));
+    const paths = (this.layout.paths ?? []).map((path) => ({
+      points: path.points.map((point) => ({ x: w * point.x, y: h * point.y })),
+      width: path.width,
+      feather: path.feather,
+    }));
 
     /**
      * 四边的树墙。
@@ -504,11 +523,50 @@ export class Terrain {
             roundedRect(wx + edgeNoise, wy + edgeNoise * 0.7, pond.x, pond.y, pond.hw + 34, pond.hh + 30, pond.r + 20, 30),
           );
         }
+        for (const pond of pondBlobs) {
+          water = Math.max(
+            water,
+            this.irregularBlob(wx + edgeNoise, wy + edgeNoise * 0.7, pond.x, pond.y, pond.rx, pond.ry, pond.phase),
+          );
+          banked = Math.max(
+            banked,
+            this.irregularBlob(
+              wx + edgeNoise,
+              wy + edgeNoise * 0.7,
+              pond.x,
+              pond.y,
+              pond.rx + 42,
+              pond.ry + 38,
+              pond.phase,
+            ),
+          );
+        }
         const bank = clamp(banked - water, 0, 1);
 
         let dirt = 0;
         for (const d of dirtPatches) {
           dirt = Math.max(dirt, roundedRect(wx + edgeNoise, wy + edgeNoise, d.x, d.y, d.hw, d.hh, d.r, 24));
+        }
+        for (const clearing of clearingBlobs) {
+          dirt = Math.max(
+            dirt,
+            this.irregularBlob(
+              wx + edgeNoise,
+              wy + edgeNoise,
+              clearing.x,
+              clearing.y,
+              clearing.rx,
+              clearing.ry,
+              clearing.feather,
+            ),
+          );
+        }
+        for (const path of paths) {
+          for (let i = 1; i < path.points.length; i++) {
+            const a = path.points[i - 1];
+            const b = path.points[i];
+            dirt = Math.max(dirt, pathWeight(wx + edgeNoise, wy + edgeNoise, a.x, a.y, b.x, b.y, path.width, path.feather));
+          }
         }
         dirt = Math.max(dirt, bank * 0.8);
         dirt *= 1 - water;
@@ -653,7 +711,8 @@ export class Terrain {
       // 深度，不是光照：池心是色阶暗的那一端。
       tone = clamp(1.08 - m.water, 0, 1);
     } else {
-      tone = clamp(0.5 + m.shade * 0.22 + this.clumps(worldX, worldY) * 0.44, 0, 1);
+      const variation = this.layout.surfaceVariation ?? 1;
+      tone = clamp(0.5 + m.shade * 0.22 * variation + this.clumps(worldX, worldY) * 0.44 * variation, 0, 1);
     }
 
     // 色阶那一步是硬切，不抖动。抖动该花在材质边界上 —— 两块平涂需要在几个像素里互相
@@ -928,6 +987,68 @@ export class Terrain {
   }
 
   /**
+   * 远景地图预览用的树群缩略层。
+   *
+   * 战斗镜头只画真实树冠，整幅地图预览则需要保留效果图里的深色林块轮廓。这里按较粗的
+   * 世界网格画少量扁平树冠，不参与碰撞，也不进入战斗场景，因此不会把全图预览的开销带进
+   * 人海帧。镜头放大到细节阈值后由 drawTrees 接管。
+   */
+  drawOverview(
+    shapes: ShapeBatch,
+    weather: Weather,
+    camX: number,
+    camY: number,
+    rootX: number,
+    rootY: number,
+    scale: number,
+    halfW: number,
+    halfH: number,
+  ): void {
+    const cell = 100;
+    const minX = Math.max(0, Math.floor((camX - halfW) / cell));
+    const maxX = Math.min(Math.ceil(this.width / cell), Math.ceil((camX + halfW) / cell));
+    const minY = Math.max(0, Math.floor((camY - halfH) / cell));
+    const maxY = Math.min(Math.ceil(this.height / cell), Math.ceil((camY + halfH) / cell));
+    const m = this.scratch;
+
+    for (let cy = minY; cy <= maxY; cy++) {
+      for (let cx = minX; cx <= maxX; cx++) {
+        const wx = (cx + 0.5 + this.hash01(cx + 1771, cy - 1771) * 0.35) * cell;
+        const wy = (cy + 0.5 + this.hash01(cx - 1883, cy + 1883) * 0.35) * cell;
+        this.sample(wx, wy, m);
+        if (m.water > 0.2 || m.forest < 0.25) continue;
+        const roll = this.hash01(cx + 311, cy - 311);
+        if (roll > 0.42 + m.forest * 0.56) continue;
+
+        const s = v2(rootX + (wx - camX) * scale, rootY + (wy - camY) * Projection.groundSquash * scale);
+        const radius = (26 + roll * 14) * scale;
+        const cloud = weather.cloudShade(wx, wy);
+        const dark = shadowed(weather.grade(FOREST_RAMP[0], 0.4), cloud);
+        const mid = shadowed(weather.grade(FOREST_RAMP[1], 0.4), cloud);
+        const light = shadowed(weather.grade(FOREST_RAMP[2], 0.4), cloud);
+        const depth = s.y * Projector.DEPTH_PER_ROW;
+        shapes.ellipse(v2(s.x, s.y + radius * 0.16), radius * 1.15, radius * 0.48 * Projection.groundSquash, 0, rgba(14, 24, 15, 82), depth - 4);
+        shapes.rect(v2(s.x + radius * 0.08, s.y - radius * 0.16), Math.max(1, radius * 0.13), radius * 0.48, 0, shadowed(weather.grade(SPECIES[0].bark, 0.35), cloud), depth - 1);
+        const crownBands: readonly [number, number][] = [
+          [0.44, 0.84], [0.3, 1.18], [0.12, 1.52], [-0.08, 1.42], [-0.26, 1.08], [-0.43, 0.62],
+        ];
+        crownBands.forEach(([height, width], index) => {
+          const bandColor = index < 2 ? dark : index < 5 ? mid : light;
+          const offset = (roll - 0.5) * radius * (0.1 + index * 0.025);
+          shapes.rect(
+            v2(s.x + offset, s.y - radius * height),
+            radius * width,
+            Math.max(1, radius * 0.31),
+            0,
+            bandColor,
+            depth + index * 0.001,
+          );
+        });
+      }
+    }
+  }
+
+  /**
    * 林地里的树。
    *
    * 画在和人物同一个批次里，所以它们按屏幕行和人互相排序 —— 人能走到树后面去。这也是
@@ -1062,7 +1183,7 @@ function tree(
 
   // 树冠最宽处由树种决定。overlord 里那个宽度系数是**半宽**（它的 Bands 按半宽展开），
   // 照抄成全宽会让树瘦一半，读成一丛小灌木而不是一棵树。
-  const width = h * sp.width;
+  const width = h * sp.width * 1.5;
   const trunkTop = h * sp.trunk;
 
   // 树底下的影子。没有它，树看着像浮在草上。
@@ -1227,6 +1348,27 @@ function blob(x: number, y: number, cx: number, cy: number, rx: number, ry: numb
   const distance = Math.sqrt(dx * dx + dy * dy);
   const t = clamp((1 + width - distance) / Math.max(width * 2, 0.001), 0, 1);
   return t * t * (3 - 2 * t);
+}
+
+/** Soft-edged dirt ribbon around a world-space line segment. */
+function pathWeight(
+  x: number,
+  y: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  halfWidth: number,
+  feather: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const length2 = dx * dx + dy * dy;
+  const t = length2 > 0 ? clamp(((x - ax) * dx + (y - ay) * dy) / length2, 0, 1) : 0;
+  const distance = Math.hypot(x - (ax + dx * t), y - (ay + dy * t));
+  const edge = Math.max(feather, 1);
+  const inside = clamp((halfWidth + edge - distance) / edge, 0, 1);
+  return inside * inside * (3 - 2 * inside);
 }
 
 /** 把权重绕中点拉陡，压窄抖动能穿插的那条带。 */

@@ -290,10 +290,10 @@ export const HUD_TEXT_ZH_CN: HudMessages = {
   // ---------------------------------------------------------------- 地图
   mapProvingName: '演武荒原',
   mapProvingTag: '林地',
-  mapProvingBlurb: '四面合围的一块平地，边上是围死的树墙，中间散着几处水塘和踩出来的土路。',
-  mapProvingTerrain: '草地为主，几片林地和水塘，土路穿过中央',
+  mapProvingBlurb: '中央演武场由弯曲土路连接营地、林隙、池湾与南侧石阵。',
+  mapProvingTerrain: '草地、弯曲土路、东侧池湾与成片林地',
   mapProvingWeather: '晴，局内可切雨雪',
-  mapProvingSight: '全场开阔，只有林地和树墙挡视线',
+  mapProvingSight: '中央开阔，侧翼林带与外围树墙遮挡视线',
   mapProvingObjective: '抵御不断来袭的敌人。',
   mapProvingBossName: '精锐统领',
   mapBossPending: '尚未出现在波次里',

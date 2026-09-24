@@ -271,6 +271,8 @@ export class Scene {
     this.attached = field;
     this.worldGround.addChildAt(field.ground.sprite, 0);
     this.worldGround.addChildAt(field.ground.shadowSprite, 1);
+    // attachField 会把新地面插到容器前面；把地图预览批次移回最上层，否则底图会盖掉树群、障碍和营地。
+    this.worldGround.addChild(this.mapPrim.mesh);
   }
 
   /** 当前挂着的那块地。只给 attachField 判要不要摘旧的。 */
@@ -638,8 +640,11 @@ export class Scene {
       field.terrain.drawDetail(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
       field.terrain.drawScatter(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
       field.terrain.drawTrees(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
-      field.props.draw(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
+    } else {
+      field.terrain.drawOverview(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
     }
+    // 营火和地图硬障碍在远景也保留简化轮廓，保证效果图里的路线节点不会随缩放消失。
+    field.props.draw(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
     // 地图预览也展示真实的雨雪前景。它和地图细节写进同一个 mapPrim，因此既压在地形之上，
     // 又只受 mapClip 裁切，不会落到人物台、敌人栏或其它 UI 区域。
     field.weather.draw(shapes, camX, camY, rootX, rootY, grain, spanX, spanY);
