@@ -82,6 +82,8 @@ export interface SummaryHooks {
   onCombatTextChange?(kind: CombatTextKind, on: boolean): void;
   /** ESC 页上的小地图显示开关。 */
   onMinimapChange?(on: boolean): void;
+  /** ESC 页上的精英/Boss 血条显示开关。 */
+  onEliteBossHealthBarsChange?(on: boolean): void;
   /** Current item strip in the active locale, used when language changes while this panel is open. */
   heldItems?(): readonly ItemStripEntry[];
 }
@@ -128,7 +130,7 @@ export class SummaryScreen {
   private readonly resumeButton = el('button', 'summary-btn main');
   private readonly endButton = el('button', 'summary-btn');
   private readonly confirmButton = el('button', 'summary-btn main');
-  /** 底下那一行设置：语言、音效、音乐各一行。 */
+  /** 暂停页上的显示与声音设置。 */
   private readonly settings = el('div', 'summary-settings');
   private localeButtons: HTMLButtonElement[] = [];
   private sfxButtons: HTMLButtonElement[] = [];
@@ -137,6 +139,8 @@ export class SummaryScreen {
   private musicOn = true;
   private minimapButtons: HTMLButtonElement[] = [];
   private minimapOn = true;
+  private eliteBossHealthBarsButtons: HTMLButtonElement[] = [];
+  private eliteBossHealthBarsOn = true;
   private readonly combatTextButtons: Record<CombatTextKind, HTMLButtonElement[]> = {
     damage: [], heal: [], mana: [], buff: [], level: [],
   };
@@ -409,6 +413,11 @@ export class SummaryScreen {
       this.markMinimap();
       this.hooks.onMinimapChange?.(this.minimapOn);
     }, ['on', 'off']);
+    this.eliteBossHealthBarsButtons = this.chipRow('eliteBossHealthBars', [['on', ''], ['off', '']], (value) => {
+      this.eliteBossHealthBarsOn = value === 'on';
+      this.markEliteBossHealthBars();
+      this.hooks.onEliteBossHealthBarsChange?.(this.eliteBossHealthBarsOn);
+    }, ['on', 'off']);
     this.buildCombatTextRow('combatTextDamage', 'damage');
     this.buildCombatTextRow('combatTextHeal', 'heal');
     this.buildCombatTextRow('combatTextMana', 'mana');
@@ -419,6 +428,7 @@ export class SummaryScreen {
     this.markSfx();
     this.markMusic();
     this.markMinimap();
+    this.markEliteBossHealthBars();
     return this.settings;
   }
 
@@ -492,6 +502,17 @@ export class SummaryScreen {
   setMinimapVisible(on: boolean): void {
     this.minimapOn = on;
     this.markMinimap();
+  }
+
+  private markEliteBossHealthBars(): void {
+    for (const button of this.eliteBossHealthBarsButtons) {
+      button.classList.toggle('on', button.dataset.value === (this.eliteBossHealthBarsOn ? 'on' : 'off'));
+    }
+  }
+
+  setEliteBossHealthBarsVisible(on: boolean): void {
+    this.eliteBossHealthBarsOn = on;
+    this.markEliteBossHealthBars();
   }
 
   private markCombatText(kind: CombatTextKind): void {

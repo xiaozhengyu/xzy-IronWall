@@ -39,6 +39,7 @@ export interface HudMessages {
   combatTextBuff: string;
   combatTextLevel: string;
   minimapDisplay: string;
+  eliteBossHealthBars: string;
   on: string;
   off: string;
   currencyInfo: string;

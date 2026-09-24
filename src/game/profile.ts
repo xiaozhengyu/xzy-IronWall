@@ -97,6 +97,8 @@ export interface ProfileSettings {
   combatText: CombatTextSettings;
   /** 小地图显示开关。 */
   minimap: boolean;
+  /** 精英/Boss 血条显示开关。 */
+  eliteBossHealthBars: boolean;
 }
 
 export interface ProfileData {
@@ -177,6 +179,7 @@ function freshSettings(): ProfileSettings {
     music: true,
     combatText: { damage: true, heal: true, mana: true, buff: true, level: true },
     minimap: true,
+    eliteBossHealthBars: true,
   };
 }
 
@@ -469,6 +472,16 @@ export class Profile {
   setMinimapVisible(on: boolean): void {
     if (this.data.settings.minimap === on) return;
     this.data.settings.minimap = on;
+    this.save();
+  }
+
+  get eliteBossHealthBarsVisible(): boolean {
+    return this.data.settings.eliteBossHealthBars;
+  }
+
+  setEliteBossHealthBarsVisible(on: boolean): void {
+    if (this.data.settings.eliteBossHealthBars === on) return;
+    this.data.settings.eliteBossHealthBars = on;
     this.save();
   }
 

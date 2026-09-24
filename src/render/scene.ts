@@ -222,6 +222,9 @@ export class Scene {
    */
   liteEnemies = false;
 
+  /** 可持久化的精英/Boss 血条显示偏好。 */
+  eliteBossHealthBarsVisible = true;
+
   /** 上一帧的统计。游戏里不显示，暂停面板要读。 */
   primitives = 0;
   drawn = 0;
@@ -361,6 +364,7 @@ export class Scene {
       } else {
         this.drawCharacterAt(e);
       }
+      if (this.eliteBossHealthBarsVisible && e.alive && e.boss) this.drawBossHealthBar(e);
       this.drawn++;
     }
     /*
@@ -1055,6 +1059,36 @@ export class Scene {
       v2(at.x, at.y), r, r * Projection.groundSquash, 0,
       Math.max(1, grain * 0.55), rgba(255, 132, 96, 214), depth + 0.01, 26,
     );
+  }
+
+  /** 世界空间锚定、屏幕覆盖排序的首领血条；伤害数字仍画在它上面。 */
+  private drawBossHealthBar(c: Character): void {
+    const grain = this.camera.grain;
+    const modelScale = BOSS_RENDER_SCALE;
+    const at = this.camera.worldToScreen(c.x, c.y);
+    const projector = new Projector(at, c.facing, Projection.groundSquash, grain * modelScale);
+    const head = projector.screen(c.pose.head);
+    const width = Math.max(20, 16 * grain * modelScale);
+    const height = Math.max(3, 1.5 * grain);
+    const center = v2(head.x, head.y - 5 * grain - height * 0.5);
+    const depth = Projector.DEPTH_OVERLAY + 100;
+    const ratio = Number.isFinite(c.maxHp) && c.maxHp > 0
+      ? Math.min(1, Math.max(0, c.hp / c.maxHp))
+      : 0;
+
+    this.shapes.rect(center, width + 2, height + 2, 0, rgba(5, 8, 12, 242), depth);
+    this.shapes.rect(center, width, height, 0, rgba(86, 31, 26, 255), depth + 1);
+    const fillWidth = width * ratio;
+    if (fillWidth > 0) {
+      this.shapes.rect(
+        v2(center.x - (width - fillWidth) * 0.5, center.y),
+        fillWidth,
+        height,
+        0,
+        rgb(232, 76, 58),
+        depth + 2,
+      );
+    }
   }
 
   private drawCharacterAt(

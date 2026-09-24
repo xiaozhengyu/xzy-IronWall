@@ -32,6 +32,7 @@ export const HUD_TEXT_EN: HudMessages = {
   combatTextBuff: 'BUFF TEXT',
   combatTextLevel: 'LEVEL TEXT',
   minimapDisplay: 'MINIMAP',
+  eliteBossHealthBars: 'ELITE/BOSS HEALTH BARS',
   on: 'ON',
   off: 'OFF',
   currencyInfo: 'CURRENCY',

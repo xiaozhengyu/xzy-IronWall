@@ -13,6 +13,13 @@ Use this format:
 - Validation: <commands and manual scenarios>
 ```
 
+## 2026-09-24 — elite-health-bars
+
+- Spec: `docs/spec/elite-health-bars/`
+- Summary: Added health bars above living boss-flagged enemies and a persistent pause/settings toggle, enabled by default.
+- Impact: Bars use existing HP/maxHP and boss state, remain in the Pixi scene overlay, and do not change combat values. Existing saves inherit the enabled setting without a version bump.
+- Validation: `npm run build`; `npm run figures`; `npm run bench`; `git diff --check`. A live in-game screenshot with a spawned boss is not yet captured.
+
 ## 2026-09-23 — ui-redesign
 
 - Spec: `docs/spec/ui-redesign/`
