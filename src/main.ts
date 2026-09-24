@@ -309,6 +309,7 @@ hud.setMinimapVisible(profile.minimapVisible);
 
 const scene = new Scene(app.renderer, camera);
 scene.eliteBossHealthBarsVisible = profile.eliteBossHealthBarsVisible;
+scene.setBloodstainsVisible(profile.bloodstainsVisible);
 app.stage.addChild(scene.view);
 // 缓冲尺寸立刻就要定下来：铺场要按视野半径算生成圈，准星要按人的屏幕位置摆，而这两件事都
 // 得在加载期间做完 —— 那时还一帧都没跑过，指望不上主循环里那次 resize。
@@ -1667,6 +1668,13 @@ function applyEliteBossHealthBars(on: boolean): void {
   summary.setEliteBossHealthBarsVisible(on);
 }
 
+function applyBloodstains(on: boolean): void {
+  profile.setBloodstainsVisible(on);
+  scene.setBloodstainsVisible(on);
+  summary.setBloodstainsVisible(on);
+  draw();
+}
+
 const summary = new SummaryScreen({
   onResume: () => controls.resume(),
   /*
@@ -1693,6 +1701,7 @@ const summary = new SummaryScreen({
   onCombatTextChange: (kind, on) => applyCombatText(kind, on),
   onMinimapChange: (on) => applyMinimap(on),
   onEliteBossHealthBarsChange: (on) => applyEliteBossHealthBars(on),
+  onBloodstainsChange: (on) => applyBloodstains(on),
   heldItems: () => heldItems(),
 }, text);
 // 存档里那一档先告诉结算屏，它那两个方块才知道哪个该亮。语言走的是共用的 HudText，
@@ -1702,6 +1711,7 @@ summary.setMusicEnabled(profile.musicEnabled);
 summary.setCombatText(profile.combatText);
 summary.setMinimapVisible(profile.minimapVisible);
 summary.setEliteBossHealthBarsVisible(profile.eliteBossHealthBarsVisible);
+summary.setBloodstainsVisible(profile.bloodstainsVisible);
 
 const setup = new SetupScreen(
   {

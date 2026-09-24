@@ -23,6 +23,7 @@ export const HUD_TEXT_ZH_CN: HudMessages = {
   combatTextLevel: '升级飘字',
   minimapDisplay: '小地图',
   eliteBossHealthBars: '精英/Boss 血条',
+  bloodstainsDisplay: '敌人血迹',
   on: '开',
   off: '关',
   currencyInfo: '货币信息',

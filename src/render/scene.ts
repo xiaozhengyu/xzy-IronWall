@@ -5,6 +5,7 @@ import { drawDharmaAspect } from '../effects/dharmaAspect';
 import { drawHeavenGuard, heavenGuardFall } from '../effects/heavenGuard';
 import { drawOrbitStars } from '../effects/orbitStars';
 import { SKY_BLADE_LENGTH, drawSkyBlade, heavenSplitBlade, skyArrowBlade } from '../effects/skyBlade';
+import { BloodstainLayer } from './bloodstainLayer';
 import { drawCharacter, drawSkeleton } from '../characters/renderer';
 import type { ImpactEffects } from '../effects/impact';
 import type { Pose } from '../characters/rig';
@@ -31,7 +32,7 @@ import { drawFigureStage } from './figureStage';
 /**
  * 一帧画面从头到尾。
  *
- * 这个文件存在的理由是**画家顺序**：地面 → 脚印 → 草石 → 冲击弧 → 树和人（同一批次按深度
+ * 这个文件存在的理由是**画家顺序**：地面 → 脚印/地面细节 → 血迹 → 冲击弧 → 树和人（同一批次按深度
  * 排序）→ 水花 → 雨雪。光标由 UI 顶层绘制。这个顺序以前散在 main.ts 中间的
  * 六十行里，和出怪、碰撞、暂停挤在一起。想加一层新东西（血条、伤害数字、技能特效），要先
  * 在那六十行里找准位置；现在打开这个文件，顺序就是它自己。
@@ -164,6 +165,8 @@ export class Scene {
 
   /** 一帧里所有的图元先攒在这里，最后按深度排序一次性写进顶点缓冲。 */
   private readonly shapes = new ShapeBatch();
+  /** 脚印和地表细节单独成批，血迹贴图夹在这一批和世界物体之间。 */
+  private readonly groundDetailShapes = new ShapeBatch();
   /**
    * 场上所有东西都画进这一个 Mesh。
    *
@@ -171,6 +174,7 @@ export class Scene {
    * 毫秒（见 PrimitiveMesh 顶上那段实测）。这里是自己把三角形写进顶点缓冲。
    */
   private readonly prim = new PrimitiveMesh();
+  private readonly groundDetailPrim = new PrimitiveMesh(120_000);
   /**
    * 物品图鉴那一屏的精灵。
    *
@@ -204,6 +208,10 @@ export class Scene {
    * 都不多付。
    */
   private readonly worldGround = new Container();
+  /** 静态地图血迹贴图：放在地面与地图图元之间，不参与每帧 ShapeBatch。 */
+  private readonly bloodstains = new BloodstainLayer();
+  private bloodstainsEnabled = true;
+  private bloodstainRevision = -1;
   /** 地图预览那一层的图元（树、草石、营地）。和战场那一批分开，因为它要跟着遮罩走。 */
   private readonly mapPrim = new PrimitiveMesh(120_000);
   /** 遮罩本体：一个矩形。只有选图那一步用得上。 */
@@ -243,7 +251,13 @@ export class Scene {
     this.camera = camera;
     this.surface = new PixelSurface(renderer, camera.magnify);
     this.itemLayer.visible = false;
-    this.surface.units.addChild(this.prim.mesh, this.itemLayer, this.pickupLayer);
+    this.surface.units.addChild(
+      this.groundDetailPrim.mesh,
+      this.bloodstains.container,
+      this.prim.mesh,
+      this.itemLayer,
+      this.pickupLayer,
+    );
     this.worldGround.addChild(this.mapPrim.mesh);
     // 遮罩本体要挂在显示树上（Pixi 要靠它算变换），但它不会被画到颜色缓冲里 —— 被当成
     // 遮罩用的对象自动排除在正常绘制之外。所以这里**不能**把它设成 visible = false：那样
@@ -269,6 +283,7 @@ export class Scene {
       this.worldGround.removeChild(this.attached.ground.shadowSprite);
     }
     this.attached = field;
+    this.bloodstains.setTerrain(field.terrain);
     this.worldGround.addChildAt(field.ground.sprite, 0);
     this.worldGround.addChildAt(field.ground.shadowSprite, 1);
     // attachField 会把新地面插到容器前面；把地图预览批次移回最上层，否则底图会盖掉树群、障碍和营地。
@@ -300,34 +315,56 @@ export class Scene {
     return this.surface.height;
   }
 
+  /** ESC 设置立即切换地图血迹的可见性；缓存本身保留到 Battle.reset。 */
+  setBloodstainsVisible(on: boolean): void {
+    this.bloodstainsEnabled = on;
+    this.bloodstains.setVisible(on);
+  }
+
   draw(field: Field, battle: Battle, overlay: SceneOverlay): void {
     const t0 = performance.now();
     this.itemLayer.visible = false;
+    this.groundDetailPrim.mesh.visible = true;
+    this.prim.mesh.visible = true;
     this.setGroundVisible(field, true);
     this.clearMapClip();
     const cam = this.camera;
     const { x: camX, y: camY, rootX, rootY, grain } = cam;
     const shapes = this.shapes;
 
+    if (this.bloodstainRevision !== battle.bloodstainRevision) {
+      this.bloodstains.clear();
+      this.bloodstainRevision = battle.bloodstainRevision;
+    }
+    this.bloodstains.addMany(battle.takeBloodstainEvents());
+    this.bloodstains.setVisible(this.bloodstainsEnabled);
+
     // 地面。云影的格点铺在视口范围上，摆位必须和它一致，否则影子会相对地面滑动。
     field.ground.update(camX, camY, cam.halfW, cam.halfH);
     field.ground.layout(camX, camY, rootX, rootY, grain, this.surface.width, this.surface.height);
-
-    this.prim.begin();
+    this.bloodstains.layout(camX, camY, rootX, rootY, grain);
 
     // 视野半宽/半高，留一格余量。地面细节和树只画看得见的那部分。
     const spanX = cam.halfW + 40;
     const spanY = cam.halfH + 60;
 
-    // 脚印和涟漪贴在地上，压在草之下。
-    field.footsteps.drawGround(shapes, camX, camY, rootX, rootY, grain);
-    field.terrain.drawDetail(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
+    // 脚印、地表细节和静态地面散布单独成批。血迹贴图接在其后，避免灌木/石块/倒木逐帧盖住它；
+    // 树冠、营地道具、人和掉落仍在后面的世界批次里，会自然挡住血迹。
+    const groundShapes = this.groundDetailShapes;
+    this.groundDetailPrim.begin();
+    field.footsteps.drawGround(groundShapes, camX, camY, rootX, rootY, grain);
+    field.terrain.drawDetail(groundShapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
+    field.terrain.drawScatter(groundShapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
+    const groundPrimitiveCount = groundShapes.primitiveCount;
+    groundShapes.flushToMesh(this.groundDetailPrim, this.surface.width, this.surface.height);
+    this.groundDetailPrim.end();
+
+    this.prim.begin();
 
     battle.effects.draw(shapes, camX, camY, rootX, rootY, grain);
 
     // 场上所有人和树共用一个批次：深度排序是全局的，站得靠下的自然压在靠上的前面，所以人能
     // 走到树后面去，不需要先按 y 排一遍再画。
-    field.terrain.drawScatter(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
     field.terrain.drawTrees(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
     field.props.draw(shapes, field.weather, camX, camY, rootX, rootY, grain, spanX, spanY);
 
@@ -469,7 +506,7 @@ export class Scene {
     // 落下的雨雪在所有东西之前 —— 它在镜头和世界之间，不参与排序。
     field.weather.draw(shapes, camX, camY, rootX, rootY, grain, cam.halfW, cam.halfH);
 
-    this.primitives = shapes.primitiveCount; // flush 之后计数会清零
+    this.primitives = shapes.primitiveCount + groundPrimitiveCount; // 两批 flush 之后图元计数都会清零
     shapes.flushToMesh(this.prim, this.surface.width, this.surface.height);
     this.prim.end();
 
@@ -489,6 +526,8 @@ export class Scene {
    */
   drawItems(defs: ItemDef[], sheet: ItemSheet): number {
     const t0 = performance.now();
+    this.bloodstains.setVisible(false);
+    this.groundDetailPrim.mesh.visible = false;
     const w = this.surface.width;
     const h = this.surface.height;
 
@@ -558,6 +597,8 @@ export class Scene {
    */
   drawStages(field: Field, stages: readonly StageFigure[], map: MapView | null = null): void {
     const t0 = performance.now();
+    this.bloodstains.setVisible(false);
+    this.groundDetailPrim.mesh.visible = false;
     this.itemLayer.visible = false;
     // 地上那几件药也收起来。它们是精灵而不是图元，不跟着 prim 清空 —— 上一局最后一帧没捧起来的
     // 那几件会就这么留在屏幕上，盖到选人界面的台子和地图上。
@@ -605,6 +646,7 @@ export class Scene {
    * 遮罩是必须的：画布是整块的，而这张图只该出现在界面那个框里。
    */
   private drawMapView(field: Field, map: MapView): void {
+    this.bloodstains.setVisible(false);
     const { rect, camX, camY, grain } = map;
     const rootX = rect.x + rect.w * 0.5;
     const rootY = rect.y + rect.h * 0.5;

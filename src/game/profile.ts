@@ -99,6 +99,8 @@ export interface ProfileSettings {
   minimap: boolean;
   /** 精英/Boss 血条显示开关。 */
   eliteBossHealthBars: boolean;
+  /** 本局敌人击杀后留下的地图血迹显示开关。 */
+  bloodstains: boolean;
 }
 
 export interface ProfileData {
@@ -180,6 +182,7 @@ function freshSettings(): ProfileSettings {
     combatText: { damage: true, heal: true, mana: true, buff: true, level: true },
     minimap: true,
     eliteBossHealthBars: true,
+    bloodstains: true,
   };
 }
 
@@ -482,6 +485,16 @@ export class Profile {
   setEliteBossHealthBarsVisible(on: boolean): void {
     if (this.data.settings.eliteBossHealthBars === on) return;
     this.data.settings.eliteBossHealthBars = on;
+    this.save();
+  }
+
+  get bloodstainsVisible(): boolean {
+    return this.data.settings.bloodstains;
+  }
+
+  setBloodstainsVisible(on: boolean): void {
+    if (this.data.settings.bloodstains === on) return;
+    this.data.settings.bloodstains = on;
     this.save();
   }
 

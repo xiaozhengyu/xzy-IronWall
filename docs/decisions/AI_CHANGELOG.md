@@ -13,6 +13,13 @@ Use this format:
 - Validation: <commands and manual scenarios>
 ```
 
+## 2026-09-24 — persistent-bloodstains
+
+- Spec: `docs/spec/bloodstains/`
+- Summary: Added persistent, pixel-art ground stains on lethal enemy hits and a saved ESC setting to hide or show them.
+- Impact: Stains are independent of corpse lifetime, remain through the run result, clear on the next Battle reset, and are stored in sparse fixed-resolution texture chunks. Ground detail and static scatter render below stains, while trees/props/units remain above; normal alpha blending and a brighter red palette keep them from becoming black on multiply.
+- Validation: `npm run build`; `npm run figures`; default and wave-8 `npm run bench` (0.54 ms / 0.93 ms total CPU after the ground-scatter order fix); `git diff --check`; manual browser checks for kill placement, ground-scatter occlusion, run reset, and the saved visibility toggle remain to be performed.
+
 ## 2026-09-24 — developer-card-testing
 
 - Spec: `docs/spec/developer-console/`

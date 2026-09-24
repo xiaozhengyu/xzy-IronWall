@@ -40,6 +40,7 @@ export interface HudMessages {
   combatTextLevel: string;
   minimapDisplay: string;
   eliteBossHealthBars: string;
+  bloodstainsDisplay: string;
   on: string;
   off: string;
   currencyInfo: string;

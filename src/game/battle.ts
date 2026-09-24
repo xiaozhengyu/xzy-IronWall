@@ -877,6 +877,16 @@ export interface BattleSoundEvent {
   count: number;
 }
 
+/** 一个致命命中的地面血迹事件。渲染层消费后不再保留敌人对象引用。 */
+export interface BloodstainMark {
+  x: number;
+  y: number;
+  radius: number;
+  seed: number;
+}
+
+const EMPTY_BLOODSTAIN_MARKS: readonly BloodstainMark[] = [];
+
 const MAX_SOUND_EVENTS = 256;
 
 export class Battle {
@@ -933,6 +943,22 @@ export class Battle {
   }
 
   kills = 0;
+  private pendingBloodstains: BloodstainMark[] = [];
+  private bloodstainSeed = 0;
+  private _bloodstainRevision = 0;
+
+  /** Changes only when Battle.reset() starts a new run. Scene uses it to clear its cached map layer. */
+  get bloodstainRevision(): number {
+    return this._bloodstainRevision;
+  }
+
+  /** Scene consumes each lethal-hit event once; an empty shared array avoids per-frame allocations. */
+  takeBloodstainEvents(): readonly BloodstainMark[] {
+    return this.pendingBloodstains.length > 0
+      ? this.pendingBloodstains.splice(0)
+      : EMPTY_BLOODSTAIN_MARKS;
+  }
+
   deaths = 0;
   /** 这一局砍掉几个首领。和总击杀分开记：它才是"打到哪了"的度量。 */
   bossKills = 0;
@@ -2246,6 +2272,9 @@ export class Battle {
   /** 清场重来。 */
   reset(view: BattleView): void {
     this.enemies.length = 0;
+    this.pendingBloodstains.length = 0;
+    this.bloodstainSeed = 0;
+    this._bloodstainRevision++;
     // 预留的是"刚才那片人海"，重开之后它不该再长回来。
     this.reserved.length = 0;
     // 锁着的那个人属于上一局。
@@ -3482,6 +3511,13 @@ export class Battle {
       if (e.boss && e.stun <= 0) e.stun = BOSS_HIT_STUN;
       return;
     }
+
+    this.pendingBloodstains.push({
+      x: e.x,
+      y: e.y,
+      radius: e.radius,
+      seed: ++this.bloodstainSeed,
+    });
 
     this.kills++;
     this.gainExp(e.expValue);

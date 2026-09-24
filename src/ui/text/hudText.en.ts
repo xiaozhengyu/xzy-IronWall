@@ -33,6 +33,7 @@ export const HUD_TEXT_EN: HudMessages = {
   combatTextLevel: 'LEVEL TEXT',
   minimapDisplay: 'MINIMAP',
   eliteBossHealthBars: 'ELITE/BOSS HEALTH BARS',
+  bloodstainsDisplay: 'ENEMY BLOODSTAINS',
   on: 'ON',
   off: 'OFF',
   currencyInfo: 'CURRENCY',

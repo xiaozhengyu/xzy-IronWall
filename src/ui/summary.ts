@@ -84,6 +84,8 @@ export interface SummaryHooks {
   onMinimapChange?(on: boolean): void;
   /** ESC 页上的精英/Boss 血条显示开关。 */
   onEliteBossHealthBarsChange?(on: boolean): void;
+  /** ESC 页上的地图血迹显示开关。 */
+  onBloodstainsChange?(on: boolean): void;
   /** Current item strip in the active locale, used when language changes while this panel is open. */
   heldItems?(): readonly ItemStripEntry[];
 }
@@ -141,6 +143,8 @@ export class SummaryScreen {
   private minimapOn = true;
   private eliteBossHealthBarsButtons: HTMLButtonElement[] = [];
   private eliteBossHealthBarsOn = true;
+  private bloodstainsButtons: HTMLButtonElement[] = [];
+  private bloodstainsOn = true;
   private readonly combatTextButtons: Record<CombatTextKind, HTMLButtonElement[]> = {
     damage: [], heal: [], mana: [], buff: [], level: [],
   };
@@ -418,6 +422,11 @@ export class SummaryScreen {
       this.markEliteBossHealthBars();
       this.hooks.onEliteBossHealthBarsChange?.(this.eliteBossHealthBarsOn);
     }, ['on', 'off']);
+    this.bloodstainsButtons = this.chipRow('bloodstainsDisplay', [['on', ''], ['off', '']], (value) => {
+      this.bloodstainsOn = value === 'on';
+      this.markBloodstains();
+      this.hooks.onBloodstainsChange?.(this.bloodstainsOn);
+    }, ['on', 'off']);
     this.buildCombatTextRow('combatTextDamage', 'damage');
     this.buildCombatTextRow('combatTextHeal', 'heal');
     this.buildCombatTextRow('combatTextMana', 'mana');
@@ -429,6 +438,7 @@ export class SummaryScreen {
     this.markMusic();
     this.markMinimap();
     this.markEliteBossHealthBars();
+    this.markBloodstains();
     return this.settings;
   }
 
@@ -513,6 +523,17 @@ export class SummaryScreen {
   setEliteBossHealthBarsVisible(on: boolean): void {
     this.eliteBossHealthBarsOn = on;
     this.markEliteBossHealthBars();
+  }
+
+  private markBloodstains(): void {
+    for (const button of this.bloodstainsButtons) {
+      button.classList.toggle('on', button.dataset.value === (this.bloodstainsOn ? 'on' : 'off'));
+    }
+  }
+
+  setBloodstainsVisible(on: boolean): void {
+    this.bloodstainsOn = on;
+    this.markBloodstains();
   }
 
   private markCombatText(kind: CombatTextKind): void {
