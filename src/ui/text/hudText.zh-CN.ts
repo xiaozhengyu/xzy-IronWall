@@ -243,6 +243,8 @@ export const HUD_TEXT_ZH_CN: HudMessages = {
   cardMpRegenDetail: '每秒回蓝 +{value}%',
   cardCrit: '暴击率',
   cardCritDetail: '当前暴击率相对提升 +{value}%',
+  cardSkillCooldown: '技能冷却',
+  cardSkillCooldownDetail: '所有技能冷却时间减少 {value}%',
   cardLevelUp: '等级 +1',
   cardObtain: '获得【{kind}】',
   cardSkillUpgrade: '{from} 级 → {to} 级（伤害 +{damage}%，范围 +{reach}%）',

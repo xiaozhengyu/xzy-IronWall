@@ -6,7 +6,14 @@ import {
   type SkillDef,
   type SkillId,
 } from './skills';
-import { SKILL_MAX_LEVEL, skillDamageScale, skillMpScale, skillRateScale, skillReachScale } from '../data/balance';
+import {
+  RUN_SKILL_COOLDOWN_REDUCTION_CAP,
+  SKILL_MAX_LEVEL,
+  skillDamageScale,
+  skillMpScale,
+  skillRateScale,
+  skillReachScale,
+} from '../data/balance';
 
 /**
  * 主动槽与键位一一对应；UI、输入和战斗逻辑都从这里读，避免各写一份顺序。
@@ -93,6 +100,9 @@ export class SkillLoadout {
    */
   private readonly levels = levelTable();
 
+  /** 一局通用的技能冷却倍率，与技能自身等级倍率分别计算。 */
+  private cooldownScale = 1;
+
   snapshot(): SkillLoadoutSnapshot {
     return {
       attack: this.attackSkill,
@@ -148,7 +158,17 @@ export class SkillLoadout {
 
   /** 这一招的冷却乘多少。升级就是出手更密。 */
   rateScale(id: SkillId): number {
-    return skillRateScale(this.levels[id]);
+    return skillRateScale(this.levels[id]) * this.cooldownScale;
+  }
+
+  /** 设置一局通用冷却倍率，并按比例调整正在倒计时的技能。 */
+  setCooldownScale(scale: number): void {
+    if (!Number.isFinite(scale)) return;
+    const next = Math.max(1 - RUN_SKILL_COOLDOWN_REDUCTION_CAP, Math.min(1, scale));
+    if (next === this.cooldownScale) return;
+    const factor = next / this.cooldownScale;
+    for (const skill of Skills) this.cooldowns[skill.id] *= factor;
+    this.cooldownScale = next;
   }
 
   mpScale(id: SkillId): number {
@@ -232,13 +252,16 @@ export class SkillLoadout {
    * @param guard  开局就戴着的护身技，没有就传 null。目前只有骑士有一张，见
    *               HeroDef.startGuard。
    */
-  startRun(attack: SkillId, guard: SkillId | null = null): void {
+  startRun(attack: SkillId, guard: SkillId | null = null, cooldownScale = 1): void {
     this.projectileSkills.clear();
     this.guardSkill = null;
     for (let i = 0; i < this.activeSkillSlots.length; i++) this.activeSkillSlots[i] = null;
     this.setEquipped(attack, true);
     if (guard) this.setEquipped(guard, true);
     // 疾走不用装：它不在这四格里，也不参与抽牌 —— 换谁上场、抽到什么，跑步都在 Shift 上。
+    this.cooldownScale = Number.isFinite(cooldownScale)
+      ? Math.max(1 - RUN_SKILL_COOLDOWN_REDUCTION_CAP, Math.min(1, cooldownScale))
+      : 1;
     this.resetCooldowns();
     this.resetLevels();
   }

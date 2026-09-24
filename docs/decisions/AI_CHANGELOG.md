@@ -13,6 +13,20 @@ Use this format:
 - Validation: <commands and manual scenarios>
 ```
 
+## 2026-09-24 — developer-card-testing
+
+- Spec: `docs/spec/developer-console/`
+- Summary: Added an F1 card tester with every attribute-card roll, currently legal skill acquisition/upgrades, and both gold-card values.
+- Impact: Test cards dispatch through the real reward hooks without advancing normal card-round/cap state; selecting a gold card permanently adds its value to saved coins and is labeled accordingly.
+- Validation: `npm run build`; `git diff --check`; developer-browser card application, gold persistence, and production DEV-boundary checks remain to be performed.
+
+## 2026-09-24 — skill-cooldown-card
+
+- Spec: `docs/spec/skill-cooldown-card/`
+- Summary: Added a shared reward card that reduces every skill's cooldown by a randomized 2–5% per selection, capped at 25% per run.
+- Impact: Existing and future skill cooldowns update immediately; attack swing animation time remains unchanged for future attacks, and run-local reductions reset with a new run.
+- Validation: `npm run build`; `npm run figures`; `git diff --check`; manual reward selection and in-game cooldown checks remain to be performed.
+
 ## 2026-09-24 — proving-ground-topology
 
 - Spec: `docs/spec/proving-ground-topology/`

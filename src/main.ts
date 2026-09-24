@@ -177,6 +177,24 @@ const menu = new Menu({
       name: text.value(pickup.nameKey),
       note: text.value(pickup.noteKey),
     })),
+    cardOptions: () => hud.cards.debugOffers().map((offer) => {
+      const group = offer.gold !== undefined
+        ? '金币卡（会写入存档）'
+        : offer.bonus || offer.skillCooldownReduction !== undefined
+          ? '属性卡与全技能冷却卡'
+          : offer.skill && offer.obtain
+            ? '技能获取卡'
+            : '技能升级卡';
+      return {
+        id: offer.key,
+        group,
+        name: offer.gold !== undefined ? `金币 +${offer.gold}` : offer.name,
+        label: offer.gold !== undefined
+          ? `金币 +${offer.gold}（永久写入存档）`
+          : `${offer.name} · ${offer.detail.replace(/\s+/g, ' ')}`,
+      };
+    }),
+    applyCard: (id) => hud.cards.applyDebugOffer(id),
     read: () => ({
       skillLoadout: battle.skillLoadout.snapshot(),
       itemSlots: Array.from({ length: ITEM_SLOT_COUNT }, (_, slot) => battle.itemAt(slot)),
@@ -1869,6 +1887,7 @@ hud.cards.connect({
     max: SKILL_MAX_LEVEL,
   })),
   onStatCard: (bonus) => battle.addRunBonus(bonus),
+  onSkillCooldownCard: (reduction) => battle.addRunSkillCooldownReduction(reduction),
   onObtainSkill: (skill) => battle.obtainSkill(skill),
   onUpgradeSkill: (skill) => battle.upgradeSkill(skill),
   /*

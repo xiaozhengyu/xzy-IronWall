@@ -253,6 +253,8 @@ export const HUD_TEXT_EN: HudMessages = {
   cardMpRegenDetail: 'Mana per second +{value}%',
   cardCrit: 'Critical chance',
   cardCritDetail: 'Current critical chance +{value}% relative',
+  cardSkillCooldown: 'Skill cooldown',
+  cardSkillCooldownDetail: 'All skill cooldowns reduced by {value}%',
   cardLevelUp: 'Level +1',
   cardObtain: 'Unlocks a {kind} skill',
   cardSkillUpgrade: 'Level {from} → {to} (damage +{damage}%, range +{reach}%)',

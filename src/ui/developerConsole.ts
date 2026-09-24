@@ -20,6 +20,13 @@ export interface DeveloperConsoleItemSlot {
   count: number;
 }
 
+export interface DeveloperConsoleCardOption {
+  id: string;
+  group: string;
+  name: string;
+  label: string;
+}
+
 export interface DeveloperConsoleState {
   skillLoadout: SkillLoadoutSnapshot;
   itemSlots: readonly (DeveloperConsoleItemSlot | null)[];
@@ -35,6 +42,8 @@ export interface DeveloperConsoleState {
 export interface DeveloperConsoleBridge {
   readonly skills: readonly DeveloperConsoleSkill[];
   readonly pickups: readonly DeveloperConsolePickup[];
+  cardOptions(): readonly DeveloperConsoleCardOption[];
+  applyCard(id: string): boolean;
   read(): DeveloperConsoleState;
   toggleSkill(id: SkillId): boolean;
   resetSkills(): void;
@@ -87,6 +96,8 @@ export class DeveloperConsole {
   private readonly skillButtons = new Map<SkillId, HTMLButtonElement>();
   private readonly skillSlots = el('div', 'developer-console-skill-slots');
   private readonly itemSelect = el('select', 'developer-console-select');
+  private readonly cardSelect = el('select', 'developer-console-select');
+  private readonly cardApplyButton = el('button', 'menu-btn developer-console-button', '立即应用卡牌');
   private readonly itemCount = el('input', 'developer-console-number') as HTMLInputElement;
   private readonly heldItems = el('div', 'developer-console-held-items');
   private readonly hpValue = el('span', 'developer-console-resource-value');
@@ -135,6 +146,7 @@ export class DeveloperConsole {
     this.refreshToggle(this.mpLockButton, state.mpLock !== null,
       state.mpLock === null ? '锁定当前蓝量' : `蓝量锁定 ${Math.ceil(state.mpLock)}`);
     this.refreshToggle(this.invincibleButton, state.invincible, '无敌');
+    this.refreshCards();
     this.feedback.textContent = this.feedbackText;
   }
 
@@ -143,12 +155,62 @@ export class DeveloperConsole {
     const title = el('div', 'developer-console-title', '开发者控制台');
     head.append(title, el('span', 'developer-console-badge', 'DEV ONLY'));
     this.root.appendChild(head);
-    this.root.appendChild(el('div', 'developer-console-note', '只影响当前局，不写入存档。'));
+    this.root.appendChild(el('div', 'developer-console-note', '通常只影响当前局；卡牌测试中的金币卡会写入存档。'));
 
+    this.buildCards();
     this.buildSkills();
     this.buildItems();
     this.buildResources();
     this.root.appendChild(this.feedback);
+  }
+
+  private buildCards(): void {
+    const group = section('卡牌测试');
+    group.body.appendChild(el(
+      'div',
+      'developer-console-card-note',
+      '选择后立即应用；金币卡会永久增加存档金币，重开本局不会撤销。',
+    ));
+    this.cardSelect.setAttribute('aria-label', '选择要测试的卡牌');
+    const form = el('div', 'developer-console-card-form');
+    this.cardApplyButton.addEventListener('click', () => {
+      const selected = this.bridge.cardOptions().find((card) => card.id === this.cardSelect.value);
+      if (!selected) {
+        this.feedbackText = '当前没有可应用的测试卡';
+        this.refresh();
+        return;
+      }
+      const applied = this.bridge.applyCard(selected.id);
+      this.feedbackText = applied ? `已应用：${selected.name}` : `当前不可应用：${selected.name}`;
+      this.refresh();
+    });
+    form.append(this.cardSelect, this.cardApplyButton);
+    group.body.appendChild(form);
+    this.root.appendChild(group.root);
+  }
+
+  private refreshCards(): void {
+    const previous = this.cardSelect.value;
+    const cards = this.bridge.cardOptions();
+    const groups = new Map<string, HTMLOptGroupElement>();
+    this.cardSelect.replaceChildren();
+    for (const card of cards) {
+      let optionGroup = groups.get(card.group);
+      if (!optionGroup) {
+        optionGroup = el('optgroup') as HTMLOptGroupElement;
+        optionGroup.label = card.group;
+        groups.set(card.group, optionGroup);
+        this.cardSelect.appendChild(optionGroup);
+      }
+      const option = el('option') as HTMLOptionElement;
+      option.value = card.id;
+      option.textContent = card.label;
+      optionGroup.appendChild(option);
+    }
+    if (cards.length > 0) {
+      this.cardSelect.value = cards.some((card) => card.id === previous) ? previous : cards[0].id;
+    }
+    this.cardApplyButton.disabled = cards.length === 0;
   }
 
   private buildSkills(): void {

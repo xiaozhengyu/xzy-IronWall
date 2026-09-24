@@ -372,6 +372,11 @@ export const CARD_OBTAIN_FROM = 2;
  */
 export const STAT_CARD_CAP = 5;
 
+/** 每张全技能冷却卡按普通属性卡幅度的四分之一抽取：2%、3%、4% 或 5%。 */
+export const RUN_SKILL_COOLDOWN_CARD_SCALE = 0.25;
+/** 五张最大幅度的冷却卡将一局内的总缩减封顶在 25%。 */
+export const RUN_SKILL_COOLDOWN_REDUCTION_CAP = 0.25;
+
 /**
  * 什么都满了之后那张金币牌给多少。
  *

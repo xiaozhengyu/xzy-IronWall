@@ -25,6 +25,7 @@
 }
 
 .developer-console-note,
+.developer-console-card-note,
 .developer-console-feedback,
 .developer-console-skill-slots,
 .developer-console-held-items {
@@ -34,6 +35,11 @@
 
 .developer-console-note {
   margin: 3px 0 12px;
+}
+
+.developer-console-card-note {
+  color: #caa96e;
+  font-size: 11px;
 }
 
 .developer-console-feedback {
@@ -76,6 +82,7 @@
 
 .developer-console-button-list,
 .developer-console-item-form,
+.developer-console-card-form,
 .developer-console-resource-values {
   display: flex;
   flex-wrap: wrap;
@@ -92,6 +99,7 @@
 }
 
 .developer-console-item-form select,
+.developer-console-card-form select,
 .developer-console-number {
   min-height: 28px;
   padding: 3px 7px;
@@ -104,6 +112,12 @@
 
 .developer-console-item-form select {
   min-width: 150px;
+}
+
+.developer-console-card-form select {
+  flex: 1 1 220px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .developer-console-number {

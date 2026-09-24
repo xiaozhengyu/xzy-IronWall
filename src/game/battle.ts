@@ -32,6 +32,7 @@ import {
   HEAVEN_GUARD_HIT_GAP,
   HEAVEN_GUARD_FADE,
   FINAL_BOSS_LIMIT,
+  RUN_SKILL_COOLDOWN_REDUCTION_CAP,
   ORB_POWER,
   expToNextLevel,
   RUN_MULTIPLIER,
@@ -1355,6 +1356,8 @@ export class Battle {
   private hero: HeroDef = Heroes[0];
   private heroLevel = 1;
   private runBonus: StatBonus = {};
+  /** 一局内对所有技能共用的冷却缩减，按加算累计。 */
+  private runSkillCooldownReduction = 0;
 
   /** 生命上限的调试倍率。见 nudgeMaxHp。 */
   private hpScale = 1;
@@ -1624,6 +1627,7 @@ export class Battle {
     this.heroLevel = Math.max(1, Math.floor(level));
     this.levelExp = Math.max(0, expIntoLevel);
     this.runBonus = {};
+    this.runSkillCooldownReduction = 0;
     this.player.def = unitAppearance(hero.appearance);
     this.presetIndex = PlayerPresets.findIndex((preset) => preset.id === hero.appearance);
     if (this.presetIndex < 0) this.presetIndex = 0;
@@ -1701,6 +1705,22 @@ export class Battle {
     this.applyPlayerStats();
     // 血上限涨了就把涨的那一截补上，但不治疗已经掉的血 —— 一张属性卡不该同时是一瓶药。
     if (this.player.maxHp > before) this.player.hp += this.player.maxHp - before;
+  }
+
+  /** 增加一局内的全技能冷却缩减，并立即调整正在倒计时的技能。 */
+  addRunSkillCooldownReduction(reduction: number): void {
+    if (!Number.isFinite(reduction) || reduction <= 0) return;
+    const previousScale = 1 - this.runSkillCooldownReduction;
+    const nextReduction = Math.min(
+      RUN_SKILL_COOLDOWN_REDUCTION_CAP,
+      this.runSkillCooldownReduction + reduction,
+    );
+    const nextScale = 1 - nextReduction;
+    if (nextScale === previousScale) return;
+    this.runSkillCooldownReduction = nextReduction;
+    this.skillLoadout.setCooldownScale(nextScale);
+    // 当前普攻计时还包含挥击门闩；独立的挥击动作不会被缩短，后续普攻只缩短技能冷却部分。
+    this.player.attackCooldown *= nextScale / previousScale;
   }
 
   /**
@@ -2251,6 +2271,7 @@ export class Battle {
     this.resetSkillRuntime();
     // 重开就是重新开一局：抽到的招、练出来的等级、拿到的属性卡全部清空，回到"一个自动攻击
     // 技加一双靴子"。技能和灵石同生共死，留着上一局堆出来的强度就不是重开了。
+    this.runSkillCooldownReduction = 0;
     this.skillLoadout.startRun(this.hero.attackSkill, this.hero.startGuard ?? null);
     this.runBonus = {};
     this.timedBonuses.length = 0;
@@ -3184,7 +3205,11 @@ export class Battle {
   /** 开发者控制台恢复到本角色的开局技能方案，并清掉尚在运行的技能实体。 */
   resetDebugSkills(): void {
     this.resetSkillRuntime();
-    this.skillLoadout.startRun(this.hero.attackSkill, this.hero.startGuard ?? null);
+    this.skillLoadout.startRun(
+      this.hero.attackSkill,
+      this.hero.startGuard ?? null,
+      1 - this.runSkillCooldownReduction,
+    );
     this.applyPlayerStats();
     this.currentMp = Math.min(this.currentMp, this.player.stats.maxMp);
   }
@@ -3223,7 +3248,7 @@ export class Battle {
       return this.skillLoadout.attackSkill === id ? this.player.attackCooldown : 0;
     }
     // 正放着（见 skillHolding）：按满格返回，格子因此是全灰的；数字由 HUD 另行按住。
-    if (this.skillHolding(id)) return skillById(id).cooldown;
+    if (this.skillHolding(id)) return skillById(id).cooldown * this.skillLoadout.rateScale(id);
     return this.skillLoadout.cooldownOf(id);
   }
 
@@ -3233,7 +3258,7 @@ export class Battle {
     if (skill.category === 'attack') {
       return playerSwingTime(this.player) + skill.cooldown * this.skillLoadout.rateScale(id);
     }
-    return skill.cooldown;
+    return skill.cooldown * this.skillLoadout.rateScale(id);
   }
 
   private startPlayerAttack(): boolean {

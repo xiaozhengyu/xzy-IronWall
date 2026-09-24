@@ -11,6 +11,7 @@ import type { ItemStripEntry } from './itemStrip';
 import {
   CARD_GOLD_AMOUNTS,
   CARD_OBTAIN_FROM,
+  RUN_SKILL_COOLDOWN_CARD_SCALE,
   STAT_CARD_CAP,
   skillDamageScale,
   SKILL_LEVEL_REACH,
@@ -38,13 +39,15 @@ export interface HudCardOffer {
   obtain?: boolean;
   /** 金币牌：给多少金币。只在什么都满了的时候出。 */
   gold?: number;
+  /** 全技能冷却卡：本局累计的冷却缩减比例。 */
+  skillCooldownReduction?: number;
 }
 
 /** 属性牌可能出现的幅度，百分比。 */
 const STAT_STEPS = [8, 12, 15, 20];
 
 interface StatCard {
-  key: keyof StatBonus;
+  key: keyof StatBonus | 'skillCooldown';
   icon: string;
   nameKey: HudTextKey;
   /** 这一项的幅度要不要打折。不写就是 1。 */
@@ -54,8 +57,8 @@ interface StatCard {
 }
 
 /**
- * 属性牌的货架。key 直接就是 UnitStats 上的字段名 —— 这样一张牌要加什么是**写出来**的，
- * 不需要在别处再维护一张"卡名到属性"的对照表。
+ * 属性牌的货架。常规 key 直接就是 UnitStats 上的字段名；skillCooldown 是单独的战斗效果，
+ * 因为冷却不属于 UnitStats。
  */
 const STAT_CARDS: StatCard[] = [
   { key: 'attack', icon: HUD_ICON_URLS.swords, nameKey: 'cardAttack', detailKey: 'cardAttackDetail' },
@@ -74,6 +77,13 @@ const STAT_CARDS: StatCard[] = [
   { key: 'maxMp', icon: HUD_ICON_URLS.stats, nameKey: 'cardMaxMp', detailKey: 'cardMaxMpDetail' },
   { key: 'mpRegen', icon: HUD_ICON_URLS.potion, nameKey: 'cardMpRegen', detailKey: 'cardMpRegenDetail' },
   { key: 'crit', icon: HUD_ICON_URLS.skull, nameKey: 'cardCrit', detailKey: 'cardCritDetail' },
+  {
+    key: 'skillCooldown',
+    icon: HUD_ICON_URLS.scroll,
+    nameKey: 'cardSkillCooldown',
+    detailKey: 'cardSkillCooldownDetail',
+    scale: RUN_SKILL_COOLDOWN_CARD_SCALE,
+  },
 ];
 
 /** 两种奖励模式的牌面与选择额度。 */
@@ -135,10 +145,12 @@ export interface HudCardHooks {
   hero(): HeroDef;
   /** 玩家选了一张属性牌。 */
   onStatCard(bonus: StatBonus): void;
+  /** 玩家选了一张减少全技能冷却的牌。 */
+  onSkillCooldownCard(reduction: number): void;
   /** 玩家选了一张"获取"牌。 */
-  onObtainSkill(skill: SkillId): void;
+  onObtainSkill(skill: SkillId): boolean;
   /** 玩家选了一张"升级"牌。 */
-  onUpgradeSkill(skill: SkillId): void;
+  onUpgradeSkill(skill: SkillId): boolean;
   /** 玩家选了那张金币牌。金币是跨局的家底，直接进存档。 */
   onGoldCard(amount: number): void;
   /**
@@ -328,12 +340,7 @@ export class HudCardPicker {
     this.selected.add(index);
     this.picksMade++;
     this.round++;
-    if (offer.gold !== undefined) this.hooks?.onGoldCard(offer.gold);
-    else if (offer.bonus) {
-      this.statTaken.set(offer.key, (this.statTaken.get(offer.key) ?? 0) + 1);
-      this.hooks?.onStatCard(offer.bonus);
-    } else if (offer.skill && offer.obtain) this.hooks?.onObtainSkill(offer.skill);
-    else if (offer.skill) this.hooks?.onUpgradeSkill(offer.skill);
+    this.applyOffer(offer, true);
     card.disabled = true;
     card.classList.add('hud-card--picked');
     this.updateSelectionStatus();
@@ -353,6 +360,47 @@ export class HudCardPicker {
       currentItems.hide('cards');
     }, EXIT_MS) as unknown as number;
     return true;
+  }
+
+  /** F1 测试卡目录：列出所有属性卡档位、当前合法技能卡和两种金币卡。 */
+  debugOffers(): HudCardOffer[] {
+    const stats = STAT_CARDS.flatMap((card) => STAT_STEPS.map((step) => {
+      const value = Math.round(step * (card.scale ?? 1));
+      return this.statOffer(card, step, `debug:${card.key}:${value}`);
+    }));
+    return [
+      ...stats,
+      ...this.obtainSkillOffers(),
+      ...this.upgradeSkillOffers(),
+      ...CARD_GOLD_AMOUNTS.map((amount) => this.goldOffer(amount)),
+    ];
+  }
+
+  /** 按正常卡牌效果钩子应用一张测试卡，不推进正常抽卡轮次或属性卡次数。 */
+  applyDebugOffer(key: string): boolean {
+    const offer = this.debugOffers().find((candidate) => candidate.key === key);
+    return offer ? this.applyOffer(offer, false) : false;
+  }
+
+  private applyOffer(offer: HudCardOffer, countAsReward: boolean): boolean {
+    if (offer.gold !== undefined) {
+      if (!this.hooks) return false;
+      this.hooks.onGoldCard(offer.gold);
+      return true;
+    }
+    if (offer.bonus) {
+      if (countAsReward) this.statTaken.set(offer.key, (this.statTaken.get(offer.key) ?? 0) + 1);
+      this.hooks?.onStatCard(offer.bonus);
+      return true;
+    }
+    if (offer.skillCooldownReduction !== undefined) {
+      if (countAsReward) this.statTaken.set(offer.key, (this.statTaken.get(offer.key) ?? 0) + 1);
+      this.hooks?.onSkillCooldownCard(offer.skillCooldownReduction);
+      return true;
+    }
+    if (offer.skill && offer.obtain) return this.hooks?.onObtainSkill(offer.skill) ?? false;
+    if (offer.skill) return this.hooks?.onUpgradeSkill(offer.skill) ?? false;
+    return false;
   }
 
   private cancelClose(): void {
@@ -386,52 +434,13 @@ export class HudCardPicker {
     const cardCount = mode === 'wave' ? WAVE_CARD_COUNT : GEM_CARD_COUNT;
     const stats: HudCardOffer[] = STAT_CARDS
       .filter((c) => (this.statTaken.get(c.key) ?? 0) < STAT_CARD_CAP)
-      .map((c) => {
-        const step = STAT_STEPS[Math.floor(Math.random() * STAT_STEPS.length)];
-        return {
-          key: c.key,
-          icon: c.icon,
-          name: this.text.value(c.nameKey),
-          detail: this.text.value(c.detailKey, { value: Math.round(step * (c.scale ?? 1)) }),
-          bonus: { [c.key]: (step * (c.scale ?? 1)) / 100 } as StatBonus,
-        };
-      });
+      .map((c) => this.statOffer(c, STAT_STEPS[Math.floor(Math.random() * STAT_STEPS.length)]));
     // 获取：这一局还没拿到的招。牌面上写清它是哪一类，那决定它会占哪一格。
     const obtain: HudCardOffer[] = this.round < CARD_OBTAIN_FROM
       ? []
-      : (this.hooks?.obtainableSkills() ?? []).map((id) => {
-        const skill = skillById(id);
-        return {
-          key: `get:${id}`,
-          icon: SKILL_ICONS[id],
-          name: this.text.value(skill.nameKey),
-          detail: `${this.text.value(skill.noteKey)}
-${this.text.value('cardObtain', { kind: this.text.value(SkillCategoryRules[skill.category].nameKey) })}`,
-          skill: id,
-          obtain: true,
-        };
-      });
+      : this.obtainSkillOffers();
     // 升级：已经在用、还没满级的招。牌面上写清现在几级、升到几级。
-    const upgrade: HudCardOffer[] = (this.hooks?.upgradableSkills() ?? []).map((entry) => {
-      const skill = skillById(entry.id);
-      // 伤害那一条是现算的：每级的增量是固定的，但它占当前值的比例逐级变小
-      // （一级升二级 +25%，四级升满级 +14%）。写死一个数就有四分之三的时候是假的。
-      const gain = Math.round((skillDamageScale(entry.level + 1) / skillDamageScale(entry.level) - 1) * 100);
-      const reach = Math.round(SKILL_LEVEL_REACH * 100);
-      return {
-        key: `up:${entry.id}`,
-        icon: SKILL_ICONS[entry.id],
-        name: this.text.value(skill.nameKey),
-        detail: `${this.text.value(skill.noteKey)}
-${this.text.value('cardSkillUpgrade', {
-  from: entry.level,
-  to: entry.level + 1,
-  damage: gain,
-  reach,
-})}`,
-        skill: entry.id,
-      };
-    });
+    const upgrade = this.upgradeSkillOffers();
 
     const skills = [...obtain, ...upgrade];
     if (stats.length === 0 && skills.length === 0) {
@@ -450,9 +459,59 @@ ${this.text.value('cardSkillUpgrade', {
     return out;
   }
 
-  /** 什么都满了之后那一张。 */
-  private goldOffer(): HudCardOffer {
-    const gold = CARD_GOLD_AMOUNTS[Math.floor(Math.random() * CARD_GOLD_AMOUNTS.length)];
+  private statOffer(card: StatCard, step: number, key: string = card.key): HudCardOffer {
+    const value = step * (card.scale ?? 1);
+    return {
+      key,
+      icon: card.icon,
+      name: this.text.value(card.nameKey),
+      detail: this.text.value(card.detailKey, { value: Math.round(value) }),
+      ...(card.key === 'skillCooldown'
+        ? { skillCooldownReduction: value / 100 }
+        : { bonus: { [card.key]: value / 100 } as StatBonus }),
+    };
+  }
+
+  private obtainSkillOffers(): HudCardOffer[] {
+    return (this.hooks?.obtainableSkills() ?? []).map((id) => {
+      const skill = skillById(id);
+      return {
+        key: `get:${id}`,
+        icon: SKILL_ICONS[id],
+        name: this.text.value(skill.nameKey),
+        detail: `${this.text.value(skill.noteKey)}
+${this.text.value('cardObtain', { kind: this.text.value(SkillCategoryRules[skill.category].nameKey) })}`,
+        skill: id,
+        obtain: true,
+      };
+    });
+  }
+
+  private upgradeSkillOffers(): HudCardOffer[] {
+    return (this.hooks?.upgradableSkills() ?? []).map((entry) => {
+      const skill = skillById(entry.id);
+      // 伤害百分比会随当前等级变化，牌面始终和正常奖励一致。
+      const gain = Math.round((skillDamageScale(entry.level + 1) / skillDamageScale(entry.level) - 1) * 100);
+      const reach = Math.round(SKILL_LEVEL_REACH * 100);
+      return {
+        key: `up:${entry.id}`,
+        icon: SKILL_ICONS[entry.id],
+        name: this.text.value(skill.nameKey),
+        detail: `${this.text.value(skill.noteKey)}
+${this.text.value('cardSkillUpgrade', {
+  from: entry.level,
+  to: entry.level + 1,
+  damage: gain,
+  reach,
+})}`,
+        skill: entry.id,
+      };
+    });
+  }
+
+  /** 金币卡：正常抽取随机金额；F1 测试可指定金额。 */
+  private goldOffer(amount?: number): HudCardOffer {
+    const gold = amount ?? CARD_GOLD_AMOUNTS[Math.floor(Math.random() * CARD_GOLD_AMOUNTS.length)];
     return {
       key: `gold:${gold}`,
       icon: HUD_ICON_URLS.coin,

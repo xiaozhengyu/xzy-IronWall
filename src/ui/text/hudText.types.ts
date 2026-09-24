@@ -266,6 +266,8 @@ export interface HudMessages {
   cardMpRegenDetail: string;
   cardCrit: string;
   cardCritDetail: string;
+  cardSkillCooldown: string;
+  cardSkillCooldownDetail: string;
   cardLevelUp: string;
   /** 获取牌底下那一行：这一招属于哪一类。 */
   cardObtain: string;
