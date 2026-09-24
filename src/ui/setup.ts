@@ -41,6 +41,8 @@ export interface MapPin {
 
 export interface SetupBridge {
   readonly heroes: HeroDef[];
+  /** Persisted map id; invalid ids fall back to the first registered map. */
+  readonly initialMapId?: string;
   /**
    * 存档里的那一份：金币、每个角色的等级和经验、已经解锁的技能。
    *
@@ -202,7 +204,7 @@ export class SetupScreen {
   private readonly mapInfo = el('div', 'setup-col-body');
   private readonly weatherButtons: { node: HTMLButtonElement; kind: WeatherKind }[] = [];
   /**
-   * 右栏那几个敌人的空框，按 map.foes 的顺序。
+   * 右栏那几个敌人的空框，按 map.presentation.foes 的顺序。
    *
    * 公开出去是给渲染那边量位置的：框由 CSS 排版，画布按量出来的框画人。这样"框在哪儿"
    * 只有一份来源 —— 两边各写一套百分比的话，换个窗口尺寸就会错位。
@@ -247,6 +249,10 @@ export class SetupScreen {
   constructor(bridge: SetupBridge, text: HudText = new HudText()) {
     this.bridge = bridge;
     this.text = text;
+    const initialMap = bridge.initialMapId
+      ? bridge.maps.findIndex((map) => map.id === bridge.initialMapId)
+      : -1;
+    if (initialMap >= 0) this.mapIndex = initialMap;
     // 换语言：静态那几处是绑定的、HudText 自己会刷；角色卡、地图详情、出兵列表这些是
     // 按当时的数据拼出来的，得重画一遍。关着就不画 —— 下次 show() 本来就会重画。
     this.text.onChange(() => {
@@ -578,7 +584,7 @@ export class SetupScreen {
       const image = this.bridge.mapImage(map);
       if (image) thumb.appendChild(image);
       card.appendChild(thumb);
-      card.appendChild(el('span', 'setup-strip-k', this.text.value(map.nameKey)));
+      card.appendChild(el('span', 'setup-strip-k', this.text.value(map.presentation.nameKey)));
       card.addEventListener('click', () => this.selectMap(index));
       this.mapStrip.appendChild(card);
     });
@@ -590,7 +596,7 @@ export class SetupScreen {
     const next = ((index % count) + count) % count;
     if (this.entering || next === this.mapIndex) return;
     this.mapIndex = next;
-    // 天气跟着地图走：每张图自己写了"这地方本来什么样"（白岭雪原就该在下雪）。玩家换完图
+    // 天气跟着地图走：每张图自己写了"这地方本来什么样"。玩家换完图
     // 还能自己点回去，但默认值该是这张图的，不该是上一张图上留下来的那一档。
     this.weather = this.currentMap.weather;
     this.buildMapStrip();
@@ -639,13 +645,13 @@ export class SetupScreen {
     this.mapInfo.replaceChildren();
 
     const head = el('div', 'setup-detail-head');
-    head.appendChild(el('h2', 'setup-detail-k', this.text.value(map.nameKey)));
-    head.appendChild(el('p', 'setup-detail-v', this.text.value(map.blurbKey)));
+    head.appendChild(el('h2', 'setup-detail-k', this.text.value(map.presentation.nameKey)));
+    head.appendChild(el('p', 'setup-detail-v', this.text.value(map.presentation.blurbKey)));
     this.mapInfo.appendChild(head);
 
     const env = block(this.mapInfo, this.text.value('setupEnvironment'));
-    line(env, this.text.value('setupTerrain'), this.text.value(map.terrainKey));
-    line(env, this.text.value('setupSight'), this.text.value(map.sightKey));
+    line(env, this.text.value('setupTerrain'), this.text.value(map.presentation.terrainKey));
+    line(env, this.text.value('setupSight'), this.text.value(map.presentation.sightKey));
     const sky = el('div', 'setup-weather');
     this.weatherButtons.length = 0;
     for (const { kind, nameKey } of WEATHERS) {
@@ -657,10 +663,10 @@ export class SetupScreen {
     }
     env.appendChild(sky);
     // 这张图本来是什么天气。三个按钮说的是"这一局下什么"，这一行说的是"这地方平时什么样"。
-    line(env, this.text.value('setupWeather'), this.text.value(map.weatherNoteKey));
+    line(env, this.text.value('setupWeather'), this.text.value(map.presentation.weatherNoteKey));
 
     const goal = block(this.mapInfo, this.text.value('setupObjective'));
-    goal.appendChild(el('p', 'setup-goal', this.text.value(map.objectiveKey)));
+    goal.appendChild(el('p', 'setup-goal', this.text.value(map.presentation.objectiveKey)));
 
     // 出兵人物**不在**上面那块信息面板里，它是右栏里单独的一块。
     //
@@ -669,7 +675,7 @@ export class SetupScreen {
     // 底下的画布）。框本身是空的：人和他脚下那块地都由画布画在框里。
     this.foeSlots.length = 0;
     this.foeBox.replaceChildren();
-    for (const enemy of map.foes) {
+    for (const enemy of map.presentation.foes) {
       const card = el('div', `setup-foe${enemy.boss ? ' boss' : ''}`);
       const frame = el('div', 'setup-foe-frame');
       card.appendChild(frame);
@@ -694,19 +700,19 @@ export class SetupScreen {
     this.mapSummaryThumb.replaceChildren();
     const image = this.bridge.mapImage(map);
     if (image) this.mapSummaryThumb.appendChild(image);
-    this.mapSummaryName.textContent = this.text.value(map.nameKey);
+    this.mapSummaryName.textContent = this.text.value(map.presentation.nameKey);
     const weather = WEATHERS.find((entry) => entry.kind === this.weather);
     this.mapSummaryWeather.textContent = this.text.value('setupWeatherSummary', {
       weather: weather ? this.text.value(weather.nameKey) : '',
     });
     this.mapSummaryObjective.textContent = this.text.value('setupObjectiveSummary', {
-      objective: this.text.value(map.objectiveKey),
+      objective: this.text.value(map.presentation.objectiveKey),
     });
   }
 
   private refreshSummary(): void {
     this.summary.textContent =
-      `${this.text.value(this.currentHero.nameKey)} · ${this.text.value(this.currentMap.nameKey)}`;
+      `${this.text.value(this.currentHero.nameKey)} · ${this.text.value(this.currentMap.presentation.nameKey)}`;
     this.purse.textContent = String(this.bridge.progress.coins());
     this.refreshCarry();
   }
@@ -753,7 +759,7 @@ export class SetupScreen {
     this.startButton.textContent = this.text.value('setupEntering');
     this.entryLines.replaceChildren();
     this.entryLines.appendChild(el('div', 'setup-veil-k',
-      this.text.value('setupEnteringMap', { map: this.text.value(this.currentMap.nameKey) })));
+      this.text.value('setupEnteringMap', { map: this.text.value(this.currentMap.presentation.nameKey) })));
     this.entryLines.appendChild(el('div', 'setup-veil-v',
       this.text.value('setupEnteringHero', { hero: this.text.value(this.currentHero.nameKey) })));
     this.entryLines.appendChild(el('div', 'setup-veil-w', this.text.value('setupPreparing')));

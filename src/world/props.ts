@@ -5,6 +5,7 @@ import { Projector } from '../render/projector';
 import type { ShapeBatch } from '../render/shapeBatch';
 import type { Terrain } from './terrain';
 import { type Weather, shadowed } from './weather';
+import type { ResolvedMapLandmark } from '../data/mapTypes';
 
 /**
  * 摆在场上的东西。目前只有营火，移植自 overlord 的 PropCatalog.Campfire。
@@ -90,6 +91,28 @@ export class Props {
       // 彼此隔开。挤在一起的几堆火是一个营地，散开的才是"沿途歇脚的地方"。
       if (this.list.some((p) => Math.hypot(p.x - x, p.y - y) < 280)) continue;
       this.list.push({ kind: 'campfire', x, y, flip: rand() < 0.5, radius: FIRE_RADIUS, down: false });
+    }
+  }
+
+  /** Place the map-authored campfires instead of deriving them from terrain sampling. */
+  placeAuthored(terrain: Terrain, landmarks: readonly ResolvedMapLandmark[]): void {
+    for (const landmark of landmarks) {
+      if (landmark.kind !== 'campfire') continue;
+      const m = terrain.sample(landmark.x, landmark.y);
+      if (m.water > 0.15 || m.forest > 0.35) {
+        throw new Error(`Map landmark ${landmark.id} overlaps blocked terrain`);
+      }
+      if (this.list.some((p) => Math.hypot(p.x - landmark.x, p.y - landmark.y) < 280)) {
+        throw new Error(`Map landmark ${landmark.id} overlaps another campfire`);
+      }
+      this.list.push({
+        kind: 'campfire',
+        x: landmark.x,
+        y: landmark.y,
+        flip: this.list.length % 2 === 1,
+        radius: FIRE_RADIUS,
+        down: false,
+      });
     }
   }
 

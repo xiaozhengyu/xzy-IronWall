@@ -21,7 +21,7 @@ import type { ResolvedUnitKind, UnitKindDef, UnitStats } from './types';
  * 兵种的名字。出兵模板按它配比例，改名字要同步改所有模板。
  *
  * 首领（elite / knightBoss）也在这个联合里，但**不写进任何一张出兵模板的 mix** —— 首领的
- * 出场由 WaveSpec.bosses 单独管，混进普通配比就成了大号杂兵。
+ * 出场由地图 encounter 的 bossSchedule 单独管，混进普通配比就成了大号杂兵。
  */
 export type EnemyKindId =
   | 'thug'

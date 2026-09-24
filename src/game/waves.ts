@@ -25,6 +25,7 @@ export type { EnemyKindId } from '../data/units';
 
 export class WaveDirector {
   private spec: SpawnTemplate;
+  private bossSchedule: readonly number[];
   private waveAt = 0;
   /** 本波已经过去多少秒。 */
   private elapsed = 0;
@@ -53,8 +54,9 @@ export class WaveDirector {
   /** 已经打完的波数。面板上的进度节点按它点亮。 */
   cleared = 0;
 
-  constructor(template: SpawnTemplate = DEFAULT_SPAWN_TEMPLATE) {
+  constructor(template: SpawnTemplate = DEFAULT_SPAWN_TEMPLATE, bossSchedule: readonly number[] = []) {
     this.spec = template;
+    this.bossSchedule = bossSchedule;
     this.enterWave();
   }
 
@@ -62,9 +64,10 @@ export class WaveDirector {
     return this.spec;
   }
 
-  /** 换一张模板（换地图）。会从第一波重新开始。 */
-  setTemplate(template: SpawnTemplate): void {
+  /** 换一张模板和首领计划（换地图）。会从第一波重新开始。 */
+  setTemplate(template: SpawnTemplate, bossSchedule: readonly number[] = []): void {
     this.spec = template;
+    this.bossSchedule = bossSchedule;
     this.reset();
   }
 
@@ -197,9 +200,7 @@ export class WaveDirector {
 
   /** 整张模板一共有几个首领。面板上那排节点按它排。 */
   get bossTotal(): number {
-    let total = 0;
-    for (const wave of this.spec.waves) total += wave.bosses;
-    return total;
+    return this.bossSchedule.reduce((total, count) => total + Math.max(0, Math.floor(count)), 0);
   }
 
   /**
@@ -234,7 +235,7 @@ export class WaveDirector {
      * 末波是例外：它的首领已经在 enterWave 里欠过了，这里再欠一遍就是双倍。
      * lastWaveDone 在踏进末波时就立了，正好当这一发的报账标记。
      */
-    if (!this.lastWaveDone) this.bossDue += this.wave.bosses;
+    if (!this.lastWaveDone) this.bossDue += this.bossesFor(this.waveAt);
     this.cleared++;
     this.waveCleared = true;
     if (this.waveAt + 1 >= this.waveCount) {
@@ -258,14 +259,14 @@ export class WaveDirector {
      * 最后一波的首领**进波就出**，不等这一波的时长走完。
      *
      * 别的波都是“到点才出”（见 advance），末波不行：它后面没有下一波了，按老规矩就得先把
-     * 末波整个时长（演武荒原是 215 秒）敲完才看得到最后那几个首领 —— 中间那一大段只有杂兵，
+     * 末波整个时长敲完才看得到最后那几个首领 —— 中间那一大段只有杂兵，
      * 没有目标也没有终点。波号跳到末波的那一刻就是决战开始的那一刻。
      *
      * lastWaveDone 一同在这儿立起来：它是“倒计时开始”和“清完就算赢”那两件事的闸（见 battle.ts）。
      * 写成赋值而不是只置 true：after: 'restart' 的模板转回第一波时它该跟着落回去。
      */
     const last = this.waveAt + 1 >= this.waveCount;
-    if (last && !this.lastWaveDone) this.bossDue += wave.bosses;
+    if (last && !this.lastWaveDone) this.bossDue += this.bossesFor(this.waveAt);
     this.lastWaveDone = last;
     this.elapsed = 0;
     this.surgeLeft = wave.surge;
@@ -285,5 +286,9 @@ export class WaveDirector {
         this.roll.push({ kind: resolveKind(id), upTo: this.rollTotal });
       }
     }
+  }
+
+  private bossesFor(waveAt: number): number {
+    return Math.max(0, Math.floor(this.bossSchedule[waveAt] ?? 0));
   }
 }

@@ -19,7 +19,7 @@ import type { Weather } from '../world/weather';
 const MAX_PRINTS = 420;
 const MAX_RIPPLES = 160;
 const MAX_DROPS = 480;
-// 玩家和人群各占一段固定容量。白岭雪原的大湖会让几百个敌人同时踩水；共用环形池时，
+// 玩家和人群各占一段固定容量。大地图上的池塘会让几百个敌人同时踩水；共用环形池时，
 // 后处理的敌人能在同一帧覆盖玩家刚生成的反馈。独立池既保住玩家效果，也避免池满后扫描槽位。
 const FOCUS_PRINTS = 96;
 const FOCUS_RIPPLES = 16;

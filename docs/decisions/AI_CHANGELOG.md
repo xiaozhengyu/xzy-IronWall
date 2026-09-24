@@ -20,6 +20,13 @@ Use this format:
 - Impact: Setup now offers only “演武荒野”; its boot-time field, default waves, weather controls, and combat behavior remain unchanged. Generic terrain, weather, unit, and wave systems are unchanged.
 - Validation: `npm run build`; `npm run figures`; `git diff --check`; active-source identifier search; single-map setup and start-run smoke checks remain to be performed.
 
+## 2026-09-24 — proving-ground-overhaul
+
+- Spec: `docs/spec/proving-ground-overhaul/`
+- Summary: Rebuilt Proving Grounds around an authoritative map module with explicit world landmarks, authored campfires, perimeter spawn anchors, per-wave spawn patterns, map-owned boss scheduling, complete setup roster data, safe map persistence fallback, and shared preview/battle/minimap coordinates.
+- Impact: The proving-ground theme and action-survival engine remain intact, while boot dimensions, terrain, props, encounter data, boss selection, and spawn direction now flow from the map definition. The offline preview retains a compatibility path for one-off wave templates.
+- Validation: `npm run build`; `npm run figures`; `npm run bench`; `$env:WAVE='8'; npm run bench`; `git diff --check`; local browser smoke check reached setup with the complete roster and started wave 1 without console warnings/errors.
+
 ## 2026-09-24 — boss-minion-yield
 
 - Spec: `docs/spec/boss-minion-yield/`

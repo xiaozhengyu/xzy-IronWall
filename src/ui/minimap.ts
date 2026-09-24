@@ -329,6 +329,20 @@ export class Minimap {
     const size = LANDMARK_SIZE * 2;
     const half = size * 0.5;
 
+    for (const landmark of field.landmarks) {
+      if (landmark.kind !== 'start' && landmark.kind !== 'objective') continue;
+      put(landmark.x, landmark.y, (x, y) => {
+        ctx.fillStyle = landmark.kind === 'start' ? '#f6df84' : '#e88466';
+        ctx.beginPath();
+        ctx.moveTo(x, y - LANDMARK_SIZE);
+        ctx.lineTo(x + LANDMARK_SIZE, y);
+        ctx.lineTo(x, y + LANDMARK_SIZE);
+        ctx.lineTo(x - LANDMARK_SIZE, y);
+        ctx.closePath();
+        ctx.fill();
+      });
+    }
+
     // 砸掉的篝火不标 —— 图上还标着一个已经没了的点，比不标还糟。
     if (fireIcon) {
       for (const fire of field.props.burning) {

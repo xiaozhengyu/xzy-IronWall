@@ -43,9 +43,10 @@ import {
 import { ITEM_SLOT_COUNT, ITEM_STACK_MAX, REGEN_TICK, pickupById, rollBossPickup, rollPickup } from '../data/pickups';
 import { FORTUNE_COIN_MULTIPLIER } from '../data/shop';
 import { Heroes } from '../data/heroes';
+import type { MapEncounter, MapSpawnProfile } from '../data/mapTypes';
 import { NEUTRAL_MODIFIER, type HeroDef, type MapModifier, type StatBonus, type UnitStats } from '../data/types';
 import type { ResolvedUnitKind } from '../data/types';
-import { resolveKind } from '../data/units';
+import { resolveKind, type BossKindId } from '../data/units';
 import { expFromKill, resolveEnemyStats, resolveHeroStats } from './stats';
 import { Debris } from '../effects/debris';
 import { WarpField } from '../effects/warpField';
@@ -440,14 +441,6 @@ const CHASE_FAR = 75;
 const CHASE_BOOST = 1.8;
 
 /** 敌人两次出手之间的间隙，秒。给一段随机量，免得一圈人整齐划一地同时挥。 */
-/**
- * 每一波到点放的那个首领是谁。
- *
- * 先只用精锐统领一种：玩家要能一眼认出"这是首领"，而认出一种比认出两种容易。以后要按波次
- * 换人的话，这里改成一张按波次查的表就行。
- */
-const BOSS_KIND = 'elite' as const;
-
 /** 首领挨一下定在原地多久，秒。只停脚不停手（见 Character.stun）。 */
 const BOSS_HIT_STUN = 0.14;
 const SKY_ARROW_TARGET_X_INSET = 0.78;
@@ -771,7 +764,7 @@ export interface WaveStatus {
   cleared: number;
   /** 本波允许场上同时有多少完整敌人。 */
   crowd: number;
-  /** 整张模板的首领总数，暂定 0。 */
+  /** 当前地图 encounter 的首领总数。 */
   bosses: number;
   /** 最后一波已经打完，正按它的密度续着出。 */
   holding: boolean;
@@ -1976,9 +1969,17 @@ export class Battle {
     this.currentMp = Math.min(this.currentMp, stats.maxMp);
   }
 
-  /** 这张图对敌人的加成。换图时调一次。 */
-  setMapModifier(modifier: MapModifier): void {
-    this.modifier = modifier;
+  /** Apply all map-owned encounter data in one place. */
+  setMapEncounter(encounter: MapEncounter): void {
+    this.waves.setTemplate(encounter.template, encounter.bossSchedule);
+    this.modifier = encounter.modifier;
+    this.spawnProfile = encounter.spawn;
+    this.bossKind = encounter.bossKind;
+  }
+
+  /** Offline preview compatibility: use a one-off template without map anchors or bosses. */
+  setSpawnTemplate(template: SpawnTemplate): void {
+    this.waves.setTemplate(template, []);
   }
 
   /** 一个兵种在当前这一波、这张图上的属性。出兵那一侧每放一个人都要算一次。 */
@@ -2117,11 +2118,6 @@ export class Battle {
     return this.waves.takeWaveCleared();
   }
 
-  /** 换出兵模板（换地图）。会立刻从第一波重新开始，不动场上已有的人。 */
-  setSpawnTemplate(template: SpawnTemplate): void {
-    this.waves.setTemplate(template);
-  }
-
   /**
    * 跳到第 n 波，并**当场**把屏幕外那片人海补到这一波的预算。调试用。
    *
@@ -2168,6 +2164,8 @@ export class Battle {
   private spawnTimer = 0;
   /** 按模板发号施令的那个人：只管"这一秒该放几个、放什么"，落点仍在这个文件里算。 */
   private readonly waves = new WaveDirector(DEFAULT_SPAWN_TEMPLATE);
+  private spawnProfile: MapSpawnProfile = { noSpawnZones: [], anchors: [] };
+  private bossKind: BossKindId = 'elite';
   /** 爆兵允许把场上堆到多少人。开波那一刻记一次，见 localSpawnRoom。 */
   private surgeCeiling = 0;
 
@@ -2184,8 +2182,8 @@ export class Battle {
     this.grid = new SpatialGrid(cellSizeFor(CROWD_SPACING));
     this.player = new Character(PlayerPresets[0].make(), PALETTE_HERO, HUMAN_PACE);
     this.player.facing = Math.PI * 0.5; // 面朝镜头
-    this.player.x = field.width * 0.5;
-    this.player.y = field.height * 0.5;
+    this.player.x = field.start.x;
+    this.player.y = field.start.y;
     this.applyPlayerStats();
     this.player.hp = this.player.maxHp;
   }
@@ -2208,8 +2206,8 @@ export class Battle {
   setField(field: Field): void {
     this.field = field;
     this.worldPopulation = new WorldPopulation(field.width, field.height, WORLD_ENEMY_SPACING);
-    this.player.x = field.width * 0.5;
-    this.player.y = field.height * 0.5;
+    this.player.x = field.start.x;
+    this.player.y = field.start.y;
   }
 
   /**
@@ -2378,7 +2376,11 @@ export class Battle {
     x: number, y: number, view: BattleView,
     kind: ResolvedUnitKind = this.waves.pick(),
   ): Reservation | null {
-    if (this.worldEnemyCount >= MAX_WORLD_ENEMIES || this.inActiveArea(x, y, view, DESPAWN_MARGIN)) return null;
+    if (
+      this.worldEnemyCount >= MAX_WORLD_ENEMIES
+      || this.inActiveArea(x, y, view, DESPAWN_MARGIN)
+      || this.inNoSpawnZone(x, y)
+    ) return null;
     const radius = RigSpec.hipHalfWidth * kind.def.bulk * 1.15;
     if (!isFreeSpot(this.field.terrain, this.field.props, x, y, radius)) return null;
     const stats = this.enemyStats(kind);
@@ -2436,15 +2438,46 @@ export class Battle {
   }
 
   /**
-   * 这一个从哪个方向来。
+   * 选择地图出生锚点，再叠加原来的玩家移动偏置。
    *
-   * 站着不动就是均匀的一整圈（围杀那个形态）；一旦跑起来就往前方偏 —— 生在身后的人追不上，
-   * 走两步就被回收，纯属浪费。见 FORWARD_BIAS。
-   *
-   * 用拒绝采样而不是解析反变换：权重是 1 + bias·cos(θ−前进方向)，反变换要解一个超越方程，
-   * 而拒绝采样在这个权重下平均一两次就中，还顺带保证了分布是精确的。
+   * 锚点只提供空间方向，不改变出怪框、人口预算和碰撞检查。没有锚点的离线场景仍退回原来的
+   * 环形/前方偏置采样。
    */
   private spawnAngle(): number {
+    const anchors = this.spawnProfile.anchors;
+    if (anchors.length > 0) {
+      const pattern = this.waves.wave.spawnPattern;
+      const dir = this.player.moveDir;
+      const moving = this.player.speed > PLAYER_RUN_SPEED * 0.15;
+      const weighted = anchors.map((anchor) => {
+        const angle = Math.atan2(
+          anchor.y * this.field.height - this.player.y,
+          anchor.x * this.field.width - this.player.x,
+        );
+        const alignment = Math.cos(angle - dir);
+        let patternWeight = 1;
+        if (pattern === 'forward-pressure' && moving) {
+          patternWeight = 0.25 + 0.75 * ((alignment + 1) * 0.5);
+        } else if (pattern === 'side-pressure' && moving) {
+          patternWeight = 0.25 + 0.75 * Math.abs(Math.sin(angle - dir));
+        } else if (pattern === 'final') {
+          patternWeight = 1.1;
+        }
+        return { anchor, angle, weight: Math.max(0.01, anchor.weight * patternWeight) };
+      });
+      const total = weighted.reduce((sum, entry) => sum + entry.weight, 0);
+      let roll = Math.random() * total;
+      for (const entry of weighted) {
+        roll -= entry.weight;
+        if (roll <= 0) {
+          const jitter = pattern === 'final' ? 0.24 : 0.42;
+          return entry.angle + (Math.random() - 0.5) * jitter;
+        }
+      }
+      return weighted[weighted.length - 1].angle;
+    }
+
+    // Fallback for offline scenes that do not provide a map encounter.
     const bias = clamp(this.player.speed / PLAYER_RUN_SPEED, 0, 1) * FORWARD_BIAS;
     if (bias < 0.02) return Math.random() * Math.PI * 2;
     // "前方"是他**走**的方向，不是他脸朝的方向。自动锁敌之后这两件事经常差得很远 —— 一边
@@ -2659,11 +2692,17 @@ export class Battle {
 
     let fx = x;
     let fy = y;
+    let free = false;
     for (let attempt = 0; attempt < 6; attempt++) {
       fx = clamp(x + dx * attempt * 6, -SPAWN_OUTSIDE, field.width + SPAWN_OUTSIDE);
       fy = clamp(y + dy * attempt * 6, -SPAWN_OUTSIDE, field.height + SPAWN_OUTSIDE);
-      if (isFreeSpot(field.terrain, field.props, fx, fy, e.radius)) break;
+      if (isFreeSpot(field.terrain, field.props, fx, fy, e.radius)) {
+        free = true;
+        break;
+      }
     }
+
+    if (!free || this.inNoSpawnZone(fx, fy)) return false;
 
     e.x = fx;
     e.y = fy;
@@ -2672,6 +2711,14 @@ export class Battle {
     e.attackCooldown = Math.random() * this.enemySwingGap(e.def, stats);
     this.enemies.push(e);
     return true;
+  }
+
+  private inNoSpawnZone(x: number, y: number): boolean {
+    return this.spawnProfile.noSpawnZones.some((zone) => {
+      const zx = zone.x * this.field.width;
+      const zy = zone.y * this.field.height;
+      return Math.hypot(x - zx, y - zy) < zone.radius;
+    });
   }
 
   /**
@@ -4962,7 +5009,7 @@ export class Battle {
     }
     const due = this.waves.takeBossDue();
     if (due > 0) {
-      for (let i = 0; i < due; i++) this.spawn(view, resolveKind(BOSS_KIND));
+      for (let i = 0; i < due; i++) this.spawn(view, resolveKind(this.bossKind));
       /*
        * 截止线**只给最后那一批**。
        *

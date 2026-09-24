@@ -14,6 +14,8 @@ import type { EnemyKindId } from './units';
 /** 兵种比例。权重是相对的，不必加起来等于 1；没写的兵种这一波就不出。 */
 export type EnemyMix = Partial<Record<EnemyKindId, number>>;
 
+export type SpawnPattern = 'surround' | 'forward-pressure' | 'side-pressure' | 'mixed' | 'final';
+
 export interface WaveSpec {
   /**
    * 这一波持续多久，秒。它同时就是面板上那个倒计时 —— 面板显示的"距下一波"和"本波还剩"
@@ -51,17 +53,10 @@ export interface WaveSpec {
    * TARGET_WORLD_ENEMIES 夹住（那是全局的日常预算，模板不能突破）。
    */
   world: number;
-  /**
-   * 这一波的首领个数。暂定全 0。
-   *
-   * 只是数据，battle 现在不会照它放人：杂兵是碰到就死的（slay 直接绕过血量），一个 1 点血、
-   * 挨一下就倒的骑士不是首领，是个大号杂兵。真要放首领得先有血量、受击反馈和出场逻辑，那
-   * 三样落地之前，这个字段先把编队记在模板里，面板照着它排节点。接上的时候改一处：spawnWave
-   * 里按这个数放人。
-   */
-  bosses: number;
   /** 这一波出哪些兵、各占多少。 */
   mix: EnemyMix;
+  /** 地图 encounter 选择这一波的空间出生策略。 */
+  spawnPattern: SpawnPattern;
 }
 
 export interface SpawnTemplate {
@@ -90,7 +85,7 @@ export interface SpawnTemplate {
  *     7   240    260     44         700       1200       0
  *     8   270    300     52         750       1200       0
  *
- * 整局 22 分钟。四条线各自在涨，但管的事不一样：
+ * 四条线各自在涨，但管的事不一样：
  *
  *   时长越来越长 —— 后面的波要给玩家足够长的时间去适应新的配比，前面的波则要快速翻页，
  *   开局两分钟里连过三波，玩家立刻知道"这个游戏是一波一波的"。
@@ -112,32 +107,32 @@ export const DEFAULT_SPAWN_TEMPLATE: SpawnTemplate = {
   after: 'hold',
   waves: [
     {
-      duration: 45, surge: 18, surgeTime: 1.5, density: 4, crowd: 110, world: 320, bosses: 1,
+      duration: 45, surge: 18, surgeTime: 1.5, density: 4, crowd: 110, world: 320, spawnPattern: 'surround',
       // 第一波只有两种配色的杂兵：这一分钟是让玩家认清"什么是一个敌人"，混兵会盖掉这件事。
       mix: { thug: 0.6, peasant: 0.4 },
     },
     {
-      duration: 65, surge: 31, surgeTime: 1.5, density: 6, crowd: 138, world: 359, bosses: 1,
+      duration: 65, surge: 31, surgeTime: 1.5, density: 6, crowd: 138, world: 359, spawnPattern: 'forward-pressure',
       // 长枪兵进场。他最好认（枪最长），所以第一个混进来的是他。
       mix: { thug: 0.45, peasant: 0.25, spearman: 0.3 },
     },
     {
-      duration: 85, surge: 56, surgeTime: 1.8, density: 10, crowd: 196, world: 439, bosses: 1,
+      duration: 85, surge: 56, surgeTime: 1.8, density: 10, crowd: 196, world: 439, spawnPattern: 'surround',
       mix: { thug: 0.3, peasant: 0.2, spearman: 0.35, shieldman: 0.15 },
     },
     {
-      duration: 110, surge: 91, surgeTime: 1.8, density: 16, crowd: 275, world: 547, bosses: 1,
+      duration: 110, surge: 91, surgeTime: 1.8, density: 16, crowd: 275, world: 547, spawnPattern: 'side-pressure',
       // 弓手进场。远程会改变走位，所以放在中段、且比例压得低。
       mix: { thug: 0.25, peasant: 0.15, spearman: 0.3, shieldman: 0.2, archer: 0.1 },
     },
     {
-      duration: 135, surge: 133, surgeTime: 2, density: 24, crowd: 371, world: 679, bosses: 1,
+      duration: 135, surge: 133, surgeTime: 2, density: 24, crowd: 371, world: 679, spawnPattern: 'side-pressure',
       // 戟兵进场。他和长枪兵、持盾兵是同一类近战，认他靠"举过头顶砸下来"那一下 ——
       // 全场只有他把武器抡到头顶。
       mix: { thug: 0.2, peasant: 0.1, spearman: 0.25, shieldman: 0.2, archer: 0.15, halberdier: 0.1 },
     },
     {
-      duration: 160, surge: 183, surgeTime: 2, density: 32, crowd: 484, world: 834, bosses: 2,
+      duration: 160, surge: 183, surgeTime: 2, density: 32, crowd: 484, world: 834, spawnPattern: 'mixed',
       // 骑兵进场。这是全场最响的一次配比变化 —— 他们比所有人高出一半、快出一截，
       // 玩家会先看见一条比人海高一头的天际线压过来。所以比例压得很低（0.08）。
       //
@@ -150,7 +145,7 @@ export const DEFAULT_SPAWN_TEMPLATE: SpawnTemplate = {
       },
     },
     {
-      duration: 190, surge: 238, surgeTime: 2.2, density: 42, crowd: 610, world: 1008, bosses: 2,
+      duration: 190, surge: 238, surgeTime: 2.2, density: 42, crowd: 610, world: 1008, spawnPattern: 'forward-pressure',
       // 枪骑兵和骑射一起进来。到这一波，场上三种骑兵各有各的读法：轻骑最快、枪骑最重、
       // 骑射站得最远。
       mix: {
@@ -159,7 +154,7 @@ export const DEFAULT_SPAWN_TEMPLATE: SpawnTemplate = {
       },
     },
     {
-      duration: 215, surge: 300, surgeTime: 2.5, density: 52, crowd: 750, world: 1200, bosses: 3,
+      duration: 215, surge: 300, surgeTime: 2.5, density: 52, crowd: 750, world: 1200, spawnPattern: 'final',
       // 弓手（含骑射）合计封顶 0.2：再往上，场上一百多张弓同时开火，玩家是被看不见的箭
       // 磨死的，不是被围死的。骑兵合计封顶 0.24 —— 他们又高又快，比例再高，人海就读不成
       // 人海了，读成一支冲锋的骑兵队。

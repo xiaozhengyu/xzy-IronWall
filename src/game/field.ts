@@ -5,6 +5,7 @@ import { Props } from '../world/props';
 import { DEFAULT_LAYOUT, Terrain, type TerrainLayout } from '../world/terrain';
 import { Weather } from '../world/weather';
 import type { Character } from './character';
+import type { MapLandmark, ResolvedMapLandmark } from '../data/mapTypes';
 
 /**
  * 打仗的那块地：地形、天气、营地、烘好的地面、留在地上的脚印。
@@ -20,6 +21,8 @@ export class Field {
   readonly terrain: Terrain;
   readonly weather: Weather;
   readonly props: Props;
+  readonly landmarks: readonly ResolvedMapLandmark[];
+  readonly start: { x: number; y: number };
   /**
    * 地面分两层，分界线是"变得有多快"。
    *
@@ -59,12 +62,25 @@ export class Field {
   /** 初始底图分成几片烘。加载条按这个数报进度。 */
   static readonly BAKE_SLICES = GroundSurface.INITIAL_SLICES;
 
-  constructor(width: number, height: number, seed: number, layout: TerrainLayout = DEFAULT_LAYOUT) {
+  constructor(
+    width: number,
+    height: number,
+    seed: number,
+    layout: TerrainLayout = DEFAULT_LAYOUT,
+    authoredLandmarks: readonly MapLandmark[] = [],
+  ) {
     this.width = width;
     this.height = height;
     this.terrain = new Terrain(width, height, seed, layout);
     this.weather = new Weather();
     this.edgeMargin = Math.min(64, this.terrain.borderWidth * 0.75);
+    this.landmarks = authoredLandmarks.map((landmark) => ({
+      ...landmark,
+      x: landmark.x * width,
+      y: landmark.y * height,
+    }));
+    const start = this.landmarks.find((landmark) => landmark.kind === 'start');
+    this.start = start ? { x: start.x, y: start.y } : { x: width * 0.5, y: height * 0.5 };
 
     // 底图先不烘，交给加载条分片烘 —— 理由见 GroundSurface 构造函数上那段注释。
     this.ground = new GroundSurface(this.terrain, this.weather, false);
@@ -72,7 +88,11 @@ export class Field {
     // 营地：帐篷和篝火。和树的区别在于**摆**还是**长** —— 树按噪声撒在林地里，营地是人选的
     // 位置，所以它是一个显式列表。
     this.props = new Props();
-    this.props.place(this.terrain, 4);
+    if (this.landmarks.some((landmark) => landmark.kind === 'campfire')) {
+      this.props.placeAuthored(this.terrain, this.landmarks);
+    } else {
+      this.props.place(this.terrain, 4);
+    }
   }
 
   /** 烘初始底图的第 i 片。加载期间一片一片调，条才走得起来。 */

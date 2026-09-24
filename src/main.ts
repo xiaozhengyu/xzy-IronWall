@@ -39,7 +39,6 @@ import type { MapView, StageFigure } from './render/scene';
 import { STAGE_TILE_RADIUS, spawnStageSkill, type StageSkillShape } from './render/figureStage';
 import { Projection } from './render/projection';
 import { Scene } from './render/scene';
-import { Props } from './world/props';
 import type { WeatherKind } from './world/weather';
 import { Controls } from './ui/controls';
 import { Hud, HudText, type HudLocale } from './ui/hud';
@@ -103,10 +102,8 @@ function frozen(): boolean {
  */
 const profile = Profile.load();
 
-/** 场地：默认图边长 3600 个世界单位 —— 地图尺寸统一扩大为原来的三倍。 */
-const FIELD_W = 3600;
-const FIELD_H = 3600;
-const FIELD_SEED = 20260902;
+/** 启动地图是注册表的第一项；尺寸、种子和布局都从它的世界定义读取。 */
+const initialMap = GameMaps[0];
 
 /**
  * 固定的游戏构图。窗口只负责把这张 16:9 画面等比放大或缩小，不再改变玩家能看见多少世界。
@@ -305,10 +302,16 @@ await boot(text.value('bootTerrain'));
  * 当前正在显示的那块地 —— 打仗时是战场，备战界面上是中栏那张地图。跟着选中的地图换，
  * 所以是 let（换法见 showField）。
  *
- * 开局这一份就是 GameMaps[0]（演武荒原）那三个数，所以它烘完之后直接进缓存，第一张图
- * 不会被再建一次。maps.ts 上那条记录的注释写了这个约定。
+ * 开局这一份就是注册表第一张地图的 world 定义，所以它烘完之后直接进缓存，第一张图不会被
+ * 再建一次。
  */
-let field = new Field(FIELD_W, FIELD_H, FIELD_SEED, GameMaps[0].layout);
+let field = new Field(
+  initialMap.world.width,
+  initialMap.world.height,
+  initialMap.world.seed,
+  initialMap.world.layout,
+  initialMap.world.landmarks,
+);
 scene.attachField(field);
 bootDone += TERRAIN_WEIGHT;
 
@@ -328,12 +331,18 @@ for (let i = 0; i < Field.BAKE_SLICES; i++) {
  * **备战界面上那张地图预览用的就是这一份**，不是另烘的缩略图。于是"选图时看到的"和"进去
  * 之后走的"是同一块地的同一份数据，而且进图那一下不用再烘一次 —— 预览的时候已经烘完了。
  */
-const fieldCache = new Map<string, Field>([[GameMaps[0].id, field]]);
+const fieldCache = new Map<string, Field>([[initialMap.id, field]]);
 
 function fieldOf(map: GameMapDef): Field {
   let made = fieldCache.get(map.id);
   if (!made) {
-    made = new Field(map.width, map.height, map.seed, map.layout);
+    made = new Field(
+      map.world.width,
+      map.world.height,
+      map.world.seed,
+      map.world.layout,
+      map.world.landmarks,
+    );
     // 分片烘是为了让加载条走得起来，这里没有条可走，一片一片连着烘完就行。
     for (let i = 0; i < Field.BAKE_SLICES; i++) made.bakeSlice(i);
     fieldCache.set(map.id, made);
@@ -429,6 +438,7 @@ function updateMusic(): void {
 }
 
 const battle = new Battle(field);
+battle.setMapEncounter(initialMap.encounter);
 battle.setDamageNumberVisibility(profile.combatText);
 const controls = new Controls(app.canvas as HTMLCanvasElement, camera, {
   onKey: (code) => onKeyPressed(code),
@@ -813,7 +823,7 @@ function summaryStats(): SummaryStats {
   const wave = battle.waveStatus;
   return {
     heroKey: setup.currentHero.nameKey,
-    mapKey: setup.currentMap.nameKey,
+    mapKey: setup.currentMap.presentation.nameKey,
     time: battle.runTime,
     coins: battle.collectedCoins,
     gems: battle.collectedGems,
@@ -883,7 +893,7 @@ function settleRun(): void {
   const wave = battle.waveStatus;
   profile.recordRun(battle.heroId, {
     // 存 key 不存译文：这条记录会一直留在存档里，换了语言之后它也该跟着换。
-    map: setup.currentMap.nameKey,
+    map: setup.currentMap.presentation.nameKey,
     won: battle.outcome === 'won',
     kills: battle.kills,
     bosses: battle.bossKills,
@@ -1167,7 +1177,7 @@ function syncFoeActors(map: GameMapDef): void {
   foeMapId = map.id;
   foeActors.length = 0;
   foeScroll.length = 0;
-  map.foes.forEach((foe, i) => {
+  map.presentation.foes.forEach((foe, i) => {
     const actor = new Character(foe.def, foe.palette, HUMAN_PACE);
     actor.facing = Math.PI * 0.5 + PREVIEW_TURN;
     // 走给一半的速度：台子上的人是在"走给你看"，不是在冲锋。
@@ -1292,16 +1302,6 @@ function mapImageData(map: GameMapDef): ImageData | null {
   return mapPixels.get(map.id) ?? null;
 }
 
-/**
- * 这张地图上的营地。
- *
- * 就是 Field 自己那一份 —— Props.place 在构造时就跑完了，而它是确定性的（同一份地形摆在
- * 同一处）。所以中栏地图上标出来的那几个点，就是进去之后真会走到的那几处营地。
- */
-function mapProps(map: GameMapDef): Props {
-  return fieldOf(map).props;
-}
-
 /** 每次给一张新画布：一张画布只能挂在 DOM 的一个地方，而缩略图和详图都要用。 */
 function mapCanvas(map: GameMapDef): HTMLCanvasElement | null {
   const pixels = mapImageData(map);
@@ -1339,7 +1339,7 @@ function mapRect() {
 
 /** 整幅刚好铺满框时的颗粒度。缩放的下限就是它 —— 再缩就是在框里看一张越来越小的邮票。 */
 function mapFitGrain(map: GameMapDef, rect: { w: number; h: number }): number {
-  return Math.min(rect.w / map.width, rect.h / (map.height * Projection.groundSquash));
+  return Math.min(rect.w / map.world.width, rect.h / (map.world.height * Projection.groundSquash));
 }
 
 /**
@@ -1351,8 +1351,12 @@ function mapFitGrain(map: GameMapDef, rect: { w: number; h: number }): number {
 function clampMapCam(map: GameMapDef, rect: { w: number; h: number }): void {
   const halfW = rect.w * 0.5 / mapCam.grain;
   const halfH = rect.h * 0.5 / (mapCam.grain * Projection.groundSquash);
-  mapCam.x = halfW * 2 >= map.width ? map.width * 0.5 : clamp(mapCam.x, halfW, map.width - halfW);
-  mapCam.y = halfH * 2 >= map.height ? map.height * 0.5 : clamp(mapCam.y, halfH, map.height - halfH);
+  mapCam.x = halfW * 2 >= map.world.width
+    ? map.world.width * 0.5
+    : clamp(mapCam.x, halfW, map.world.width - halfW);
+  mapCam.y = halfH * 2 >= map.world.height
+    ? map.world.height * 0.5
+    : clamp(mapCam.y, halfH, map.world.height - halfH);
 }
 
 /** 回到整幅。换地图、进这一步时都从这儿起步。 */
@@ -1360,8 +1364,8 @@ function resetMapCam(map: GameMapDef): void {
   const rect = mapRect();
   if (rect.w <= 0) return; // 这一步还没显示出来，量不到框；显示时会再走一次。
   mapCam.grain = mapFitGrain(map, rect);
-  mapCam.x = map.width * 0.5;
-  mapCam.y = map.height * 0.5;
+  mapCam.x = map.world.width * 0.5;
+  mapCam.y = map.world.height * 0.5;
   mapCam.dragging = false;
 }
 
@@ -1384,11 +1388,15 @@ function mapViewOf(rect: MapView['rect']): MapView {
  */
 function mapPinsOf(map: GameMapDef, rect: { w: number; h: number }): MapPin[] {
   const spots: { x: number; y: number; label: string; kind: 'start' | 'camp' }[] = [
-    { x: map.width * 0.5, y: map.height * 0.5, label: text.value('setupSpawn'), kind: 'start' },
+    ...fieldOf(map).landmarks
+      .filter((landmark) => landmark.kind === 'start' || landmark.kind === 'campfire')
+      .map((landmark) => ({
+        x: landmark.x,
+        y: landmark.y,
+        label: text.value(landmark.labelKey ?? (landmark.kind === 'start' ? 'setupSpawn' : 'setupCamp')),
+        kind: landmark.kind === 'start' ? 'start' as const : 'camp' as const,
+      })),
   ];
-  for (const prop of mapProps(map).list) {
-    spots.push({ x: prop.x, y: prop.y, label: text.value('setupCamp'), kind: 'camp' });
-  }
 
   const pins: MapPin[] = [];
   const placed: { x: number; y: number; labelled: boolean }[] = [];
@@ -1463,12 +1471,10 @@ function applyHero(hero: HeroDef): void {
  * 拿到一份指着旧地的视野，开场那一批人就全生在图外了。
  */
 function applyMap(map: GameMapDef): void {
-  battle.setSpawnTemplate(map.template);
-  // 这张图对敌人的加成。同一个持盾兵在隘口比在荒原更推不动，靠的就是这一行。
-  battle.setMapModifier(map.modifier);
+  battle.setMapEncounter(map.encounter);
   // 攒多少灵石弹一次三选一，按这张图自己的出兵表倒推 —— 波数少、出兵少的图门槛更低，
   // 不然那张图上的技能永远练不满。见 game/stats.ts 的 gemsPerCard。
-  hud.setGemsPerCycle(gemsPerCard(map.template));
+  hud.setGemsPerCycle(gemsPerCard(map.encounter.template));
   showField(map);
   battle.setField(field);
   camera.follow(battle.player.x, battle.player.y, field.width, field.height);
@@ -1680,6 +1686,7 @@ summary.setEliteBossHealthBarsVisible(profile.eliteBossHealthBarsVisible);
 const setup = new SetupScreen(
   {
     heroes: [...Heroes],
+    initialMapId: profile.lastMap,
     /**
      * 备战界面要读的存档。全是读，一个写都没有 —— 升级和收钱发生在一局结束的时候
      * （settleRun），花钱以后发生在商店里。
