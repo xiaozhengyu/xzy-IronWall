@@ -320,31 +320,7 @@ export interface HudMessages {
   mapProvingSight: string;
   mapProvingObjective: string;
   mapProvingBossName: string;
-  mapPassName: string;
-  mapPassTag: string;
-  mapPassBlurb: string;
-  mapPassTerrain: string;
-  mapPassWeather: string;
-  mapPassSight: string;
-  mapPassObjective: string;
-  mapPassBossName: string;
-  mapSteppeName: string;
-  mapSteppeTag: string;
-  mapSteppeBlurb: string;
-  mapSteppeTerrain: string;
-  mapSteppeWeather: string;
-  mapSteppeSight: string;
-  mapSteppeObjective: string;
-  mapSteppeBossName: string;
-  mapSnowName: string;
-  mapSnowTag: string;
-  mapSnowBlurb: string;
-  mapSnowTerrain: string;
-  mapSnowWeather: string;
-  mapSnowSight: string;
-  mapSnowObjective: string;
-  mapSnowBossName: string;
-  /** 首领在出兵表里还没安排上，四张图共用这一句。 */
+  /** 首领在出兵表里还没安排上，现有地图共用这一句。 */
   mapBossPending: string;
 
   // ------------------------------------------------------------------ 加载

@@ -172,123 +172,6 @@ export const DEFAULT_SPAWN_TEMPLATE: SpawnTemplate = {
 };
 
 /**
- * 三张新地图各自的出兵模板。
- *
- * 每一张只挑一条线往深里走 —— 一张图上什么兵都有等于三张图长一个样。波长和密度沿用默认
- * 模板那条曲线（越往后越长、越密），改的只有配比和人数预算。
- */
-
-/**
- * 隘口：正面硬碰。重步兵和戟兵为主，几乎没有远程，考的是能不能顶住一堵墙往前推。
- *
- * 重甲兵的主场，而且比例从第三波起一路涨到 0.2 —— 这张图的最后一波里，每五个人就有一个是
- * 不会挥武器、只把矛端在身前往前挪的。走廊本来就窄，一排这样的矛把那条窄谷真正封成一堵墙：
- * 玩家在别的图上可以绕开他（他是全场最慢、扇面最窄的），在这儿绕不开。
- */
-export const PASS_SPAWN_TEMPLATE: SpawnTemplate = {
-  name: '隘口 · 六波',
-  after: 'hold',
-  waves: [
-    {
-      duration: 70, surge: 19, surgeTime: 1.5, density: 4, crowd: 106, world: 320, bosses: 1,
-      mix: { thug: 0.55, shieldman: 0.45 },
-    },
-    {
-      duration: 100, surge: 41, surgeTime: 1.6, density: 8, crowd: 153, world: 387, bosses: 1,
-      mix: { thug: 0.35, shieldman: 0.4, spearman: 0.25 },
-    },
-    {
-      duration: 130, surge: 86, surgeTime: 1.8, density: 15, crowd: 248, world: 523, bosses: 1,
-      // 重甲兵进场。第一次出现就在这张图上 —— 他是这里的主题。
-      mix: { thug: 0.22, shieldman: 0.3, spearman: 0.24, halberdier: 0.16, bulwark: 0.08 },
-    },
-    {
-      duration: 170, surge: 148, surgeTime: 2, density: 24, crowd: 377, world: 709, bosses: 2,
-      mix: { thug: 0.14, shieldman: 0.28, spearman: 0.2, halberdier: 0.2, archer: 0.06, bulwark: 0.12 },
-    },
-    {
-      duration: 210, surge: 223, surgeTime: 2.2, density: 36, crowd: 536, world: 936, bosses: 2,
-      mix: { thug: 0.1, shieldman: 0.26, spearman: 0.18, halberdier: 0.22, archer: 0.08, bulwark: 0.16 },
-    },
-    {
-      duration: 260, surge: 310, surgeTime: 2.4, density: 50, crowd: 720, world: 1200, bosses: 3,
-      // 盾、戟、重甲兵合计七成：这张图的最后一波就是一堵会往前挪的墙，而重甲兵是墙上
-      // 那些戳出来的矛。
-      mix: { thug: 0.06, shieldman: 0.24, spearman: 0.14, halberdier: 0.26, archer: 0.1, bulwark: 0.2 },
-    },
-  ],
-};
-
-/** 荒原：骑兵的地方。开阔、跑得开，出的全是又高又快的东西。 */
-export const STEPPE_SPAWN_TEMPLATE: SpawnTemplate = {
-  name: '荒原 · 六波',
-  after: 'hold',
-  waves: [
-    {
-      duration: 60, surge: 18, surgeTime: 1.5, density: 4, crowd: 100, world: 299, bosses: 1,
-      // 第一波就有骑兵，而且只有两种东西 —— 这张图要在第一分钟里就说清楚"这儿不一样"。
-      mix: { peasant: 0.7, cavalry: 0.3 },
-    },
-    {
-      duration: 90, surge: 39, surgeTime: 1.6, density: 7, crowd: 144, world: 362, bosses: 1,
-      mix: { peasant: 0.45, thug: 0.2, cavalry: 0.25, horseArcher: 0.1 },
-    },
-    {
-      duration: 120, surge: 83, surgeTime: 1.8, density: 14, crowd: 234, world: 489, bosses: 1,
-      mix: { peasant: 0.3, thug: 0.18, cavalry: 0.28, horseArcher: 0.14, lancer: 0.1 },
-    },
-    {
-      duration: 160, surge: 143, surgeTime: 2, density: 23, crowd: 356, world: 662, bosses: 2,
-      mix: { peasant: 0.2, thug: 0.15, cavalry: 0.3, horseArcher: 0.17, lancer: 0.18 },
-    },
-    {
-      duration: 200, surge: 215, surgeTime: 2.2, density: 33, crowd: 506, world: 873, bosses: 2,
-      mix: { peasant: 0.12, thug: 0.1, cavalry: 0.32, horseArcher: 0.2, lancer: 0.26 },
-    },
-    {
-      duration: 250, surge: 300, surgeTime: 2.4, density: 46, crowd: 680, world: 1120, bosses: 3,
-      // 末波九成是马。人数预算比别的图低一档：骑兵一个人占的地方是步兵的两倍多
-      // （Character.spacing），同样的预算下场上其实更挤。
-      mix: { peasant: 0.06, thug: 0.04, cavalry: 0.34, horseArcher: 0.24, lancer: 0.32 },
-    },
-  ],
-};
-
-/** 雪原：远程为主，视野差。弓手和骑射的比例是全部三张图里最高的。 */
-export const SNOWFIELD_SPAWN_TEMPLATE: SpawnTemplate = {
-  name: '雪原 · 六波',
-  after: 'hold',
-  waves: [
-    {
-      duration: 70, surge: 19, surgeTime: 1.5, density: 4, crowd: 103, world: 315, bosses: 1,
-      mix: { thug: 0.6, archer: 0.4 },
-    },
-    {
-      duration: 100, surge: 41, surgeTime: 1.6, density: 7, crowd: 148, world: 381, bosses: 1,
-      mix: { thug: 0.4, peasant: 0.16, archer: 0.32, spearman: 0.12 },
-    },
-    {
-      duration: 130, surge: 86, surgeTime: 1.8, density: 14, crowd: 241, world: 515, bosses: 1,
-      mix: { thug: 0.28, peasant: 0.14, archer: 0.32, spearman: 0.16, horseArcher: 0.1 },
-    },
-    {
-      duration: 170, surge: 148, surgeTime: 2, density: 23, crowd: 367, world: 697, bosses: 2,
-      mix: { thug: 0.2, peasant: 0.1, archer: 0.32, spearman: 0.16, horseArcher: 0.14, shieldman: 0.08 },
-    },
-    {
-      duration: 210, surge: 223, surgeTime: 2.2, density: 34, crowd: 521, world: 920, bosses: 2,
-      mix: { thug: 0.14, peasant: 0.08, archer: 0.33, spearman: 0.15, horseArcher: 0.16, shieldman: 0.14 },
-    },
-    {
-      duration: 260, surge: 310, surgeTime: 2.4, density: 47, crowd: 700, world: 1180, bosses: 3,
-      // 弓加骑射合计 0.5。这已经越过默认模板给自己定的 0.2 上限 —— 这张图刻意就是"被箭
-      // 磨死"的那一张，所以持盾兵的比例也跟着抬上来：躲在他后面是这里唯一的解法。
-      mix: { thug: 0.1, peasant: 0.05, archer: 0.32, spearman: 0.15, horseArcher: 0.18, shieldman: 0.2 },
-    },
-  ],
-};
-
-/**
  * 这张模板打到第 n 波**结束**时，一共会放出多少人。n 从 1 数起，超出就算整张表。
  *
  * 一波的出兵量是"开波爆兵 + 持续密度 × 这一波的时长"，也就是模板自己写着的那两个数。它不是
@@ -296,7 +179,7 @@ export const SNOWFIELD_SPAWN_TEMPLATE: SpawnTemplate = {
  * 不用跑一遍游戏就能算出来的量**，所以拿它当尺子：实际收到多少灵石和它成正比，比例由离线
  * 空跑量出来（见 balance.ts 的 GEMS_PER_SPAWN）。
  *
- * 卡牌节奏靠它：不同地图的波数和出兵量差着一截（默认八波四万六，隘口六波三万四），弹框的
+ * 卡牌节奏靠它：不同模板的波数和出兵量可以差着一截，弹框的
  * 门槛要是写死一个数，短的那张图就永远练不满。
  */
 export function spawnsThroughWave(template: SpawnTemplate, wave: number): number {

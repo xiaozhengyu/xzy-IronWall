@@ -5,7 +5,7 @@
  * 是几个月才碰一次的机制。两者留在同一个文件里的时候，改一个数值的 diff 和改一条规则的
  * diff 长得一模一样。
  *
- * 这几个 re-export 是给老调用点留的门：tools/ 下的离线脚本和 battle.ts 都按 './waves'
+ * 这个 re-export 是给老调用点留的门：tools/ 下的离线脚本和 battle.ts 都按 './waves'
  * 取模板，没必要为了搬家去改它们的 import。
  */
 
@@ -19,9 +19,6 @@ import type { ResolvedUnitKind } from '../data/types';
 
 export {
   DEFAULT_SPAWN_TEMPLATE,
-  PASS_SPAWN_TEMPLATE,
-  SNOWFIELD_SPAWN_TEMPLATE,
-  STEPPE_SPAWN_TEMPLATE,
 } from '../data/waves';
 export type { EnemyMix, SpawnTemplate, WaveSpec } from '../data/waves';
 export type { EnemyKindId } from '../data/units';

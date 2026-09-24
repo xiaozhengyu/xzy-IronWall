@@ -13,6 +13,13 @@ Use this format:
 - Validation: <commands and manual scenarios>
 ```
 
+## 2026-09-24 — map-roster-reduction
+
+- Spec: `docs/spec/map-roster-reduction/`
+- Summary: Reduced the runtime map roster to the proving ground and removed the three retired map definitions, dedicated spawn templates, and unused localized map copy.
+- Impact: Setup now offers only “演武荒野”; its boot-time field, default waves, weather controls, and combat behavior remain unchanged. Generic terrain, weather, unit, and wave systems are unchanged.
+- Validation: `npm run build`; `npm run figures`; `git diff --check`; active-source identifier search; single-map setup and start-run smoke checks remain to be performed.
+
 ## 2026-09-24 — boss-minion-yield
 
 - Spec: `docs/spec/boss-minion-yield/`
